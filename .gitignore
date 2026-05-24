@@ -1,0 +1,32 @@
+# Logs
+*.log
+recon/*.log
+!recon/findings.md
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Rust (Phase 4+)
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Build artifacts
+/dist/
+/build/
+
+# Local overrides
+.cosmic-goo.local/
+.env
+.env.local
+
+# Claude Code local settings (settings.json itself can be shared)
+.claude/settings.local.json
+
+# Runtime state (XDG_RUNTIME_DIR mirror, just in case)
+/run/
