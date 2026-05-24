@@ -1,0 +1,66 @@
+name = "text-verbs"
+description = "Selection-aware text actions (critique, summarize, think, draft-response)"
+
+[[verbs]]
+name = "critique"
+description = "Expert review of the passage"
+accepts = ["text/*"]
+uses_adverbs = ["via"]
+fabric_pattern = "analyze_claims"
+prompt = """You are providing expert review of the following passage.
+Deduce the desired intent and tone, then critique accordingly.
+
+---
+{subject.text}"""
+
+[[verbs]]
+name = "summarize"
+description = "Summarize the passage"
+accepts = ["text/*"]
+uses_adverbs = ["via"]
+fabric_pattern = "summarize"
+prompt = """Summarize the following passage:
+
+---
+{subject.text}"""
+
+[[verbs]]
+name = "think"
+description = "Think about the passage; depth adverb modulates how hard"
+accepts = ["text/*"]
+uses_adverbs = ["via", "depth"]
+fabric_pattern = "extract_wisdom"
+prompt = """{depth_prefix} the following passage:
+
+---
+{subject.text}"""
+
+[[verbs]]
+name = "draft-response"
+description = "Draft a reply to the selected text"
+accepts = ["text/*"]
+uses_adverbs = ["via"]
+fabric_pattern = "create_summary"
+prompt = """Consider the following selected text and begin drafting a response.
+Identify key answers or information needed, and questions we should ask
+in the response. Raise them to the user to get their options.
+
+---
+{subject.text}"""
+
+# depth lives with text-verbs because it's scoped to a verb owned here.
+[[adverbs]]
+name = "depth"
+kind = "selector"
+applies_to_verbs = ["think"]
+default = "normal"
+description = "How hard to think about the passage"
+
+[adverbs.values.normal]
+template_var = { depth_prefix = "Think carefully about" }
+
+[adverbs.values.really]
+template_var = { depth_prefix = "Really think — deeply consider —" }
+
+[adverbs.values.ultra]
+template_var = { depth_prefix = "Ultrathink: exhaustively analyze every angle of" }

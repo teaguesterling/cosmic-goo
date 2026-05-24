@@ -1,0 +1,36 @@
+name = "selection"
+description = "Implicit subjects from the current PRIMARY selection and clipboard"
+
+# The `selection` and `clipboard` sources emit a single synthetic item whose
+# .text is the current selection/clipboard. bin/goo's `resolve_subject` does
+# the implicit-subject fallback without needing these sources, but having them
+# in the registry lets `goo list selection` work and (in Phase 2) the
+# launcher inline-composition path discover them by prefix.
+
+[[sources]]
+name = "selection"
+prefix = "sel"
+icon = "edit-select-all"
+emits = "text/plain"
+list_cmd = '''wl-paste --primary --no-newline 2>/dev/null \
+  | jq -Rs '. as $t | if $t == "" then [] else [{
+      id: "primary",
+      title: ($t | split("\n")[0] | .[0:80]),
+      subtitle: "PRIMARY selection",
+      text: $t,
+      metadata: {length: ($t | length)}
+    }] end' '''
+
+[[sources]]
+name = "clipboard"
+prefix = "clip"
+icon = "edit-paste"
+emits = "text/plain"
+list_cmd = '''wl-paste --no-newline 2>/dev/null \
+  | jq -Rs '. as $t | if $t == "" then [] else [{
+      id: "current",
+      title: ($t | split("\n")[0] | .[0:80]),
+      subtitle: "CLIPBOARD contents",
+      text: $t,
+      metadata: {length: ($t | length)}
+    }] end' '''

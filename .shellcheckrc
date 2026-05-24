@@ -1,0 +1,7 @@
+# shellcheck config — applied to every file in lib/ and bin/.
+
+# SC1091: "Not following dynamic source path." We source lib files via $GOO_DIR
+# or relative paths shellcheck can't statically resolve from CWD. The source
+# directives still help shellcheck -x in IDE contexts; this just stops the
+# Makefile target from failing on info-level noise.
+disable=SC1091

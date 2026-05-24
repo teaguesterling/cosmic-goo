@@ -1,0 +1,24 @@
+name = "apps"
+description = "Running applications via cos-cli"
+
+[[types]]
+name = "application/vnd.cos-cli.app"
+display = "running app"
+kind = "handle"
+
+[[sources]]
+name = "apps"
+prefix = "app"
+icon = "preferences-system-windows"
+emits = "application/vnd.cos-cli.app"
+# Use full path to cos-cli because ~/.cargo/bin is not on the non-interactive
+# bash PATH on this host (see recon/findings.md). When packaged, install
+# cos-cli to /usr/bin or rely on the user's PATH instead.
+list_cmd = "$HOME/.cargo/bin/cos-cli info --json | jq '[.apps[] | {id: .app_id, title: .title, subtitle: .app_id, metadata: .}]'"
+
+[[verbs]]
+name = "activate"
+description = "Bring an app to focus"
+accepts = ["application/vnd.cos-cli.app"]
+default_for = "application/vnd.cos-cli.app"
+cmd = "$HOME/.cargo/bin/cos-cli activate -i {subject.metadata.index}"

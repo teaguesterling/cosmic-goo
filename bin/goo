@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# bin/goo — cosmic-goo CLI entry point.
+#
+# Usage:
+#   goo                                # opens compose dialog (stub in Phase 1)
+#   goo <verb> [POSITIONAL...] [--adverb=VALUE]
+#   goo list <source>                  # raw JSON of source items
+#   goo describe <verb>                # show verb's accepts, adverbs, template
+#   goo compose [partial-sentence]     # explicitly launch compose dialog (stub)
+#   goo plugins                        # list loaded plugins
+#   goo validate                       # check all plugins for errors
+#   goo -h | --help                    # this message
+
+# Resolve repo root from script location. Don't set -e: we use explicit error
+# handling so verb_lookup misses etc. don't accidentally abort the script.
+set -uo pipefail
+GOO_DIR=$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+
+# Default the built-in plugins dir to repo's plugins/ if not already set. This
+# is what makes `bin/goo` work straight out of a dev checkout. A production
+# install would set COSMIC_GOO_BUILTIN_PLUGINS_DIR to /usr/share/cosmic-goo/plugins.
+export COSMIC_GOO_BUILTIN_PLUGINS_DIR="${COSMIC_GOO_BUILTIN_PLUGINS_DIR:-$GOO_DIR/plugins}"
+
+# shellcheck source=../lib/toml.sh
+. "$GOO_DIR/lib/toml.sh"
+# shellcheck source=../lib/types.sh
+. "$GOO_DIR/lib/types.sh"
+# shellcheck source=../lib/url-encode.sh
+. "$GOO_DIR/lib/url-encode.sh"
+# shellcheck source=../lib/selection.sh
+. "$GOO_DIR/lib/selection.sh"
+# shellcheck source=../lib/plugin-loader.sh
+. "$GOO_DIR/lib/plugin-loader.sh"
+# shellcheck source=../lib/verbs.sh
+. "$GOO_DIR/lib/verbs.sh"
+
+# ---------------- helpers ----------------
+
+usage() {
+    cat <<'EOF'
+goo — Grammar Of Operations CLI
+
+USAGE
+    goo                                  Open compose dialog (Phase 4; stub for now)
+    goo <verb> [POSITIONAL...] [--FLAG=VALUE]
+    goo list <source>                    Emit source items as JSON
+    goo describe <verb>                  Show verb details
+    goo compose [partial-sentence]       Launch compose dialog (stub)
+    goo plugins                          List loaded plugins
+    goo validate                         Validate all loaded plugins
+
+SUBJECT INFERENCE
+    If no positional is given, the subject falls back in order:
+      1. PRIMARY selection (wl-paste --primary)
+      2. Clipboard (wl-paste)
+      3. Focused app (cos-cli) when the verb accepts an app type
+
+EXAMPLES
+    goo critique "some text to review"
+    goo critique --via=clipboard          # operate on the current selection
+    goo plugins
+    goo describe critique
+EOF
+}
+
+die() {
+    printf 'goo: %s\n' "$*" >&2
+    exit 1
+}
+
+# Resolve a positional argument into a subject JSON. Heuristics:
+#   - if the verb accepts text/*, treat the positional as text
+#   - else, look up sources emitting an accepted type and find an item whose
+#     id or title contains the positional (case-insensitive)
+#   - if no positional, fall back to selection, then clipboard, then focused app
+resolve_subject() {
+    local verb_json=$1 positional=${2:-}
+    local accepts
+    accepts=$(jq -r '.accepts[]?' <<<"$verb_json")
+
+    accepts_text() {
+        local p
+        for p in $accepts; do
+            mime_matches "$p" "text/plain" && return 0
+        done
+        return 1
+    }
+
+    # Provided positional
+    if [ -n "$positional" ]; then
+        if accepts_text; then
+            local mt
+            mt=$(mime_detect_content "$positional")
+            jq -nc --arg t "$mt" --arg text "$positional" '{type:$t, text:$text}'
+            return 0
+        fi
+        # Handle resolution: walk sources emitting an accepted type
+        local registry
+        registry=$(plugin_load_all)
+        local pattern source emits items match
+        while IFS= read -r pattern; do
+            while IFS= read -r source; do
+                emits=$(jq -r '.emits // empty' <<<"$source")
+                [ -z "$emits" ] && continue
+                if mime_matches "$pattern" "$emits"; then
+                    local list_cmd
+                    list_cmd=$(jq -r '.list_cmd // empty' <<<"$source")
+                    [ -z "$list_cmd" ] && continue
+                    items=$(bash -c "$list_cmd" 2>/dev/null)
+                    [ -z "$items" ] && continue
+                    match=$(jq -c --arg q "$positional" --arg type "$emits" '
+                        (try (. // []) catch []) | .[]?
+                        | select(
+                            (((.id    // "") | ascii_downcase) | contains($q | ascii_downcase))
+                            or
+                            (((.title // "") | ascii_downcase) | contains($q | ascii_downcase))
+                          )
+                        | . + {type: $type}
+                    ' <<<"$items" 2>/dev/null | head -n 1)
+                    if [ -n "$match" ]; then
+                        printf '%s\n' "$match"
+                        return 0
+                    fi
+                fi
+            done < <(jq -c '.sources[]' <<<"$registry")
+        done <<<"$accepts"
+        die "could not resolve '$positional' against any source for verb's accepted types"
+    fi
+
+    # No positional: fall back to implicit subjects.
+    if accepts_text; then
+        local text mt
+        text=$(selection_primary)
+        if [ -z "$text" ]; then
+            text=$(selection_clipboard)
+        fi
+        if [ -n "$text" ]; then
+            mt=$(mime_detect_content "$text")
+            jq -nc --arg t "$mt" --arg text "$text" '{type:$t, text:$text}'
+            return 0
+        fi
+    fi
+    # Non-text accepts: try focused app
+    local app
+    app=$(focused_app 2>/dev/null | head -n 1)
+    if [ -n "$app" ]; then
+        # Tag with the app type so the verb dispatcher sees it
+        printf '%s\n' "$app" | jq -c '. + {type:"application/vnd.cos-cli.app", id:.app_id, metadata:.}'
+        return 0
+    fi
+    die "no subject provided and no implicit subject available (selection/clipboard/focused-app all empty)"
+}
+
+# ---------------- subcommand: plugins ----------------
+
+cmd_plugins() {
+    local registry
+    registry=$(plugin_load_all)
+    local count
+    count=$(jq '.plugins | length' <<<"$registry")
+    if [ "$count" -eq 0 ]; then
+        printf '(no plugins loaded — check COSMIC_GOO_BUILTIN_PLUGINS_DIR=%s)\n' \
+            "$COSMIC_GOO_BUILTIN_PLUGINS_DIR" >&2
+        return 0
+    fi
+    jq -r '.plugins[] |
+        "\(.name)" + (if .description then " — \(.description)" else "" end) +
+        "\n  \(.file)"
+    ' <<<"$registry"
+}
+
+# ---------------- subcommand: validate ----------------
+
+cmd_validate() {
+    local registry errors=0
+    registry=$(plugin_load_all)
+
+    # 1. Verbs reference types that exist (loosely — accept globs).
+    while IFS= read -r verb_pattern; do
+        # `accepts` patterns must be non-empty; types referenced by exact name
+        # should exist in either the registry or be standard MIME types. For
+        # Phase 1 we only enforce non-empty.
+        [ -z "$verb_pattern" ] && { printf 'verb has empty accept pattern\n' >&2; errors=$((errors+1)); }
+    done < <(jq -r '.verbs[] | .accepts[]? // ""' <<<"$registry")
+
+    # 2. Adverbs declare scope (applies_to or applies_to_verbs).
+    while IFS= read -r adverb_name; do
+        [ -z "$adverb_name" ] && continue
+        local has_scope
+        has_scope=$(jq -r --arg n "$adverb_name" '
+            (.adverbs[] | select(.name == $n))
+            | (has("applies_to") or has("applies_to_verbs"))
+        ' <<<"$registry")
+        if [ "$has_scope" != "true" ]; then
+            printf 'adverb "%s" has neither applies_to nor applies_to_verbs\n' "$adverb_name" >&2
+            errors=$((errors+1))
+        fi
+    done < <(jq -r '.adverbs[]?.name' <<<"$registry")
+
+    # 3. Selector adverbs that reference template_var or template values
+    #    should at least have a values object.
+    while IFS= read -r adverb; do
+        local name kind has_values
+        name=$(jq -r '.name' <<<"$adverb")
+        kind=$(jq -r '.kind // "selector"' <<<"$adverb")
+        has_values=$(jq -r '.values // {} | length' <<<"$adverb")
+        if [ "$kind" = "selector" ] && [ "$has_values" = "0" ]; then
+            printf 'selector adverb "%s" has no values\n' "$name" >&2
+            errors=$((errors+1))
+        fi
+    done < <(jq -c '.adverbs[]?' <<<"$registry")
+
+    if [ "$errors" -eq 0 ]; then
+        printf 'goo validate: OK (%d plugins, %d types, %d sources, %d verbs, %d adverbs)\n' \
+            "$(jq '.plugins | length' <<<"$registry")" \
+            "$(jq '.types | length' <<<"$registry")" \
+            "$(jq '.sources | length' <<<"$registry")" \
+            "$(jq '.verbs | length' <<<"$registry")" \
+            "$(jq '.adverbs | length' <<<"$registry")"
+        return 0
+    fi
+    printf 'goo validate: %d error(s)\n' "$errors" >&2
+    return 1
+}
+
+# ---------------- subcommand: list ----------------
+
+cmd_list() {
+    local source_name=${1:-}
+    [ -z "$source_name" ] && die "list: expected a source name"
+    local registry source list_cmd
+    registry=$(plugin_load_all)
+    source=$(jq -c --arg n "$source_name" '.sources[] | select(.name == $n)' <<<"$registry")
+    [ -z "$source" ] && die "list: no source named '$source_name'"
+    list_cmd=$(jq -r '.list_cmd // empty' <<<"$source")
+    [ -z "$list_cmd" ] && die "list: source '$source_name' has no list_cmd"
+    bash -c "$list_cmd"
+}
+
+# ---------------- subcommand: describe ----------------
+
+cmd_describe() {
+    local verb_name=${1:-}
+    [ -z "$verb_name" ] && die "describe: expected a verb name"
+    local verb
+    verb=$(verb_lookup "$verb_name") || die "describe: no verb named '$verb_name'"
+    jq -r '
+        "verb: \(.name)" +
+        (if .description then "\ndescription: \(.description)" else "" end) +
+        "\naccepts: \(.accepts | join(", "))" +
+        (if .object_type then "\nobject_type: \(.object_type)" else "" end) +
+        (if .default_for then "\ndefault_for: \(.default_for)" else "" end) +
+        (if .uses_adverbs then "\nuses_adverbs: \(.uses_adverbs | join(", "))" else "" end) +
+        (if .cmd then "\ncmd: \(.cmd)" else "" end) +
+        (if .prompt then "\nprompt:\n  " + (.prompt | gsub("\n"; "\n  ")) else "" end) +
+        (if .confirm then "\nconfirm: true" else "" end) +
+        "\nprovided by plugin: \(._plugin)"
+    ' <<<"$verb"
+}
+
+# ---------------- subcommand: compose (stub) ----------------
+
+cmd_compose() {
+    printf 'goo compose: the compose dialog is a Phase 4 feature.\n' >&2
+    # shellcheck disable=SC2016
+    printf 'For now use `goo <verb> [args]` directly or pipe through stdin.\n' >&2
+    return 1
+}
+
+# ---------------- verb invocation ----------------
+
+cmd_verb() {
+    local verb_name=$1
+    shift
+    local verb
+    verb=$(verb_lookup "$verb_name") || die "unknown verb or subcommand: $verb_name (try 'goo plugins')"
+
+    # Parse remaining args: positionals + --flag=val.
+    local positionals=()
+    local adverbs='{}'
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --*=*)
+                local kv=${1#--}
+                local name=${kv%%=*}
+                local value=${kv#*=}
+                adverbs=$(jq --arg n "$name" --arg v "$value" '. + {($n): $v}' <<<"$adverbs")
+                shift
+                ;;
+            --*)
+                local name=${1#--}
+                local value=${2:-}
+                if [ -z "$value" ] || [[ "$value" == --* ]]; then
+                    # No value -> treat as flag = true
+                    adverbs=$(jq --arg n "$name" '. + {($n): true}' <<<"$adverbs")
+                    shift
+                else
+                    adverbs=$(jq --arg n "$name" --arg v "$value" '. + {($n): $v}' <<<"$adverbs")
+                    shift 2
+                fi
+                ;;
+            *)
+                positionals+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    local subject_arg=${positionals[0]:-}
+    local object_arg=${positionals[1]:-}
+
+    local subject object=null
+    subject=$(resolve_subject "$verb" "$subject_arg") || exit 1
+    if [ -n "$object_arg" ]; then
+        # Treat object same way for now (text or via source lookup).
+        object=$(resolve_subject "$verb" "$object_arg") || exit 1
+    fi
+
+    verb_apply "$verb" "$subject" "$object" "$adverbs"
+}
+
+# ---------------- dispatch ----------------
+
+case "${1:-}" in
+    ""|compose)        shift 2>/dev/null || true; cmd_compose "$@" ;;
+    list)              shift; cmd_list "$@" ;;
+    describe)          shift; cmd_describe "$@" ;;
+    plugins)           shift; cmd_plugins "$@" ;;
+    validate)          shift; cmd_validate "$@" ;;
+    -h|--help|help)    usage ;;
+    *)                 cmd_verb "$@" ;;
+esac

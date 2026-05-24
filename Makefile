@@ -13,8 +13,8 @@ test:  ## Run bats test suite
 	@if ! command -v bats >/dev/null 2>&1; then \
 		echo "bats not found. apt install bats"; exit 1; \
 	fi
-	@if [ -d tests ] && ls tests/*.bats >/dev/null 2>&1; then \
-		bats tests/; \
+	@if [ -d tests ] && find tests -name '*.bats' -print -quit | grep -q .; then \
+		bats -r tests/; \
 	else \
 		echo "(no tests yet)"; \
 	fi

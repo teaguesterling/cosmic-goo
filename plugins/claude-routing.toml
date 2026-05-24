@@ -1,0 +1,35 @@
+name = "claude-routing"
+description = "Routes text verbs to Fabric, Claude Desktop, Claude Code, or clipboard"
+
+# The `via` selector adverb is the canonical multi-route knob for text verbs.
+# Verbs that opt in with `uses_adverbs = ["via"]` get all four routes for free.
+
+[[adverbs]]
+name = "via"
+kind = "selector"
+applies_to = ["text/*"]
+default = "clipboard"
+description = "Where to send the rendered prompt"
+
+# Phase-1 limitation reminder: substitutions are raw. Routes use bash
+# here-strings (`<<< '...'`) which keep multi-line content intact as long
+# as the rendered prompt contains no single quotes. A future `{var|filter}`
+# syntax will replace these heredoc tricks.
+
+[adverbs.values.fabric]
+description = "Pipe through Fabric (Anthropic API)"
+template = "fabric -p {verb.fabric_pattern} <<< '{verb.prompt}'"
+
+[adverbs.values.claude-desktop]
+description = "Open new chat in Claude Desktop"
+# URL-encode the prompt inline. Subject to the R4 quirk: Claude Desktop only
+# reliably prefills on cold start. See recon/findings.md and task #7.
+template = "xdg-open \"claude://claude.ai/new?q=$(jq -srR @uri <<< '{verb.prompt}')\""
+
+[adverbs.values.claude-code]
+description = "Open a new Claude Code session"
+template = "xdg-open \"claude://code/new?q=$(jq -srR @uri <<< '{verb.prompt}')&folder=$(jq -srR @uri <<< '{cwd}')\""
+
+[adverbs.values.clipboard]
+description = "Copy assembled prompt to clipboard"
+template = "wl-copy <<< '{verb.prompt}'"
