@@ -1,0 +1,33 @@
+name = "workspaces"
+description = "COSMIC workspaces via cos-cli"
+
+# Workspaces in COSMIC are nested under workspace_groups[] (one group per
+# output / monitor). Each workspace has an integer index within its group.
+# `ws-activate` switches; `move` (in apps.toml) relocates an app.
+
+[[types]]
+name = "application/vnd.cos-cli.workspace"
+display = "workspace"
+kind = "handle"
+
+[[sources]]
+name = "workspaces"
+prefix = "ws"
+icon = "preferences-desktop-multitasking"
+emits = "application/vnd.cos-cli.workspace"
+# Flatten the nested group/workspace structure. id is "<group>:<index>" so it
+# round-trips through verb templates; metadata keeps the parts separate.
+list_cmd = """$HOME/.cargo/bin/cos-cli info --json \\
+  | jq '[.workspace_groups[] | . as $g | .workspaces[] | {
+      id: "\\($g.index):\\(.index)",
+      title: "ws-\\(.name) on \\($g.outputs | join(","))",
+      subtitle: "group \\($g.index)",
+      metadata: {group_index: $g.index, index: .index, name: .name, outputs: $g.outputs}
+    }]'"""
+
+[[verbs]]
+name = "switch"
+description = "Switch to the workspace"
+accepts = ["application/vnd.cos-cli.workspace"]
+default_for = "application/vnd.cos-cli.workspace"
+cmd = "$HOME/.cargo/bin/cos-cli ws-activate -w {subject.metadata.index} -g {subject.metadata.group_index}"

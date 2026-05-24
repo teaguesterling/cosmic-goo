@@ -1,0 +1,25 @@
+name = "notifications"
+description = "Desktop notifications via libnotify"
+
+[[verbs]]
+name = "notify"
+description = "Send a desktop notification with the selected text as the body"
+accepts = ["text/*"]
+uses_adverbs = ["urgency"]
+cmd = "notify-send -u {urgency_level} 'goo' '{subject.text}'"
+
+[[adverbs]]
+name = "urgency"
+kind = "selector"
+applies_to_verbs = ["notify"]
+default = "normal"
+description = "Notification urgency"
+
+[adverbs.values.low]
+template_var = { urgency_level = "low" }
+
+[adverbs.values.normal]
+template_var = { urgency_level = "normal" }
+
+[adverbs.values.critical]
+template_var = { urgency_level = "critical" }

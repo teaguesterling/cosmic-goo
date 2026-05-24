@@ -1,0 +1,53 @@
+name = "files"
+description = "File operations — open, reveal in file manager, copy path, read"
+
+# Conventions for inode/file subjects:
+#   - subject.text is the absolute path (canonical reference)
+#   - subject.metadata.path mirrors it (so handle-style subjects still work)
+#
+# This source enumerates regular files in $PWD up to depth 2. The intent is
+# launcher-style fuzzy resolution against "what's around me," not a full
+# filesystem search. For deeper traversal, pipe `fd` into a custom source.
+
+[[sources]]
+name = "files"
+prefix = "file"
+icon = "folder"
+emits = "inode/file"
+list_cmd = """find . -maxdepth 2 -type f ! -path '*/.git/*' 2>/dev/null \\
+  | head -200 \\
+  | jq -Rsc 'split("\\n")[:-1] | map(
+      ($ENV.PWD + "/" + .[2:]) as $abs |
+      {id: $abs, title: ((. | split("/"))[-1]), subtitle: ., text: $abs, metadata: {path: $abs}}
+    )'"""
+
+[[verbs]]
+name = "open"
+description = "Open a file in its default application"
+accepts = ["inode/*"]
+default_for = "inode/file"
+cmd = "xdg-open '{subject.text}'"
+
+[[verbs]]
+name = "reveal"
+description = "Open the containing folder in the file manager"
+accepts = ["inode/*"]
+cmd = "xdg-open \"$(dirname '{subject.text}')\""
+
+[[verbs]]
+name = "copy-path"
+description = "Copy the absolute path to the clipboard"
+accepts = ["inode/*"]
+cmd = "wl-copy <<< '{subject.text}'"
+
+[[verbs]]
+name = "read"
+description = "Print the file's contents to stdout"
+accepts = ["inode/file"]
+cmd = "cat '{subject.text}'"
+
+[[verbs]]
+name = "preview"
+description = "Print the first 40 lines of the file"
+accepts = ["inode/file"]
+cmd = "head -40 '{subject.text}'"

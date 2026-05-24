@@ -1,5 +1,5 @@
 name = "apps"
-description = "Running applications via cos-cli"
+description = "Running applications via cos-cli — activate, close, move, window state"
 
 [[types]]
 name = "application/vnd.cos-cli.app"
@@ -22,3 +22,35 @@ description = "Bring an app to focus"
 accepts = ["application/vnd.cos-cli.app"]
 default_for = "application/vnd.cos-cli.app"
 cmd = "$HOME/.cargo/bin/cos-cli activate -i {subject.metadata.index}"
+
+[[verbs]]
+name = "close"
+description = "Close an app"
+accepts = ["application/vnd.cos-cli.app"]
+cmd = "$HOME/.cargo/bin/cos-cli close -i {subject.metadata.index}"
+confirm = true
+
+[[verbs]]
+name = "move-to"
+description = "Move an app to a workspace"
+accepts = ["application/vnd.cos-cli.app"]
+object_type = "application/vnd.cos-cli.workspace"
+cmd = "$HOME/.cargo/bin/cos-cli move -i {subject.metadata.index} -w {object.metadata.index} -g {object.metadata.group_index}"
+
+[[verbs]]
+name = "maximize"
+description = "Maximize an app window"
+accepts = ["application/vnd.cos-cli.app"]
+cmd = "$HOME/.cargo/bin/cos-cli state -i {subject.metadata.index} --maximize"
+
+[[verbs]]
+name = "minimize"
+description = "Minimize an app window"
+accepts = ["application/vnd.cos-cli.app"]
+cmd = "$HOME/.cargo/bin/cos-cli state -i {subject.metadata.index} --minimize"
+
+[[verbs]]
+name = "fullscreen"
+description = "Toggle fullscreen for an app window"
+accepts = ["application/vnd.cos-cli.app"]
+cmd = "$HOME/.cargo/bin/cos-cli state -i {subject.metadata.index} --fullscreen"

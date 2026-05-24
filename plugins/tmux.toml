@@ -1,0 +1,45 @@
+name = "tmux"
+description = "tmux sessions via tmux-use (assumed at ~/.dotfiles/tmux-use/tmux-use.sh)"
+
+# tmux-use is a shell script the user has in their dotfiles. It's not on PATH
+# in the non-interactive shells goo runs from, so we point at the absolute
+# location. Override via the TMUX_USE env var if you keep it elsewhere.
+
+[[types]]
+name = "application/vnd.tmux-use.session"
+display = "tmux session"
+kind = "handle"
+
+[[sources]]
+name = "tmux"
+prefix = "tmux"
+icon = "utilities-terminal"
+emits = "application/vnd.tmux-use.session"
+# Fall back to vanilla `tmux ls` if tmux-use isn't around.
+list_cmd = """if [ -x "${TMUX_USE:-$HOME/.dotfiles/tmux-use/tmux-use.sh}" ]; then \\
+    "${TMUX_USE:-$HOME/.dotfiles/tmux-use/tmux-use.sh}" --json 2>/dev/null \\
+      || tmux list-sessions -F '#{session_name}' 2>/dev/null | jq -Rsc 'split("\\n")[:-1] | map({id:., title:., metadata:{name:.}})'; \\
+  else \\
+    tmux list-sessions -F '#{session_name}' 2>/dev/null | jq -Rsc 'split("\\n")[:-1] | map({id:., title:., metadata:{name:.}})'; \\
+  fi"""
+
+[[verbs]]
+name = "switch"
+description = "Switch to (or attach) a tmux session"
+accepts = ["application/vnd.tmux-use.session"]
+default_for = "application/vnd.tmux-use.session"
+cmd = "tmux switch-client -t '{subject.id}' 2>/dev/null || tmux attach-session -t '{subject.id}'"
+
+[[verbs]]
+name = "kill"
+description = "Kill a tmux session"
+accepts = ["application/vnd.tmux-use.session"]
+cmd = "tmux kill-session -t '{subject.id}'"
+confirm = true
+
+[[verbs]]
+name = "rename"
+description = "Rename a tmux session"
+accepts = ["application/vnd.tmux-use.session"]
+object_type = "text/plain"
+cmd = "tmux rename-session -t '{subject.id}' '{object.text}'"

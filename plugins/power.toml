@@ -1,0 +1,47 @@
+name = "power"
+description = "Session and power actions — lock, suspend, hibernate, shutdown"
+
+# These take no subject (accepts = [] elides the subject requirement).
+# All use loginctl/systemctl, which are always present on systemd hosts.
+# All except `lock` are confirmed before execution since they're disruptive.
+
+[[verbs]]
+name = "lock"
+description = "Lock the current session"
+accepts = []
+cmd = "loginctl lock-session"
+
+[[verbs]]
+name = "suspend"
+description = "Suspend (sleep) the machine"
+accepts = []
+cmd = "systemctl suspend"
+confirm = true
+
+[[verbs]]
+name = "hibernate"
+description = "Hibernate the machine"
+accepts = []
+cmd = "systemctl hibernate"
+confirm = true
+
+[[verbs]]
+name = "shutdown"
+description = "Power off the machine"
+accepts = []
+cmd = "systemctl poweroff"
+confirm = true
+
+[[verbs]]
+name = "reboot"
+description = "Restart the machine"
+accepts = []
+cmd = "systemctl reboot"
+confirm = true
+
+[[verbs]]
+name = "logout"
+description = "End the current session"
+accepts = []
+cmd = "loginctl terminate-user $USER"
+confirm = true

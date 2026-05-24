@@ -1,0 +1,78 @@
+name = "text-utilities"
+description = "Pure-text transforms — base64, hashing, case shifting, counting, escaping"
+
+# All verbs here are deterministic transforms of text/* subjects. No external
+# tools needed beyond coreutils + jq, which we assume universally. Templates
+# use single-quoted here-strings to be whitespace-safe.
+
+[[verbs]]
+name = "upper"
+description = "Convert to UPPERCASE"
+accepts = ["text/*"]
+cmd = "tr a-z A-Z <<< '{subject.text}'"
+
+[[verbs]]
+name = "lower"
+description = "Convert to lowercase"
+accepts = ["text/*"]
+cmd = "tr A-Z a-z <<< '{subject.text}'"
+
+[[verbs]]
+name = "wc"
+description = "Word, line, and character counts"
+accepts = ["text/*"]
+cmd = "wc -lwc <<< '{subject.text}'"
+
+[[verbs]]
+name = "trim"
+description = "Strip leading and trailing whitespace"
+accepts = ["text/*"]
+cmd = "awk '{$1=$1; print}' <<< '{subject.text}'"
+
+[[verbs]]
+name = "base64-encode"
+description = "Encode as base64"
+accepts = ["text/*"]
+cmd = "printf '%s' '{subject.text}' | base64 -w 0"
+
+[[verbs]]
+name = "base64-decode"
+description = "Decode from base64"
+accepts = ["text/*"]
+cmd = "printf '%s' '{subject.text}' | base64 -d"
+
+[[verbs]]
+name = "url-encode"
+description = "Percent-encode for use in a URL"
+accepts = ["text/*"]
+cmd = "printf '%s' '{subject.text}' | jq -sRr @uri"
+
+[[verbs]]
+name = "url-decode"
+description = "Decode a percent-encoded string"
+accepts = ["text/*"]
+cmd = "printf '%b' \"$(printf '%s' '{subject.text}' | sed 's/+/ /g; s/%/\\\\x/g')\""
+
+[[verbs]]
+name = "sha256"
+description = "Compute SHA-256 hex digest"
+accepts = ["text/*"]
+cmd = "printf '%s' '{subject.text}' | sha256sum | awk '{print $1}'"
+
+[[verbs]]
+name = "md5"
+description = "Compute MD5 hex digest"
+accepts = ["text/*"]
+cmd = "printf '%s' '{subject.text}' | md5sum | awk '{print $1}'"
+
+[[verbs]]
+name = "shell-escape"
+description = "Quote text for safe inclusion in a shell command"
+accepts = ["text/*"]
+cmd = "printf '%q\\n' '{subject.text}'"
+
+[[verbs]]
+name = "json-string"
+description = "Wrap text as a JSON-encoded string literal"
+accepts = ["text/*"]
+cmd = "printf '%s' '{subject.text}' | jq -sR ."

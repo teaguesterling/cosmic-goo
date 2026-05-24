@@ -175,13 +175,13 @@ cmd_validate() {
     local registry errors=0
     registry=$(plugin_load_all)
 
-    # 1. Verbs reference types that exist (loosely — accept globs).
-    while IFS= read -r verb_pattern; do
-        # `accepts` patterns must be non-empty; types referenced by exact name
-        # should exist in either the registry or be standard MIME types. For
-        # Phase 1 we only enforce non-empty.
-        [ -z "$verb_pattern" ] && { printf 'verb has empty accept pattern\n' >&2; errors=$((errors+1)); }
-    done < <(jq -r '.verbs[] | .accepts[]? // ""' <<<"$registry")
+    # 1. Verbs may declare `accepts = []` (no subject required, like `lock`),
+    #    but if they declare a pattern list it can't contain empty strings.
+    while IFS= read -r verb_name; do
+        [ -z "$verb_name" ] && continue
+        printf 'verb "%s" has an empty accept pattern\n' "$verb_name" >&2
+        errors=$((errors+1))
+    done < <(jq -r '.verbs[] | select((.accepts // []) | any(. == "")) | .name' <<<"$registry")
 
     # 2. Adverbs declare scope (applies_to or applies_to_verbs).
     while IFS= read -r adverb_name; do
@@ -309,8 +309,16 @@ cmd_verb() {
     local subject_arg=${positionals[0]:-}
     local object_arg=${positionals[1]:-}
 
-    local subject object=null
-    subject=$(resolve_subject "$verb" "$subject_arg") || exit 1
+    local subject=null object=null
+    local accepts_count
+    accepts_count=$(jq '.accepts // [] | length' <<<"$verb")
+    if [ "$accepts_count" -gt 0 ]; then
+        subject=$(resolve_subject "$verb" "$subject_arg") || exit 1
+    elif [ -n "$subject_arg" ]; then
+        # Verb declares no accepts but a positional was given anyway. Treat as
+        # text content so the template can still reference {subject.text}.
+        subject=$(jq -nc --arg text "$subject_arg" '{type:"text/plain", text:$text}')
+    fi
     if [ -n "$object_arg" ]; then
         # Treat object same way for now (text or via source lookup).
         object=$(resolve_subject "$verb" "$object_arg") || exit 1

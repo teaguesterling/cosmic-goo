@@ -1,0 +1,47 @@
+name = "urls"
+description = "URL actions — open in browser, web search, QR generation"
+
+[[verbs]]
+name = "open-url"
+description = "Open a URL in the default browser"
+accepts = ["text/x-uri"]
+default_for = "text/x-uri"
+cmd = "xdg-open '{subject.text}'"
+
+[[verbs]]
+name = "search"
+description = "Search the web for the selected text"
+accepts = ["text/*"]
+uses_adverbs = ["engine"]
+cmd = "xdg-open \"{engine_url}$(jq -srR @uri <<< '{subject.text}')\""
+
+[[adverbs]]
+name = "engine"
+kind = "selector"
+applies_to_verbs = ["search"]
+default = "ddg"
+description = "Which search engine to use"
+
+[adverbs.values.ddg]
+description = "DuckDuckGo"
+template_var = { engine_url = "https://duckduckgo.com/?q=" }
+
+[adverbs.values.google]
+description = "Google"
+template_var = { engine_url = "https://www.google.com/search?q=" }
+
+[adverbs.values.github]
+description = "GitHub code search"
+template_var = { engine_url = "https://github.com/search?type=code&q=" }
+
+[adverbs.values.mdn]
+description = "Mozilla Developer Network (web docs)"
+template_var = { engine_url = "https://developer.mozilla.org/en-US/search?q=" }
+
+[adverbs.values.crates]
+description = "crates.io (Rust packages)"
+template_var = { engine_url = "https://crates.io/search?q=" }
+
+[adverbs.values.wikipedia]
+description = "Wikipedia"
+template_var = { engine_url = "https://en.wikipedia.org/w/index.php?search=" }
