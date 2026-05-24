@@ -127,10 +127,13 @@ EOF
     [ "$(cat "$DUMP_FILE")" = "WRAPPED:default route text:END" ]
 }
 
-@test "goo compose prints stub message" {
-    run "$GOO" compose
-    [ "$status" -ne 0 ]
-    [[ "$output" =~ "Phase 4 feature" ]]
+@test "goo compose cancels cleanly with an empty pick" {
+    # Drive the picker with an empty answer (= cancel at the subject step).
+    local ans="$BATS_TEST_TMPDIR/ans"
+    printf '\n' > "$ans"
+    GOO_COMPOSE_ANSWERS="$ans" run "$GOO" compose
+    [ "$status" -eq 130 ]
+    [[ "$output" =~ "cancelled" ]]
 }
 
 # ---------------- addressing through the CLI ----------------

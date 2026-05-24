@@ -3,13 +3,13 @@
 ## Synopsis
 
 ```
-goo                                      # opens compose dialog (Phase 4 stub)
+goo                                      # opens the compose dialog (picker-driven)
 goo <verb> [POSITIONAL ...] [--FLAG=VALUE ...]
 goo list <source>
 goo describe <verb>
 goo plugins
 goo validate
-goo compose [partial-sentence]           # Phase 4 stub
+goo compose                              # picker-driven subject→verb→object dialog
 goo --help | -h | help
 ```
 
@@ -68,7 +68,16 @@ $ goo list apps | jq '.[].id'
 
 ### `goo compose`
 
-A Phase 4 stub. Prints a message and exits non-zero. The compose dialog (a libcosmic/iced binary) is implemented later.
+Opens a picker-driven dialog that walks you through building a sentence: pick a **subject** (current selection/clipboard, or an item from any source), then a **verb** (filtered to those that accept the subject's type), then an **object** if the verb takes one, then any **adverb** values, then confirm a preview and execute.
+
+It drives a dmenu-protocol picker — `fuzzel`, `rofi`, `wofi`, or `fzf`, auto-detected (override with `GOO_PICKER`). Each step reuses the same backend as the CLI (`address_resolve`, `verb_for_subject`, `verb_apply`), so a compose run executes identically to typing the equivalent `goo <verb> <subject> …`.
+
+```bash
+goo compose                 # auto-detected picker
+GOO_PICKER=rofi goo compose # force a specific picker
+```
+
+> This is the v0 shell dialog — a sequential picker, not yet the spec's side-by-side three-panel GUI. The native libcosmic/iced version is later polish on the same flow. Scripted/test invocations can pre-seed selections via `GOO_COMPOSE_ANSWERS` (a file with one choice per line).
 
 ## Verb invocation
 

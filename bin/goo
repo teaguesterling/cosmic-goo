@@ -2,11 +2,11 @@
 # bin/goo — cosmic-goo CLI entry point.
 #
 # Usage:
-#   goo                                # opens compose dialog (stub in Phase 1)
+#   goo                                # opens the compose dialog (picker-driven)
 #   goo <verb> [POSITIONAL...] [--adverb=VALUE]
 #   goo list <source>                  # raw JSON of source items
 #   goo describe <verb>                # show verb's accepts, adverbs, template
-#   goo compose [partial-sentence]     # explicitly launch compose dialog (stub)
+#   goo compose                        # pick subject → verb → object → adverbs
 #   goo plugins                        # list loaded plugins
 #   goo validate                       # check all plugins for errors
 #   goo -h | --help                    # this message
@@ -38,6 +38,8 @@ export COSMIC_GOO_BUILTIN_PLUGINS_DIR="${COSMIC_GOO_BUILTIN_PLUGINS_DIR:-$GOO_DI
 . "$GOO_DIR/lib/verbs.sh"
 # shellcheck source=../lib/address.sh
 . "$GOO_DIR/lib/address.sh"
+# shellcheck source=../lib/dialog.sh
+. "$GOO_DIR/lib/dialog.sh"
 
 # ---------------- helpers ----------------
 
@@ -46,11 +48,11 @@ usage() {
 goo — Grammar Of Operations CLI
 
 USAGE
-    goo                                  Open compose dialog (Phase 4; stub for now)
+    goo                                  Open the compose dialog (picker-driven)
     goo <verb> [POSITIONAL...] [--FLAG=VALUE]
     goo list <source>                    Emit source items as JSON
     goo describe <verb>                  Show verb details
-    goo compose [partial-sentence]       Launch compose dialog (stub)
+    goo compose                          Pick subject → verb → object → adverbs
     goo plugins                          List loaded plugins
     goo validate                         Validate all loaded plugins
 
@@ -395,13 +397,91 @@ cmd_complete() {
     esac
 }
 
-# ---------------- subcommand: compose (stub) ----------------
+# ---------------- subcommand: compose (picker-driven dialog) ----------------
+
+# Emit subject candidates as "address<TAB>label" lines for the picker.
+_compose_subject_candidates() {
+    local registry
+    registry=$(plugin_load_all)
+    # Implicit text subjects first.
+    local sel clip
+    sel=$(selection_primary | head -c 60)
+    clip=$(selection_clipboard | head -c 60)
+    [ -n "$sel" ]  && printf ':sel:\tselection: %s\n' "$sel"
+    [ -n "$clip" ] && printf ':clip:\tclipboard: %s\n' "$clip"
+    # Enumerable sources with a prefix: list their items as :prefix:id.
+    local source prefix name list_cmd
+    while IFS= read -r source; do
+        prefix=$(jq -r '.prefix // empty' <<<"$source")
+        name=$(jq -r '.name' <<<"$source")
+        [ -z "$prefix" ] && continue
+        # Skip the text capture sources (covered by :sel:/:clip: above).
+        case "$name" in selection|clipboard) continue ;; esac
+        list_cmd=$(jq -r '.list_cmd // empty' <<<"$source")
+        [ -z "$list_cmd" ] && continue
+        bash -c "$list_cmd" 2>/dev/null | jq -r --arg p "$prefix" --arg s "$name" '
+            .[]? | ":\($p):\(.id)\t\(.title // .id) (\($s))"
+        ' 2>/dev/null
+    done < <(jq -c '.sources[]' <<<"$registry")
+}
 
 cmd_compose() {
-    printf 'goo compose: the compose dialog is a Phase 4 feature.\n' >&2
-    # shellcheck disable=SC2016
-    printf 'For now use `goo <verb> [args]` directly or pipe through stdin.\n' >&2
-    return 1
+    # 1. Subject.
+    local subj_line subj_addr subject
+    subj_line=$(_compose_subject_candidates | dialog_pick "Subject") || { echo "compose: cancelled" >&2; return 130; }
+    subj_addr=${subj_line%%$'\t'*}        # strip the label after the tab
+    subject=$(address_resolve "$subj_addr") || { echo "compose: could not resolve subject '$subj_addr'" >&2; return 1; }
+    local subject_type
+    subject_type=$(jq -r '.type // "text/plain"' <<<"$subject")
+
+    # 2. Verb (filtered to those accepting the subject's type).
+    local verbs verb_name verb
+    verbs=$(verb_for_subject "$subject" | jq -r '.name' | sort -u)
+    [ -z "$verbs" ] && { echo "compose: no verbs accept type $subject_type" >&2; return 1; }
+    verb_name=$(printf '%s\n' "$verbs" | dialog_pick "Verb [$subject_type]") || { echo "compose: cancelled" >&2; return 130; }
+    verb=$(verb_lookup "$verb_name") || { echo "compose: unknown verb '$verb_name'" >&2; return 1; }
+
+    # 3. Object, if the verb takes one.
+    local object=null object_type
+    object_type=$(jq -r '.object_type // empty' <<<"$verb")
+    if [ -n "$object_type" ]; then
+        local obj_cands obj_line obj_addr
+        obj_cands=$(_compose_subject_candidates | grep -F -- ":" || true)
+        obj_line=$(printf '%s\n' "$obj_cands" | dialog_pick "Object [$object_type]") \
+            || { echo "compose: cancelled" >&2; return 130; }
+        obj_addr=${obj_line%%$'\t'*}
+        object=$(address_resolve "$obj_addr") || { echo "compose: could not resolve object" >&2; return 1; }
+    fi
+
+    # 4. Adverbs the verb opts into (selector values; fills are typed).
+    local adverbs='{}' aname avalue adverb kind
+    while IFS= read -r aname; do
+        [ -z "$aname" ] && continue
+        adverb=$(jq -c --arg n "$aname" '.adverbs[] | select(.name==$n)' <<<"$(plugin_load_all)")
+        [ -z "$adverb" ] && continue
+        kind=$(jq -r '.kind // "selector"' <<<"$adverb")
+        if [ "$kind" = "selector" ]; then
+            avalue=$(jq -r '.values // {} | keys[]' <<<"$adverb" | dialog_pick "--$aname") || continue
+        else
+            avalue=$(printf '' | dialog_pick "--$aname (type a value)") || continue
+        fi
+        [ -n "$avalue" ] && adverbs=$(jq -c --arg n "$aname" --arg v "$avalue" '. + {($n): $v}' <<<"$adverbs")
+    done < <(jq -r '.uses_adverbs[]?' <<<"$verb")
+
+    # 5. Preview + confirm.
+    local preview
+    preview="goo $verb_name $subj_addr"
+    [ "$object" != "null" ] && preview+=" <object>"
+    local pairs
+    pairs=$(jq -r 'to_entries[]? | "--\(.key)=\(.value)"' <<<"$adverbs" | tr '\n' ' ')
+    [ -n "$pairs" ] && preview+=" ${pairs% }"
+    if ! dialog_confirm "Run: $preview ?"; then
+        echo "compose: cancelled" >&2
+        return 130
+    fi
+
+    # 6. Execute through the same path the CLI uses.
+    verb_apply "$verb" "$subject" "$object" "$adverbs"
 }
 
 # ---------------- verb invocation ----------------
