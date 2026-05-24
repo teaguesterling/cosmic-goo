@@ -2,7 +2,12 @@ name = "text-utilities"
 description = "Pure-text transforms — base64, hashing, case shifting, counting, escaping"
 
 # {subject.text|q} shell-quotes the content so it survives as a single safe
-# here-string token regardless of embedded quotes/newlines/metacharacters.
+# token regardless of embedded quotes/newlines/metacharacters.
+#
+# Byte-exact verbs (base64, hashes, url-encode, json-string) feed content via
+# `printf '%s'` so no trailing newline is added — `goo sha256 "hello"` hashes
+# exactly "hello", not "hello\n". Line-oriented verbs (upper/lower/wc/trim)
+# use `<<<`, where the trailing newline is harmless or wanted (wc line count).
 
 [[verbs]]
 name = "upper"
@@ -32,43 +37,43 @@ cmd = "awk '{$1=$1; print}' <<< {subject.text|q}"
 name = "base64-encode"
 description = "Encode as base64"
 accepts = ["text/*"]
-cmd = "base64 -w 0 <<< {subject.text|q}"
+cmd = "printf '%s' {subject.text|q} | base64 -w 0"
 
 [[verbs]]
 name = "base64-decode"
 description = "Decode from base64"
 accepts = ["text/*"]
-cmd = "base64 -d <<< {subject.text|q}"
+cmd = "printf '%s' {subject.text|q} | base64 -d"
 
 [[verbs]]
 name = "url-encode"
 description = "Percent-encode for use in a URL"
 accepts = ["text/*"]
-cmd = "jq -sRr @uri <<< {subject.text|q}"
+cmd = "printf '%s' {subject.text|q} | jq -sRr @uri"
 
 [[verbs]]
 name = "url-decode"
 description = "Decode a percent-encoded string"
 accepts = ["text/*"]
-cmd = "python3 -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.unquote(sys.stdin.read()))' <<< {subject.text|q}"
+cmd = "printf '%s' {subject.text|q} | python3 -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.unquote(sys.stdin.read()))'"
 
 [[verbs]]
 name = "sha256"
 description = "Compute SHA-256 hex digest"
 accepts = ["text/*"]
-cmd = "sha256sum <<< {subject.text|q} | awk '{print $1}'"
+cmd = "printf '%s' {subject.text|q} | sha256sum | awk '{print $1}'"
 
 [[verbs]]
 name = "md5"
 description = "Compute MD5 hex digest"
 accepts = ["text/*"]
-cmd = "md5sum <<< {subject.text|q} | awk '{print $1}'"
+cmd = "printf '%s' {subject.text|q} | md5sum | awk '{print $1}'"
 
 [[verbs]]
 name = "json-string"
 description = "Wrap text as a JSON-encoded string literal"
 accepts = ["text/*"]
-cmd = "jq -sR . <<< {subject.text|q}"
+cmd = "printf '%s' {subject.text|q} | jq -sR ."
 
 [[verbs]]
 name = "shell-escape"

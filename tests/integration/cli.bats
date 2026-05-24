@@ -35,14 +35,33 @@ name = "test-verbs"
 [[verbs]]
 name = "echo-back"
 accepts = ["text/*"]
-# Phase-1 template authors must quote substitutions to be whitespace-safe.
-cmd = "printf '%s' '{subject.text}'"
+cmd = "printf '%s' {subject.text|q}"
 
 [[verbs]]
 name = "wrap"
 accepts = ["text/*"]
 uses_adverbs = ["via"]
 prompt = "WRAPPED:{subject.text}:END"
+
+[[verbs]]
+name = "name-of"
+accepts = ["application/vnd.test.gadget"]
+cmd = "printf '%s' {subject.id|q}"
+EOF
+
+    # A handle source + a custom sigil, for addressing tests.
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/test-gadgets.toml" <<'EOF'
+name = "test-gadgets"
+
+[[sources]]
+name = "gadgets"
+prefix = "gad"
+emits = "application/vnd.test.gadget"
+list_cmd = "echo '[{\"id\":\"sprocket\",\"title\":\"Sprocket\"},{\"id\":\"cog\",\"title\":\"Cog\"}]'"
+
+[[sigils]]
+char = "%"
+expands = ":gad:"
 EOF
 
     cd "$BATS_TEST_TMPDIR" || return 1
@@ -112,4 +131,55 @@ EOF
     run "$GOO" compose
     [ "$status" -ne 0 ]
     [[ "$output" =~ "Phase 4 feature" ]]
+}
+
+# ---------------- addressing through the CLI ----------------
+
+@test "goo VERB reads piped stdin when no positional given" {
+    run bash -c 'printf "%s" "from a pipe" | "$0" echo-back' "$GOO"
+    [ "$status" -eq 0 ]
+    [ "$output" = "from a pipe" ]
+}
+
+@test "goo VERB with a positional ignores stdin" {
+    run bash -c 'printf "%s" "PIPED" | "$0" echo-back "explicit"' "$GOO"
+    [ "$status" -eq 0 ]
+    [ "$output" = "explicit" ]
+}
+
+@test "goo VERB reads a native file path (contents, not the path)" {
+    printf 'file body' > "$BATS_TEST_TMPDIR/note.txt"
+    run "$GOO" echo-back "$BATS_TEST_TMPDIR/note.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "file body" ]
+}
+
+@test "goo VERB errors on a missing native file path" {
+    run "$GOO" echo-back "$BATS_TEST_TMPDIR/does-not-exist.txt" </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "no such file" ]]
+}
+
+@test "goo HANDLE-VERB resolves :source:item" {
+    run "$GOO" name-of ":gad:sprocket" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "sprocket" ]
+}
+
+@test "goo HANDLE-VERB resolves a custom sigil (% -> :gad:)" {
+    run "$GOO" name-of "%cog" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "cog" ]
+}
+
+@test "goo HANDLE-VERB resolves a bare positional via type search" {
+    run "$GOO" name-of "sprocket" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "sprocket" ]
+}
+
+@test "goo list emits a source's raw JSON" {
+    run "$GOO" list gadgets </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e 'map(.id) | contains(["sprocket","cog"])' >/dev/null
 }
