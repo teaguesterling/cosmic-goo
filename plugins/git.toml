@@ -1,0 +1,44 @@
+name = "git"
+description = "Git repositories — open, status, pull, GitHub PRs"
+
+[[types]]
+name = "application/vnd.git.repo"
+display = "git repository"
+kind = "handle"
+
+[[sources]]
+name = "repos"
+prefix = "repo"
+icon = "folder-git"
+emits = "application/vnd.git.repo"
+# Discover repos under GOO_GIT_ROOTS (default ~/Projects ~/.dotfiles). -L
+# follows the common ~/Projects -> /mnt/... symlink. .path is the worktree.
+list_cmd = """find -L ${GOO_GIT_ROOTS:-$HOME/Projects $HOME/.dotfiles} -maxdepth 2 -type d -name .git 2>/dev/null \\
+  | sed 's|/.git$||' \\
+  | jq -Rsc 'split("\\n")[:-1] | map({id: ., title: (. | split("/") | last), subtitle: ., metadata: {path: .}})'"""
+
+[[verbs]]
+name = "open-repo"
+description = "Open the repository in the file manager"
+accepts = ["application/vnd.git.repo"]
+default_for = "application/vnd.git.repo"
+cmd = "xdg-open {subject.metadata.path|q}"
+
+[[verbs]]
+name = "git-status"
+description = "Show short status"
+accepts = ["application/vnd.git.repo"]
+cmd = "git -C {subject.metadata.path|q} status -sb"
+
+[[verbs]]
+name = "git-pull"
+description = "Pull the current branch"
+accepts = ["application/vnd.git.repo"]
+cmd = "git -C {subject.metadata.path|q} pull"
+confirm = true
+
+[[verbs]]
+name = "gh-pr-list"
+description = "List open GitHub PRs"
+accepts = ["application/vnd.git.repo"]
+cmd = "cd {subject.metadata.path|q} && gh pr list"

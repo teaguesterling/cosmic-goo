@@ -1,0 +1,9 @@
+name = "calculator"
+description = "Evaluate expressions with qalc (libqalculate)"
+
+[[verbs]]
+name = "calc"
+description = "Evaluate a mathematical expression"
+accepts = ["text/*"]
+# -t = terse (value only). Works on a positional or the current selection.
+cmd = "qalc -t {subject.text|q}"

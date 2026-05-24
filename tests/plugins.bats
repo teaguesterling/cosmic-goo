@@ -36,11 +36,48 @@ setup() {
     done
 }
 
+@test "real plugins: tier-2 verbs are present" {
+    local verbs
+    verbs=$("$GOO" __complete verbs </dev/null)
+    for v in calc \
+             play-pause next now-playing \
+             volume-up mute-toggle set-default-sink \
+             open-repo git-status git-pull gh-pr-list \
+             service-status service-restart service-journal \
+             bt-connect net-up; do
+        echo "$verbs" | grep -qx "$v" || { echo "missing tier-2 verb: $v" >&2; return 1; }
+    done
+}
+
 @test "real plugins: expected sources are present" {
     local sources
     sources=$("$GOO" __complete sources </dev/null)
-    for s in selection clipboard apps workspaces files tmux; do
+    for s in selection clipboard apps workspaces files tmux \
+             sinks services repos bluetooth connections; do
         echo "$sources" | grep -qx "$s" || { echo "missing source: $s" >&2; return 1; }
+    done
+}
+
+@test "real plugins: calc evaluates an expression" {
+    run "$GOO" calc "2+2*10" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "22" ]
+}
+
+@test "real plugins: destructive tier-2 verbs require confirmation" {
+    for v in git-pull service-restart service-stop; do
+        run "$GOO" describe "$v" </dev/null
+        [ "$status" -eq 0 ]
+        [[ "$output" =~ "confirm: true" ]] || { echo "$v missing confirm" >&2; return 1; }
+    done
+}
+
+@test "real plugins: media/audio transport verbs take no subject" {
+    for v in play-pause volume-up mute-toggle; do
+        run "$GOO" describe "$v" </dev/null
+        [ "$status" -eq 0 ]
+        # empty accepts renders as "accepts: " with nothing after
+        echo "$output" | grep -q "^accepts: *$" || { echo "$v should have empty accepts" >&2; return 1; }
     done
 }
 

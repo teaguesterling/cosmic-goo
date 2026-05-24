@@ -1,0 +1,42 @@
+name = "services"
+description = "systemd user services — status, restart, journal"
+
+[[types]]
+name = "application/vnd.systemd.unit"
+display = "systemd user unit"
+kind = "handle"
+
+[[sources]]
+name = "services"
+prefix = "svc"
+icon = "applications-system"
+emits = "application/vnd.systemd.unit"
+list_cmd = """systemctl --user list-units --type=service --no-legend --output=json 2>/dev/null \\
+  | jq '[.[] | {id: .unit, title: (.description // .unit), subtitle: .active}]'"""
+
+[[verbs]]
+name = "service-status"
+description = "Show unit status"
+accepts = ["application/vnd.systemd.unit"]
+default_for = "application/vnd.systemd.unit"
+cmd = "systemctl --user status {subject.id|q} --no-pager | head -n 25"
+
+[[verbs]]
+name = "service-restart"
+description = "Restart the unit"
+accepts = ["application/vnd.systemd.unit"]
+cmd = "systemctl --user restart {subject.id|q}"
+confirm = true
+
+[[verbs]]
+name = "service-stop"
+description = "Stop the unit"
+accepts = ["application/vnd.systemd.unit"]
+cmd = "systemctl --user stop {subject.id|q}"
+confirm = true
+
+[[verbs]]
+name = "service-journal"
+description = "Tail the unit's journal (last 50 lines)"
+accepts = ["application/vnd.systemd.unit"]
+cmd = "journalctl --user -u {subject.id|q} -n 50 --no-pager"

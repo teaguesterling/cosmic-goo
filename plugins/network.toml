@@ -1,0 +1,30 @@
+name = "network"
+description = "NetworkManager connections — bring up / down (nmcli)"
+
+[[types]]
+name = "application/vnd.nm.connection"
+display = "network connection"
+kind = "handle"
+
+[[sources]]
+name = "connections"
+prefix = "net"
+icon = "network-wireless"
+emits = "application/vnd.nm.connection"
+# nmcli -t uses ':' as a field separator; simple connection names don't
+# contain colons. The connection NAME is the id `nmcli connection up` wants.
+list_cmd = """nmcli -t -f NAME,TYPE connection show 2>/dev/null \\
+  | jq -Rsc 'split("\\n")[:-1] | map(split(":") | {id: .[0], title: .[0], subtitle: .[1]})'"""
+
+[[verbs]]
+name = "net-up"
+description = "Activate the connection"
+accepts = ["application/vnd.nm.connection"]
+default_for = "application/vnd.nm.connection"
+cmd = "nmcli connection up {subject.id|q}"
+
+[[verbs]]
+name = "net-down"
+description = "Deactivate the connection"
+accepts = ["application/vnd.nm.connection"]
+cmd = "nmcli connection down {subject.id|q}"

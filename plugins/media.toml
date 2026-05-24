@@ -1,0 +1,34 @@
+name = "media"
+description = "Media player transport via playerctl (MPRIS)"
+
+# No-subject verbs (accepts = []) — they act on the active MPRIS player.
+
+[[verbs]]
+name = "play-pause"
+description = "Toggle play/pause on the active player"
+accepts = []
+cmd = "playerctl play-pause"
+
+[[verbs]]
+name = "next"
+description = "Skip to the next track"
+accepts = []
+cmd = "playerctl next"
+
+[[verbs]]
+name = "prev"
+description = "Skip to the previous track"
+accepts = []
+cmd = "playerctl previous"
+
+[[verbs]]
+name = "stop"
+description = "Stop playback"
+accepts = []
+cmd = "playerctl stop"
+
+[[verbs]]
+name = "now-playing"
+description = "Print the current track"
+accepts = []
+cmd = "playerctl metadata --format '{{artist}} - {{title}}'"

@@ -1,0 +1,32 @@
+name = "bluetooth"
+description = "Bluetooth paired devices — connect / disconnect (bluez)"
+
+[[types]]
+name = "application/vnd.bluez.device"
+display = "bluetooth device"
+kind = "handle"
+
+[[sources]]
+name = "bluetooth"
+prefix = "bt"
+icon = "bluetooth"
+emits = "application/vnd.bluez.device"
+# `timeout` keeps a stalled/absent controller from hanging the compose dialog.
+# `bluetoothctl devices Paired` lines look like: "Device AA:BB:.. Name Here".
+list_cmd = """timeout 2 bluetoothctl devices Paired 2>/dev/null \\
+  | jq -Rsc 'split("\\n")[:-1]
+      | map(sub("^Device ";"")
+            | {id: (split(" ")[0]), title: (split(" ") | .[1:] | join(" "))})'"""
+
+[[verbs]]
+name = "bt-connect"
+description = "Connect to the device"
+accepts = ["application/vnd.bluez.device"]
+default_for = "application/vnd.bluez.device"
+cmd = "bluetoothctl connect {subject.id|q}"
+
+[[verbs]]
+name = "bt-disconnect"
+description = "Disconnect the device"
+accepts = ["application/vnd.bluez.device"]
+cmd = "bluetoothctl disconnect {subject.id|q}"

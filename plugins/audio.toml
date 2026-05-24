@@ -1,0 +1,42 @@
+name = "audio"
+description = "Audio volume and output device control (wpctl / pactl)"
+
+[[types]]
+name = "application/vnd.pipewire.sink"
+display = "audio output"
+kind = "handle"
+
+[[sources]]
+name = "sinks"
+prefix = "sink"
+icon = "audio-speakers"
+emits = "application/vnd.pipewire.sink"
+# Stable sink `name` is the id (what pactl set-default-sink wants).
+list_cmd = """pactl list short sinks \\
+  | jq -Rsc 'split("\\n")[:-1] | map(split("\\t") | {id: .[1], title: .[1], metadata: {index: .[0]}})'"""
+
+# No-subject verbs act on the default sink.
+[[verbs]]
+name = "volume-up"
+description = "Raise the default output volume 5%"
+accepts = []
+cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"
+
+[[verbs]]
+name = "volume-down"
+description = "Lower the default output volume 5%"
+accepts = []
+cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"
+
+[[verbs]]
+name = "mute-toggle"
+description = "Toggle mute on the default output"
+accepts = []
+cmd = "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
+
+[[verbs]]
+name = "set-default-sink"
+description = "Make this sink the default output"
+accepts = ["application/vnd.pipewire.sink"]
+default_for = "application/vnd.pipewire.sink"
+cmd = "pactl set-default-sink {subject.id|q}"
