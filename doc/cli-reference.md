@@ -133,6 +133,34 @@ goo list apps | jq .
 | `XDG_CONFIG_HOME` | Standard XDG; user plugin dir is `$XDG_CONFIG_HOME/cosmic-goo/plugins` | `$HOME/.config` |
 | `COS_CLI` | Override the `cos-cli` binary used by `focused_app` and the apps plugin | Auto-resolved from PATH or `$HOME/.cargo/bin/cos-cli` |
 
+## Shell completion
+
+A bash completion script lives at [`completions/goo.bash`](https://github.com/teaguesterling/cosmic-goo/blob/main/completions/goo.bash). It completes subcommands, verb names, source names, adverb flags, and adverb values — driven by the hidden `goo __complete <stage>` surface so the candidate list always matches the loaded registry.
+
+Install to the standard XDG user location:
+
+```bash
+make install-completion
+```
+
+Or source it directly from your shell init:
+
+```bash
+. /path/to/cosmic-goo/completions/goo.bash
+```
+
+What it completes:
+
+| At cursor | TAB completes |
+|---|---|
+| `goo <TAB>` | subcommands + verb names |
+| `goo describe <TAB>` | verb names |
+| `goo list <TAB>` | source names |
+| `goo VERB --<TAB>` | adverbs the verb opts into (`--name=`) |
+| `goo VERB --flag=<TAB>` | selector values for that adverb |
+
+Zsh completion piggybacks on the same `__complete` backend — script TBD.
+
 ## Plugin discovery order
 
 `goo` loads plugins from these directories in order. Later wins for name collisions, so user plugins override built-ins:

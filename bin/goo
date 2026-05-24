@@ -258,6 +258,59 @@ cmd_describe() {
     ' <<<"$verb"
 }
 
+# ---------------- subcommand: __complete (for shell completions) ----------------
+#
+# Hidden surface. Bash/zsh completion scripts call this to get candidates for
+# the various positions in a command line. Quiet on miss — must never error
+# during TAB completion or it'll wedge the user's shell.
+
+cmd_complete() {
+    local stage=${1:-}
+    local arg=${2:-}
+    local registry
+    registry=$(plugin_load_all 2>/dev/null) || return 0
+    case "$stage" in
+        subcommands)
+            # static subcommands plus all verb names
+            printf 'list\ndescribe\nplugins\nvalidate\ncompose\nhelp\n'
+            jq -r '.verbs[]?.name' <<<"$registry"
+            ;;
+        verbs)
+            jq -r '.verbs[]?.name' <<<"$registry"
+            ;;
+        sources)
+            jq -r '.sources[]?.name' <<<"$registry"
+            ;;
+        adverbs)
+            # arg is the verb name; emit adverbs the verb opts into.
+            [ -z "$arg" ] && return 0
+            jq -r --arg v "$arg" '
+                .verbs[] | select(.name == $v) | (.uses_adverbs // [])[]
+            ' <<<"$registry"
+            ;;
+        adverb-values)
+            # arg is the adverb name; emit its selector values.
+            [ -z "$arg" ] && return 0
+            jq -r --arg a "$arg" '
+                .adverbs[] | select(.name == $a) | (.values // {}) | keys[]
+            ' <<<"$registry"
+            ;;
+        source-items)
+            # arg is the source name; emit ids (one per line). May invoke
+            # the source's list_cmd, which can be slow — completions that
+            # call this should be optional/explicit.
+            [ -z "$arg" ] && return 0
+            local list_cmd
+            list_cmd=$(jq -r --arg s "$arg" '.sources[] | select(.name == $s) | .list_cmd' <<<"$registry")
+            [ -z "$list_cmd" ] && return 0
+            bash -c "$list_cmd" 2>/dev/null | jq -r '.[]?.id // empty' 2>/dev/null
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
 # ---------------- subcommand: compose (stub) ----------------
 
 cmd_compose() {
@@ -335,6 +388,7 @@ case "${1:-}" in
     describe)          shift; cmd_describe "$@" ;;
     plugins)           shift; cmd_plugins "$@" ;;
     validate)          shift; cmd_validate "$@" ;;
+    __complete)        shift; cmd_complete "$@" ;;
     -h|--help|help)    usage ;;
     *)                 cmd_verb "$@" ;;
 esac

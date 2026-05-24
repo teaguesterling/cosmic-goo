@@ -4,7 +4,7 @@
 
 SHELL := /bin/bash
 
-.PHONY: help test shellcheck validate install install-user clean docs serve docs-install
+.PHONY: help test shellcheck validate install install-user clean docs serve docs-install install-completion
 
 help:  ## Show this help
 	@awk 'BEGIN { FS = ":.*##"; printf "Available targets:\n" } /^[a-zA-Z0-9_-]+:.*##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -70,6 +70,13 @@ docs-install:  ## Print install hints for the docs toolchain
 	@echo "  pipx install mkdocs && pipx inject mkdocs mkdocs-material"
 	@echo "  pip install --user -r requirements-docs.txt"
 	@echo "  python -m venv .venv && .venv/bin/pip install -r requirements-docs.txt"
+
+install-completion:  ## Install the bash completion to ~/.local/share/bash-completion/completions/goo
+	@dest="$${XDG_DATA_HOME:-$$HOME/.local/share}/bash-completion/completions"; \
+	mkdir -p "$$dest"; \
+	cp completions/goo.bash "$$dest/goo"; \
+	echo "Installed to $$dest/goo"; \
+	echo "Open a new shell or run: source $$dest/goo"
 
 clean:  ## Remove build artifacts
 	@rm -rf dist/ build/ site/
