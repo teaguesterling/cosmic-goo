@@ -11,10 +11,13 @@
 #   goo validate                       # check all plugins for errors
 #   goo -h | --help                    # this message
 
-# Resolve repo root from script location. Don't set -e: we use explicit error
-# handling so verb_lookup misses etc. don't accidentally abort the script.
+# Resolve repo root from script location. Follow symlinks first so a
+# `~/.local/bin/goo -> /path/to/cosmic-goo/bin/goo` install still finds
+# its sibling lib/ and plugins/ directories.
+# Don't set -e: we use explicit error handling so verb_lookup misses
+# etc. don't accidentally abort the script.
 set -uo pipefail
-GOO_DIR=$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+GOO_DIR=$(cd "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)
 
 # Default the built-in plugins dir to repo's plugins/ if not already set. This
 # is what makes `bin/goo` work straight out of a dev checkout. A production
