@@ -8,11 +8,12 @@ setup() {
 
     # Isolate this test run from the real filesystem by pointing all four
     # discovery dirs at empty paths and then overriding the built-in dir
-    # to our fixture.
+    # to our fixture. XDG_RUNTIME_DIR isolates the registry cache.
     export COSMIC_GOO_BUILTIN_PLUGINS_DIR="$BATS_TEST_TMPDIR/builtin"
     export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/xdg-config"
+    export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/runtime"
     HOME="$BATS_TEST_TMPDIR/home"
-    mkdir -p "$COSMIC_GOO_BUILTIN_PLUGINS_DIR" "$XDG_CONFIG_HOME"
+    mkdir -p "$COSMIC_GOO_BUILTIN_PLUGINS_DIR" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
 
     cd "$BATS_TEST_TMPDIR" || return 1   # PWD-based dir won't accidentally match
 }

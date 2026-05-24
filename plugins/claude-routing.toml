@@ -1,8 +1,12 @@
 name = "claude-routing"
 description = "Routes text verbs to Fabric, Claude Desktop, Claude Code, or clipboard"
 
-# The `via` selector adverb is the canonical multi-route knob for text verbs.
-# Verbs that opt in with `uses_adverbs = ["via"]` get all four routes for free.
+# Routes use quoted-heredoc bash here-docs (<<'SENTINEL') for the prompt body
+# so that arbitrary selected content — single quotes, parens, backticks,
+# Unicode, anything — flows through verbatim without breaking shell parsing.
+# The sentinel COSMIC_GOO_END is deliberately uncommon; if a future caller
+# selects content with that exact line, regenerate the registry with a
+# different sentinel.
 
 [[adverbs]]
 name = "via"
@@ -11,25 +15,38 @@ applies_to = ["text/*"]
 default = "clipboard"
 description = "Where to send the rendered prompt"
 
-# Phase-1 limitation reminder: substitutions are raw. Routes use bash
-# here-strings (`<<< '...'`) which keep multi-line content intact as long
-# as the rendered prompt contains no single quotes. A future `{var|filter}`
-# syntax will replace these heredoc tricks.
-
 [adverbs.values.fabric]
 description = "Pipe through Fabric (Anthropic API)"
-template = "fabric -p {verb.fabric_pattern} <<< '{verb.prompt}'"
+template = """fabric -p {verb.fabric_pattern} <<'COSMIC_GOO_END'
+{verb.prompt}
+COSMIC_GOO_END
+"""
 
 [adverbs.values.claude-desktop]
 description = "Open new chat in Claude Desktop"
-# URL-encode the prompt inline. Subject to the R4 quirk: Claude Desktop only
-# reliably prefills on cold start. See recon/findings.md and task #7.
-template = "xdg-open \"claude://claude.ai/new?q=$(jq -srR @uri <<< '{verb.prompt}')\""
+# URL-encode the prompt through a heredoc-fed jq, then xdg-open the result.
+# Subject to the R4 quirk (recon/findings.md): Claude Desktop only reliably
+# prefills on a cold start. The clipboard route is the safer fallback.
+template = """xdg-open "claude://claude.ai/new?q=$(jq -srR @uri <<'COSMIC_GOO_END'
+{verb.prompt}
+COSMIC_GOO_END
+)"
+"""
 
 [adverbs.values.claude-code]
 description = "Open a new Claude Code session"
-template = "xdg-open \"claude://code/new?q=$(jq -srR @uri <<< '{verb.prompt}')&folder=$(jq -srR @uri <<< '{cwd}')\""
+template = """xdg-open "claude://code/new?q=$(jq -srR @uri <<'COSMIC_GOO_END'
+{verb.prompt}
+COSMIC_GOO_END
+)&folder=$(jq -srR @uri <<'COSMIC_GOO_END'
+{cwd}
+COSMIC_GOO_END
+)"
+"""
 
 [adverbs.values.clipboard]
 description = "Copy assembled prompt to clipboard"
-template = "wl-copy <<< '{verb.prompt}'"
+template = """wl-copy <<'COSMIC_GOO_END'
+{verb.prompt}
+COSMIC_GOO_END
+"""

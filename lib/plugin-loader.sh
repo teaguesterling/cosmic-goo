@@ -123,7 +123,56 @@ _plugin_merge() {
     '
 }
 
+# File-backed registry cache. Speeds repeat invocations (tab completion in
+# particular) from ~370ms down to ~10ms by skipping the per-plugin tomlq
+# pass when nothing changed.
+
+_cache_path() {
+    local d="${XDG_RUNTIME_DIR:-/tmp/cosmic-goo-$(id -u)}/cosmic-goo"
+    mkdir -p "$d" 2>/dev/null
+    printf '%s/registry.json' "$d"
+}
+
+# Echo the newest mtime (unix seconds) among the plugin dirs and discovered
+# plugin files. Dir mtimes catch add/remove; file mtimes catch edits.
+_plugin_max_mtime() {
+    {
+        plugin_dirs
+        plugin_discover
+    } | while IFS= read -r p; do
+        [ -e "$p" ] || continue
+        stat -c %Y "$p" 2>/dev/null
+    done | sort -n | tail -n 1
+}
+
+# Returns 0 if the cache file exists and is at least as new as everything
+# under the discovery dirs. Anything older means a plugin file was edited,
+# added, or removed since the cache was written.
+_cache_is_fresh() {
+    local cache=$1
+    [ -f "$cache" ] || return 1
+    local cache_mtime newest
+    cache_mtime=$(stat -c %Y "$cache" 2>/dev/null) || return 1
+    newest=$(_plugin_max_mtime)
+    [ -z "$newest" ] && return 0  # no plugins at all; an empty cache is fine
+    [ "$cache_mtime" -ge "$newest" ]
+}
+
+# Clear the file-backed registry cache. Useful after install/uninstall steps
+# that bypass mtime-based detection (e.g. swapping a symlink target).
+plugin_invalidate_cache() {
+    local cache
+    cache=$(_cache_path)
+    rm -f "$cache"
+}
+
 plugin_load_all() {
+    local cache
+    cache=$(_cache_path)
+    if _cache_is_fresh "$cache"; then
+        cat "$cache"
+        return 0
+    fi
     local registry='{"plugins":[],"types":[],"sources":[],"verbs":[],"adverbs":[]}'
     local file contrib
     while IFS= read -r file; do
@@ -131,6 +180,11 @@ plugin_load_all() {
             registry=$(_plugin_merge "$registry" "$contrib")
         fi
     done < <(plugin_discover)
+    # Atomic write: write to a tempfile, then rename. Prevents readers from
+    # seeing a half-written cache if two `goo` invocations race.
+    if printf '%s\n' "$registry" > "$cache.tmp" 2>/dev/null; then
+        mv "$cache.tmp" "$cache" 2>/dev/null || rm -f "$cache.tmp"
+    fi
     printf '%s\n' "$registry"
 }
 

@@ -4,11 +4,12 @@
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 
-    # Isolate plugin discovery to a fixture dir.
+    # Isolate plugin discovery and the registry cache to test-private dirs.
     export COSMIC_GOO_BUILTIN_PLUGINS_DIR="$BATS_TEST_TMPDIR/builtin"
     export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/xdg-config"
+    export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/runtime"
     HOME="$BATS_TEST_TMPDIR/home"
-    mkdir -p "$COSMIC_GOO_BUILTIN_PLUGINS_DIR"
+    mkdir -p "$COSMIC_GOO_BUILTIN_PLUGINS_DIR" "$XDG_RUNTIME_DIR"
     cd "$BATS_TEST_TMPDIR" || return 1
 
     # Build a fixture covering most shapes the dispatcher needs to handle.
