@@ -36,6 +36,8 @@ export COSMIC_GOO_BUILTIN_PLUGINS_DIR="${COSMIC_GOO_BUILTIN_PLUGINS_DIR:-$GOO_DI
 . "$GOO_DIR/lib/plugin-loader.sh"
 # shellcheck source=../lib/verbs.sh
 . "$GOO_DIR/lib/verbs.sh"
+# shellcheck source=../lib/address.sh
+. "$GOO_DIR/lib/address.sh"
 
 # ---------------- helpers ----------------
 
@@ -76,6 +78,9 @@ die() {
 #   - else, look up sources emitting an accepted type and find an item whose
 #     id or title contains the positional (case-insensitive)
 #   - if no positional, fall back to selection, then clipboard, then focused app
+# Captured once in cmd_verb if stdin is piped (not a TTY). Empty otherwise.
+STDIN_TEXT=""
+
 resolve_subject() {
     local verb_json=$1 positional=${2:-}
     local accepts
@@ -89,7 +94,13 @@ resolve_subject() {
         return 1
     }
 
-    # Provided positional
+    # 1. Explicit positional (sigil or native shape) → the addressing resolver.
+    if [ -n "$positional" ] && address_is_explicit "$positional"; then
+        address_resolve "$positional" "$verb_json"
+        return $?
+    fi
+
+    # 2. Bare positional.
     if [ -n "$positional" ]; then
         if accepts_text; then
             local mt
@@ -97,7 +108,7 @@ resolve_subject() {
             jq -nc --arg t "$mt" --arg text "$positional" '{type:$t, text:$text}'
             return 0
         fi
-        # Handle resolution: walk sources emitting an accepted type
+        # Handle resolution: walk sources emitting an accepted type, match input.
         local registry
         registry=$(plugin_load_all)
         local pattern source emits items match
@@ -130,12 +141,14 @@ resolve_subject() {
         die "could not resolve '$positional' against any source for verb's accepted types"
     fi
 
-    # No positional: fall back to implicit subjects.
+    # 3. No positional: implicit subject chain — stdin → selection → clipboard → focused app.
     if accepts_text; then
         local text mt
-        text=$(selection_primary)
-        if [ -z "$text" ]; then
-            text=$(selection_clipboard)
+        if [ -n "$STDIN_TEXT" ]; then
+            text=$STDIN_TEXT
+        else
+            text=$(selection_primary)
+            [ -z "$text" ] && text=$(selection_clipboard)
         fi
         if [ -n "$text" ]; then
             mt=$(mime_detect_content "$text")
@@ -143,15 +156,14 @@ resolve_subject() {
             return 0
         fi
     fi
-    # Non-text accepts: try focused app
+    # Non-text accepts: try focused app.
     local app
     app=$(focused_app 2>/dev/null | head -n 1)
     if [ -n "$app" ]; then
-        # Tag with the app type so the verb dispatcher sees it
         printf '%s\n' "$app" | jq -c '. + {type:"application/vnd.cos-cli.app", id:.app_id, metadata:.}'
         return 0
     fi
-    die "no subject provided and no implicit subject available (selection/clipboard/focused-app all empty)"
+    die "no subject provided and no implicit subject available (stdin/selection/clipboard/focused-app all empty)"
 }
 
 # ---------------- subcommand: plugins ----------------
@@ -330,6 +342,13 @@ cmd_verb() {
     shift
     local verb
     verb=$(verb_lookup "$verb_name") || die "unknown verb or subcommand: $verb_name (try 'goo plugins')"
+
+    # Capture piped stdin once, before any subshell consumes it. A TTY means
+    # interactive use (no piped input); only non-TTY stdin is treated as a
+    # subject. F10-style hotkeys have no stdin and fall through to selection.
+    if [ ! -t 0 ]; then
+        STDIN_TEXT=$(cat)
+    fi
 
     # Parse remaining args: positionals + --flag=val.
     local positionals=()

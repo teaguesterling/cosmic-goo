@@ -1,13 +1,16 @@
 name = "files"
 description = "File operations — open, reveal in file manager, copy path, read"
 
-# Conventions for inode/file subjects:
-#   - subject.text is the absolute path (canonical reference)
-#   - subject.metadata.path mirrors it (so handle-style subjects still work)
+# Conventions for inode/file subjects (cosmic-goo-wide):
+#   - subject.text          = the file's textual CONTENTS (for content verbs)
+#   - subject.metadata.path = the absolute path (for reference verbs)
+#   - subject.id            = the absolute path (stable identity)
 #
-# This source enumerates regular files in $PWD up to depth 2. The intent is
-# launcher-style fuzzy resolution against "what's around me," not a full
-# filesystem search. For deeper traversal, pipe `fd` into a custom source.
+# The address resolver (lib/address.sh) populates all three when a file is
+# addressed via ./path, ~/path, /path, or +file:. This source enumerates
+# regular files in $PWD up to depth 2 for launcher-style fuzzy resolution;
+# it sets .text to the path as a cheap placeholder (the resolver fills real
+# contents on demand). For deeper traversal, pipe `fd` into a custom source.
 
 [[sources]]
 name = "files"
@@ -26,28 +29,28 @@ name = "open"
 description = "Open a file in its default application"
 accepts = ["inode/*"]
 default_for = "inode/file"
-cmd = "xdg-open '{subject.text}'"
+cmd = "xdg-open '{subject.metadata.path}'"
 
 [[verbs]]
 name = "reveal"
 description = "Open the containing folder in the file manager"
 accepts = ["inode/*"]
-cmd = "xdg-open \"$(dirname '{subject.text}')\""
+cmd = "xdg-open \"$(dirname '{subject.metadata.path}')\""
 
 [[verbs]]
 name = "copy-path"
 description = "Copy the absolute path to the clipboard"
 accepts = ["inode/*"]
-cmd = "wl-copy <<< '{subject.text}'"
+cmd = "wl-copy <<< '{subject.metadata.path}'"
 
 [[verbs]]
 name = "read"
 description = "Print the file's contents to stdout"
 accepts = ["inode/file"]
-cmd = "cat '{subject.text}'"
+cmd = "cat '{subject.metadata.path}'"
 
 [[verbs]]
 name = "preview"
 description = "Print the first 40 lines of the file"
 accepts = ["inode/file"]
-cmd = "head -40 '{subject.text}'"
+cmd = "head -40 '{subject.metadata.path}'"
