@@ -76,24 +76,26 @@ _goo() {
         return 0
     fi
 
-    # @source:item — addressing sigil completion.
-    if [[ "$cur" == @*:* ]]; then
-        # @source:<TAB> — list items from that source.
-        local srcpfx=${cur#@}
+    # :source:item — core source-path addressing completion.
+    if [[ "$cur" == :*:* ]]; then
+        # :source:<TAB> — list items from that source.
+        local srcpfx=${cur#:}
         srcpfx=${srcpfx%%:*}
-        local q=${cur#*:}
+        local q=${cur#*:}; q=${q#*:}   # strip ":source:" leaving the query
+        # cur is ":src:query"; recompute query as everything after the 2nd colon
+        q=${cur#:"$srcpfx":}
         local items
         items=$(goo __complete source-items "$srcpfx" 2>/dev/null)
         # shellcheck disable=SC2207
         COMPREPLY=($(compgen -W "$items" -- "$q"))
         local i
         for i in "${!COMPREPLY[@]}"; do
-            COMPREPLY[i]="@${srcpfx}:${COMPREPLY[i]}"
+            COMPREPLY[i]=":${srcpfx}:${COMPREPLY[i]}"
         done
         return 0
     fi
-    if [[ "$cur" == @* ]]; then
-        # @<TAB> — list source prefixes (@app:, @ws:, ...).
+    if [[ "$cur" == :* ]]; then
+        # :<TAB> — list source prefixes (:app:, :ws:, ...).
         local prefixes
         prefixes=$(goo __complete source-prefixes 2>/dev/null)
         # shellcheck disable=SC2207

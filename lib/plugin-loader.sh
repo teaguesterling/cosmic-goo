@@ -101,7 +101,8 @@ plugin_load() {
             types:   ((.types   // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
             sources: ((.sources // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
             verbs:   ((.verbs   // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
-            adverbs: ((.adverbs // []) | map(. + {_plugin: $pname, _plugin_dir: $dir}))
+            adverbs: ((.adverbs // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
+            sigils:  ((.sigils  // []) | map(. + {_plugin: $pname, _plugin_dir: $dir}))
         }
     ' <<<"$plugin_json"
 }
@@ -113,12 +114,15 @@ _plugin_merge() {
         # `unique_by` keeps the first occurrence; put new ahead of existing so
         # the new item wins for collisions.
         def override($a; $b): ($a + $b) | unique_by(.name);
+        # Sigils key on .char, not .name (later plugin / user config wins).
+        def override_char($a; $b): ($a + $b) | unique_by(.char);
         {
             plugins: override($new.plugins; $reg.plugins),
             types:   override($new.types;   $reg.types),
             sources: override($new.sources; $reg.sources),
             verbs:   override($new.verbs;   $reg.verbs),
-            adverbs: override($new.adverbs; $reg.adverbs)
+            adverbs: override($new.adverbs; $reg.adverbs),
+            sigils:  override_char($new.sigils; $reg.sigils)
         }
     '
 }
@@ -173,7 +177,7 @@ plugin_load_all() {
         cat "$cache"
         return 0
     fi
-    local registry='{"plugins":[],"types":[],"sources":[],"verbs":[],"adverbs":[]}'
+    local registry='{"plugins":[],"types":[],"sources":[],"verbs":[],"adverbs":[],"sigils":[]}'
     local file contrib
     while IFS= read -r file; do
         if contrib=$(plugin_load "$file"); then

@@ -87,12 +87,19 @@ A subject argument can take several forms. They all resolve through one model: e
 | bare text | literal text content | `goo upper "hello"` |
 | `./x`, `../x`, `/x`, `~/x` | a **file** (read contents; path in `metadata.path`) | `goo summarize ./notes.md` |
 | `https://…`, `claude://…` | a **URL** (`text/x-uri`) | `goo open https://example.com` |
-| `@source:query` | item from a named **source** (by `name` or `prefix`) | `goo activate @app:firefox` |
-| `@source` | the source's first/default item | `goo summarize @clip` |
-| `^` | the clipboard (alias for `@clip`) | `goo summarize ^` |
-| `^name` | a named clipboard buffer *(reserved — not yet implemented)* | — |
+| `:source:query` | item from a named **source** (by `name` or `prefix`) | `goo activate :app:firefox` |
+| `:source` | the source's first/default item | `goo summarize :clip` |
 | `+scheme:value` | explicit scheme handoff | `goo summarize +file:./notes.md` |
+| `^` / `^name` | clipboard (a built-in **custom sigil** → `+clip:`; `^name` reserved) | `goo summarize ^` |
 | `cosmic-goo:…` / `cosmic-goo+…` | the canonical URI directly (for scripts/IPC) | `goo summarize 'cosmic-goo+file:///abs/x.md'` |
+
+`:` and `+` are the two **core** sigils — they are literally the canonical URI forms minus the `cosmic-goo` scheme name (`:source:input` ⟷ `cosmic-goo:source:input`; `+scheme:value` ⟷ `cosmic-goo+scheme:value`). Everything else is a **customizable sigil**: a single character that expands into one of those forms. `^` → `+clip:` ships as a default; `@` ships intentionally undefined (claim it in your own config). Define your own in any plugin TOML:
+
+```toml
+[[sigils]]
+char = "@"
+expands = ":app:"     # then @firefox -> :app:firefox -> cosmic-goo:app:firefox
+```
 
 When **no** positional is given, the subject falls back in order: **stdin** (if piped) → PRIMARY selection → clipboard → focused app (for handle verbs).
 
@@ -181,8 +188,8 @@ What it completes:
 | `goo list <TAB>` | source names |
 | `goo VERB --<TAB>` | adverbs the verb opts into (`--name=`) |
 | `goo VERB --flag=<TAB>` | selector values for that adverb |
-| `goo VERB @<TAB>` | source prefixes (`@app:`, `@ws:`, `@file:`, …) |
-| `goo VERB @source:<TAB>` | items from that source (runs its `list_cmd`) |
+| `goo VERB :<TAB>` | source prefixes (`:app:`, `:ws:`, `:file:`, …) |
+| `goo VERB :source:<TAB>` | items from that source (runs its `list_cmd`) |
 | `goo HANDLE-VERB <TAB>` | items for a handle verb (e.g. `goo activate <TAB>` → running apps) |
 
 Handle-verb and `@source:` completions invoke source `list_cmd`s on demand, so they're as fast as the underlying tool (cos-cli ~80ms). Text-verb positionals aren't completed (the subject is freeform prose, a path, or stdin).

@@ -44,15 +44,50 @@ if ! declare -F plugin_load_all >/dev/null 2>&1; then
     . "$(_addr_dir)/plugin-loader.sh"
 fi
 
-# True if RAW carries an explicit sigil or native shape that address_resolve
-# should handle (as opposed to a bare word that the caller treats as text or a
-# type-scoped handle search).
+# Core structural sigils are fixed (they ARE the canonical URI forms):
+#   :x  -> cosmic-goo:x     (source path)
+#   +x  -> cosmic-goo+x     (scheme handoff)
+# Everything else is a customizable sigil: a single char that expands to a
+# string (usually starting with : or +), declared via [[sigils]] in any plugin.
+# A built-in sigils.toml ships ^ -> +clip:. Users add/override in their own
+# plugin TOMLs.
+
+# Cache the char->expansion map for the shell's lifetime.
+_ADDR_SIGILS=""
+_addr_sigils() {
+    if [ -z "$_ADDR_SIGILS" ]; then
+        # "char\texpansion" lines. Guard against an empty registry.
+        _ADDR_SIGILS=$(plugin_load_all 2>/dev/null \
+            | jq -r '(.sigils // [])[] | "\(.char)\t\(.expands)"' 2>/dev/null)
+        # Sentinel so we don't re-query when there are genuinely no sigils.
+        [ -z "$_ADDR_SIGILS" ] && _ADDR_SIGILS=$'\x00'
+    fi
+    [ "$_ADDR_SIGILS" = $'\x00' ] && return 0
+    printf '%s\n' "$_ADDR_SIGILS"
+}
+
+address_invalidate_sigils() { _ADDR_SIGILS=""; }
+
+# Echo the expansion for a single-char sigil, or nothing.
+_addr_sigil_expand() {
+    local ch=$1 sch sexp
+    while IFS=$'\t' read -r sch sexp; do
+        [ "$sch" = "$ch" ] && { printf '%s' "$sexp"; return 0; }
+    done < <(_addr_sigils)
+    return 1
+}
+
+# True if RAW carries an explicit sigil (core or custom) or native shape that
+# address_resolve should handle — as opposed to a bare word the caller treats
+# as text or a type-scoped handle search.
 address_is_explicit() {
-    case "$1" in
-        @*|^*|+*|./*|../*|/*|[~]/*|cosmic-goo:*|cosmic-goo+*) return 0 ;;
+    local raw=$1
+    case "$raw" in
+        :*|+*|./*|../*|/*|[~]/*|cosmic-goo:*|cosmic-goo+*) return 0 ;;
         [a-zA-Z]*://*) return 0 ;;
-        *) return 1 ;;
     esac
+    # Custom sigil? First char registered.
+    [ -n "$raw" ] && _addr_sigil_expand "${raw:0:1}" >/dev/null 2>&1
 }
 
 # Absolute path without requiring existence (handler reports missing files).
@@ -74,10 +109,27 @@ _addr_abspath() {
 # Rewrite a user-typed argument into a canonical cosmic-goo URI.
 address_canonicalize() {
     local raw=$1
+
+    # Already canonical.
+    case "$raw" in cosmic-goo:*|cosmic-goo+*) printf '%s' "$raw"; return 0 ;; esac
+
+    # Custom sigil expansion (single leading char -> expansion + rest), unless
+    # the leading char is a core/native one we handle structurally below.
+    case "$raw" in
+        :*|+*|./*|../*|/*|[~]/*) : ;;  # core/native, skip custom expansion
+        [a-zA-Z]*://*) : ;;            # native URL
+        *)
+            local exp
+            if [ -n "$raw" ] && exp=$(_addr_sigil_expand "${raw:0:1}"); then
+                raw="${exp}${raw:1}"
+            fi
+            ;;
+    esac
+
+    # Core structural sigils + native shapes.
     case "$raw" in
         cosmic-goo:*|cosmic-goo+*) printf '%s' "$raw" ;;
-        @*) printf 'cosmic-goo:%s' "${raw#@}" ;;
-        ^*) printf 'cosmic-goo+clip:%s' "${raw#^}" ;;
+        :*) printf 'cosmic-goo:%s' "${raw#:}" ;;
         +*) printf 'cosmic-goo+%s' "${raw#+}" ;;
         ./*|../*|/*|[~]/*) printf 'cosmic-goo+file://%s' "$(_addr_abspath "$raw")" ;;
         [a-zA-Z]*://*) printf 'cosmic-goo+%s' "$raw" ;;

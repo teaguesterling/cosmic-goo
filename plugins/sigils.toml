@@ -1,0 +1,20 @@
+name = "sigils"
+description = "Default addressing sigils. Override or add your own in ~/.config/cosmic-goo/plugins/."
+
+# A sigil is a single leading character that expands into a canonical-ish
+# address prefix. Resolution applies the expansion, then the core canonicalizer
+# (`:` -> cosmic-goo:, `+` -> cosmic-goo+) finishes the job.
+#
+# The core sigils `:` (source path) and `+` (scheme handoff) are structural —
+# they are the URI forms themselves and are not declared here. Everything else
+# is customizable. `@` ships intentionally undefined; claim it for whatever you
+# reach for most, e.g.:
+#
+#   [[sigils]]
+#   char = "@"
+#   expands = ":app:"      # then @firefox -> :app:firefox -> cosmic-goo:app:firefox
+
+[[sigils]]
+char = "^"
+expands = "+clip:"
+description = "clipboard (^ = current, ^name reserved for named buffers)"

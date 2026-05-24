@@ -225,13 +225,38 @@ cmd_validate() {
         fi
     done < <(jq -c '.adverbs[]?' <<<"$registry")
 
+    # 4. Sigils: char must be a single char, must not be a core/native one
+    #    (: + . / ~ or alphanumeric would break URL/path/text detection), and
+    #    must have an expansion.
+    while IFS= read -r sigil; do
+        [ -z "$sigil" ] && continue
+        local char expands
+        char=$(jq -r '.char // ""' <<<"$sigil")
+        expands=$(jq -r '.expands // ""' <<<"$sigil")
+        if [ "${#char}" -ne 1 ]; then
+            printf 'sigil "%s" must be exactly one character\n' "$char" >&2
+            errors=$((errors+1))
+        fi
+        case "$char" in
+            [a-zA-Z0-9]|:|+|.|/|'~')
+                printf 'sigil "%s" collides with a reserved/native prefix (: + . / ~ alnum)\n' "$char" >&2
+                errors=$((errors+1))
+                ;;
+        esac
+        if [ -z "$expands" ]; then
+            printf 'sigil "%s" has no expansion\n' "$char" >&2
+            errors=$((errors+1))
+        fi
+    done < <(jq -c '.sigils[]?' <<<"$registry")
+
     if [ "$errors" -eq 0 ]; then
-        printf 'goo validate: OK (%d plugins, %d types, %d sources, %d verbs, %d adverbs)\n' \
+        printf 'goo validate: OK (%d plugins, %d types, %d sources, %d verbs, %d adverbs, %d sigils)\n' \
             "$(jq '.plugins | length' <<<"$registry")" \
             "$(jq '.types | length' <<<"$registry")" \
             "$(jq '.sources | length' <<<"$registry")" \
             "$(jq '.verbs | length' <<<"$registry")" \
-            "$(jq '.adverbs | length' <<<"$registry")"
+            "$(jq '.adverbs | length' <<<"$registry")" \
+            "$(jq '.sigils | length' <<<"$registry")"
         return 0
     fi
     printf 'goo validate: %d error(s)\n' "$errors" >&2
@@ -311,9 +336,13 @@ cmd_complete() {
             ' <<<"$registry"
             ;;
         source-prefixes)
-            # Emit the `@prefix` tokens for sources that declare a prefix,
-            # for `goo VERB @<TAB>` completion.
-            jq -r '.sources[] | select(.prefix) | "@" + .prefix + ":"' <<<"$registry"
+            # Emit `:prefix:` tokens for sources that declare a prefix, for
+            # `goo VERB :<TAB>` completion (leading colon = source path).
+            jq -r '.sources[] | select(.prefix) | ":" + .prefix + ":"' <<<"$registry"
+            ;;
+        sigils)
+            # Emit registered customizable sigil chars (for docs / discovery).
+            jq -r '.sigils[]?.char' <<<"$registry"
             ;;
         verb-accepts-handle)
             # "yes" if the verb accepts any non-text (handle) type; used to

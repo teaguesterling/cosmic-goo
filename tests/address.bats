@@ -10,7 +10,7 @@ setup() {
     HOME="$BATS_TEST_TMPDIR/home"
     mkdir -p "$COSMIC_GOO_BUILTIN_PLUGINS_DIR" "$XDG_RUNTIME_DIR" "$HOME"
 
-    # A fixture source with two items for source-lookup tests.
+    # A fixture source with two items, plus a custom sigil, for tests.
     cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/things.toml" <<'EOF'
 name = "things"
 
@@ -19,19 +19,26 @@ name = "things"
 prefix = "thing"
 emits = "application/vnd.test.thing"
 list_cmd = "echo '[{\"id\":\"alpha\",\"title\":\"Alpha Thing\"},{\"id\":\"beta\",\"title\":\"Beta Thing\"}]'"
+
+[[sigils]]
+char = "%"
+expands = ":thing:"
+
+[[sigils]]
+char = "^"
+expands = "+clip:"
 EOF
 
     # shellcheck source=../lib/address.sh
     . "$REPO_ROOT/lib/address.sh"
     plugin_invalidate_cache 2>/dev/null || true
+    address_invalidate_sigils 2>/dev/null || true
 }
 
 # ---------------- address_is_explicit ----------------
 
-@test "is_explicit: sigils and native shapes are explicit" {
-    address_is_explicit "@app:firefox"
-    address_is_explicit "^"
-    address_is_explicit "^alt"
+@test "is_explicit: core sigils and native shapes are explicit" {
+    address_is_explicit ":app:firefox"
     address_is_explicit "+file:x"
     address_is_explicit "./foo"
     address_is_explicit "../foo"
@@ -42,27 +49,32 @@ EOF
     address_is_explicit "cosmic-goo+file:x"
 }
 
-@test "is_explicit: bare words and relative paths are not explicit" {
+@test "is_explicit: registered custom sigils are explicit" {
+    address_is_explicit "%alpha"     # % is the fixture's custom sigil
+}
+
+@test "is_explicit: bare words, relative paths, unregistered sigils are not" {
     ! address_is_explicit "hello world"
     ! address_is_explicit "docs/foo.md"
     ! address_is_explicit "firefox"
+    ! address_is_explicit "@app:firefox"   # @ is undefined by default now
 }
 
 # ---------------- address_canonicalize ----------------
 
-@test "canonicalize: @ -> cosmic-goo:" {
-    run address_canonicalize "@app:firefox"
+@test "canonicalize: : -> cosmic-goo:" {
+    run address_canonicalize ":app:firefox"
     [ "$output" = "cosmic-goo:app:firefox" ]
 }
 
-@test "canonicalize: ^ -> cosmic-goo+clip:" {
-    run address_canonicalize "^"
-    [ "$output" = "cosmic-goo+clip:" ]
+@test "canonicalize: custom sigil % expands then canonicalizes" {
+    run address_canonicalize "%alpha"
+    [ "$output" = "cosmic-goo:thing:alpha" ]
 }
 
-@test "canonicalize: ^alt -> cosmic-goo+clip:alt" {
-    run address_canonicalize "^alt"
-    [ "$output" = "cosmic-goo+clip:alt" ]
+@test "canonicalize: undefined @ falls through to text" {
+    run address_canonicalize "@app:firefox"
+    [ "$output" = "cosmic-goo+text:@app:firefox" ]
 }
 
 @test "canonicalize: + -> cosmic-goo+" {
@@ -136,44 +148,44 @@ EOF
 
 # ---------------- source handler ----------------
 
-@test "resolve: @source:query matches an item by id" {
-    run address_resolve "@things:alpha"
+@test "resolve: :source:query matches an item by id" {
+    run address_resolve ":things:alpha"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.id == "alpha" and .type == "application/vnd.test.thing"' >/dev/null
 }
 
-@test "resolve: @source:query matches by title substring (case-insensitive)" {
-    run address_resolve "@things:beta thing"
+@test "resolve: :source:query matches by title substring (case-insensitive)" {
+    run address_resolve ":things:beta thing"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.id == "beta"' >/dev/null
 }
 
-@test "resolve: @prefix works like @name" {
-    run address_resolve "@thing:alpha"
+@test "resolve: :prefix works like :name" {
+    run address_resolve ":thing:alpha"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.id == "alpha"' >/dev/null
 }
 
-@test "resolve: @source with no query returns first item" {
-    run address_resolve "@things"
+@test "resolve: :source with no query returns first item" {
+    run address_resolve ":things"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.id == "alpha"' >/dev/null
 }
 
-@test "resolve: @source:query with no match errors" {
-    run address_resolve "@things:zeta"
+@test "resolve: :source:query with no match errors" {
+    run address_resolve ":things:zeta"
     [ "$status" -ne 0 ]
     [[ "$output" =~ "no item matching" ]]
 }
 
 @test "resolve: unknown source errors" {
-    run address_resolve "@nosuchsource:x"
+    run address_resolve ":nosuchsource:x"
     [ "$status" -ne 0 ]
     [[ "$output" =~ "no source" ]]
 }
 
 @test "resolve: ?params are stripped (reserved, not yet acted on)" {
-    run address_resolve "@things:alpha?foo=bar"
+    run address_resolve ":things:alpha?foo=bar"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.id == "alpha"' >/dev/null
 }

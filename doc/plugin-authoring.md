@@ -209,6 +209,35 @@ Every adverb declares scope via exactly one of:
 
 `goo validate` rejects adverbs that declare neither.
 
+## Sigils
+
+A sigil is a single leading character that expands into a canonical address prefix when you type a subject. The two **core** sigils are fixed because they *are* the canonical URI forms:
+
+- `:x` → `cosmic-goo:x` (source path — look up `x` in a source)
+- `+x` → `cosmic-goo+x` (scheme handoff — hand `x` to a scheme handler)
+
+Everything else is a **customizable sigil**, declared with `[[sigils]]` in any plugin:
+
+```toml
+[[sigils]]
+char = "^"
+expands = "+clip:"
+description = "clipboard"
+```
+
+When a subject argument begins with `^`, the leading char is replaced by the expansion (`^alt` → `+clip:alt`) and then run through the core canonicalizer. Expansions usually target a core sigil (`:…` or `+…`), so everything funnels through one resolver.
+
+The built-in `sigils.toml` ships only `^` → `+clip:`. `@` is intentionally undefined — claim it for whatever source you reach for most:
+
+```toml
+# ~/.config/cosmic-goo/plugins/my-sigils.toml
+[[sigils]]
+char = "@"
+expands = ":app:"     # @firefox -> :app:firefox -> cosmic-goo:app:firefox
+```
+
+User config wins over built-ins (later-loaded plugins override by `char`). `goo validate` rejects sigils whose `char` is multi-character, missing an expansion, or collides with a reserved/native prefix (`:`, `+`, `.`, `/`, `~`, or any alphanumeric — those would break URL/path/text detection).
+
 ## Template substitution
 
 The dispatcher substitutes `{path.to.var}` placeholders before running the command. Paths are dotted into a context dict containing:
