@@ -1,0 +1,12 @@
+# Docs build dependencies for `mkdocs serve` / `mkdocs build`.
+#
+# Install per your usual pattern. Pick one:
+#
+#   pipx install mkdocs && pipx inject mkdocs $(grep -v '^#' requirements-docs.txt | xargs)
+#   pip install --user -r requirements-docs.txt
+#   python -m venv .venv && .venv/bin/pip install -r requirements-docs.txt
+#
+# Pinned to recent stable versions; bump as needed.
+
+mkdocs>=1.5,<2
+mkdocs-material>=9.5,<10

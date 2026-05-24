@@ -18,17 +18,20 @@ Plugins are TOML files declaring any combination of types, sources, verbs, and a
 
 Authoritative current docs live in [`doc/`](doc/):
 
-- [`doc/intro.md`](doc/intro.md) — what cosmic-goo is, status, install
+- [`doc/index.md`](doc/index.md) — what cosmic-goo is, status, install
 - [`doc/cli-reference.md`](doc/cli-reference.md) — `goo` command reference
 - [`doc/plugin-authoring.md`](doc/plugin-authoring.md) — how to write plugins
 - [`doc/examples/ms-natural-4000-bindings.md`](doc/examples/ms-natural-4000-bindings.md) — example MS Natural 4000 bindings
 - [`doc/limitations.md`](doc/limitations.md) — Phase 1 limitations and roadmap
 
-Render to a single browseable HTML manual:
+Browse locally with live reload (Material theme):
 
 ```bash
-make open-manual
+make docs-install   # one-time, prints install hints
+make serve          # http://127.0.0.1:8000/
 ```
+
+Configured for [Read the Docs](https://about.readthedocs.com/) via [`.readthedocs.yaml`](.readthedocs.yaml) — connecting the repo on RTD will auto-build from `mkdocs.yml`.
 
 Original design notes and the implementation plan are in [`docs/vision/`](docs/vision/) (frozen archive — `doc/` supersedes for current behaviour).
 

@@ -4,7 +4,7 @@
 
 SHELL := /bin/bash
 
-.PHONY: help test shellcheck validate install install-user clean manual open-manual
+.PHONY: help test shellcheck validate install install-user clean docs serve docs-install
 
 help:  ## Show this help
 	@awk 'BEGIN { FS = ":.*##"; printf "Available targets:\n" } /^[a-zA-Z0-9_-]+:.*##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -49,28 +49,27 @@ install:  ## Install to /usr/local (system-wide) — Phase 1 TBD
 install-user:  ## Install to ~/.local (user-only) — Phase 1 TBD
 	@echo "install-user target not implemented yet"
 
-manual:  ## Render doc/ to a single self-contained HTML file at doc/manual.html
-	@if ! command -v pandoc >/dev/null 2>&1; then \
-		echo "pandoc not found. apt install pandoc"; exit 1; \
+docs:  ## Build the docs site (output at site/)
+	@if ! command -v mkdocs >/dev/null 2>&1; then \
+		echo "mkdocs not found. See requirements-docs.txt for install options."; exit 1; \
 	fi
-	@pandoc \
-		--standalone \
-		--embed-resources \
-		--toc \
-		--toc-depth=2 \
-		--metadata title="cosmic-goo manual" \
-		--metadata "subtitle=Phase 1 — Grammar Of Operations" \
-		--css=doc/manual.css \
-		-o doc/manual.html \
-		doc/intro.md \
-		doc/cli-reference.md \
-		doc/plugin-authoring.md \
-		doc/examples/ms-natural-4000-bindings.md \
-		doc/limitations.md
-	@echo "wrote doc/manual.html"
+	# Not --strict because index.md and limitations.md link out to docs/vision/,
+	# which lives outside docs_dir on purpose (frozen design archive). Those
+	# links resolve correctly on GitHub / local checkout, not in the rendered
+	# site. Re-enable strict if the archive ever moves under doc/.
+	mkdocs build
 
-open-manual: manual  ## Build the manual and open it in your default browser
-	@xdg-open doc/manual.html
+serve:  ## Run mkdocs dev server with live reload at http://127.0.0.1:8000/
+	@if ! command -v mkdocs >/dev/null 2>&1; then \
+		echo "mkdocs not found. See requirements-docs.txt for install options."; exit 1; \
+	fi
+	mkdocs serve
+
+docs-install:  ## Print install hints for the docs toolchain
+	@echo "Install the docs toolchain via one of:"
+	@echo "  pipx install mkdocs && pipx inject mkdocs mkdocs-material"
+	@echo "  pip install --user -r requirements-docs.txt"
+	@echo "  python -m venv .venv && .venv/bin/pip install -r requirements-docs.txt"
 
 clean:  ## Remove build artifacts
-	@rm -rf dist/ build/ doc/manual.html
+	@rm -rf dist/ build/ site/
