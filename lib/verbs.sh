@@ -106,18 +106,35 @@ verb_for_subject() {
     done < <(jq -c '.verbs[]' <<<"$(_verbs_registry)")
 }
 
-# Substitute {path.to.var} placeholders in TEMPLATE with values from VARS_JSON.
-# Raw substitution (no shell-escape). See module header for the limitation note.
+# Substitute {path.to.var} (and {path.to.var|filter}) placeholders in TEMPLATE
+# with values from VARS_JSON.
+#
+# Filters:
+#   |q  (alias |sh, |shell)  shell-quote via printf %q — safe as a bare argv
+#                            token or `<<<` here-string, immune to embedded
+#                            quotes/newlines/metacharacters.
+#   |uri (alias |url)        percent-encode via jq @uri — safe inside a URL
+#                            query string (single-quote the surrounding URL).
+#   |raw (or no filter)      insert verbatim. The default; required for things
+#                            like numeric ids and URL prefixes that must not be
+#                            escaped.
 _substitute() {
     local template=$1 vars_json=$2
     local result=""
     local rest=$template
-    while [[ "$rest" =~ ^([^{]*)\{([a-zA-Z_][a-zA-Z0-9_.-]*)\}(.*)$ ]]; do
+    while [[ "$rest" =~ ^([^{]*)\{([a-zA-Z_][a-zA-Z0-9_.-]*)([|]([a-z]+))?\}(.*)$ ]]; do
         local before=${BASH_REMATCH[1]}
         local path=${BASH_REMATCH[2]}
-        rest=${BASH_REMATCH[3]}
+        local filter=${BASH_REMATCH[4]}
+        rest=${BASH_REMATCH[5]}
         local value
         value=$(jq -r ".${path} // empty" <<<"$vars_json" 2>/dev/null)
+        case "$filter" in
+            q|sh|shell) value=$(printf '%q' "$value") ;;
+            uri|url)    value=$(printf '%s' "$value" | jq -sRr '@uri') ;;
+            raw|"")     : ;;
+            *)          : ;;  # unknown filter: leave raw rather than erroring
+        esac
         result+="${before}${value}"
     done
     result+="$rest"

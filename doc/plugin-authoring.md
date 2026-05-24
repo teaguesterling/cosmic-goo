@@ -11,7 +11,7 @@ name = "shout"
 [[verbs]]
 name = "uppercase"
 accepts = ["text/*"]
-cmd = "tr a-z A-Z <<< '{subject.text}'"
+cmd = "tr a-z A-Z <<< {subject.text|q}"
 ```
 
 Save, then `goo uppercase "hello world"` prints `HELLO WORLD`.
@@ -20,7 +20,7 @@ A few things happened there:
 
 - The plugin's `name` becomes its identifier in the registry; collisions with built-ins are resolved by load order (user wins).
 - `accepts = ["text/*"]` registers the verb as applicable to anything text-typed. `text/*` is a MIME glob (`text/plain`, `text/markdown`, `text/x-python`, ...).
-- `cmd` is a command template. `{subject.text}` is substituted with the subject's text content before bash runs the result. **Substitutions are raw text** — quote them yourself.
+- `cmd` is a command template. `{subject.text|q}` is substituted with the subject's text content, shell-quoted, before bash runs the result. The `|q` filter makes it safe against arbitrary content (quotes, spaces, newlines); a bare `{subject.text}` would be inserted raw. See [Filters](#filters-making-substitutions-safe).
 
 ## File layout
 
@@ -97,7 +97,7 @@ The action layer. A verb has at minimum a name, an `accepts` list (one or more M
 [[verbs]]
 name = "uppercase"
 accepts = ["text/*"]
-cmd = "tr a-z A-Z <<< '{subject.text}'"
+cmd = "tr a-z A-Z <<< {subject.text|q}"
 ```
 
 **Two-step verb** taking an object:
@@ -159,11 +159,11 @@ default = "clipboard"
 
 [adverbs.values.clipboard]
 description = "Copy assembled prompt to clipboard"
-template = "wl-copy <<< '{verb.prompt}'"
+template = "wl-copy <<< {verb.prompt|q}"
 
 [adverbs.values.fabric]
 description = "Pipe through Fabric"
-template = "fabric -p {verb.fabric_pattern} <<< '{verb.prompt}'"
+template = "fabric -p {verb.fabric_pattern} <<< {verb.prompt|q}"
 ```
 
 **Convention**: selector values live at `[adverbs.values.NAME]` (attached to the most-recent `[[adverbs]]` entry). The dispatcher reads them as `adverbs[i].values.NAME.template`.
@@ -262,20 +262,33 @@ For verbs with a prompt and an adverb-supplied route:
 
 For verbs with a direct `cmd`, step 1 is skipped: substitute directly into `cmd` and execute.
 
-### Phase-1 limitation: raw substitution
+### Filters: making substitutions safe
 
-Substitutions are inserted verbatim. **Template authors handle shell quoting.** Two safe patterns:
+Append `|filter` to a placeholder to transform the value before it's inserted:
 
-- **Single-quoted here-string** for multi-line content: `cmd = "wl-copy <<< '{verb.prompt}'"`. Safe as long as `{verb.prompt}` doesn't contain `'`.
-- **Single-quoted argument** for short tokens: `cmd = "tr a-z A-Z <<< '{subject.text}'"`.
+| Filter | Effect | Use when |
+|---|---|---|
+| `|q` (aliases `|sh`, `|shell`) | shell-quote via `printf %q` | the value is a bare argv token or `<<<` here-string body — immune to embedded quotes, newlines, `$(...)`, backticks |
+| `|uri` (alias `|url`) | percent-encode via `jq @uri` | the value goes inside a URL query string |
+| `|raw` (or no filter) | insert verbatim | numeric ids, URL prefixes, anything that must *not* be escaped |
 
-If a value will be embedded in a URL query string, URL-encode it inline:
+The default (no filter) is **raw** — required for things like `cos-cli activate -i {subject.metadata.index}` (a bare number) and `{engine_url}` (a literal URL prefix). Reach for `|q` or `|uri` whenever the value is arbitrary user content.
 
 ```toml
-template = "xdg-open \"claude://claude.ai/new?q=$(jq -srR @uri <<< '{verb.prompt}')\""
+# shell-quote arbitrary content as a here-string body — safe against any input
+cmd = "wl-copy <<< {verb.prompt|q}"
+
+# shell-quote as a single argv token
+cmd = "notify-send 'goo' {subject.text|q}"
+
+# percent-encode into a single-quoted URL (no inline jq dance needed)
+template = "xdg-open 'claude://claude.ai/new?q={verb.prompt|uri}'"
+
+# mix raw prefix + encoded query
+cmd = "xdg-open '{engine_url}{subject.text|uri}'"
 ```
 
-A future template-filter syntax — `{verb.prompt|q}` for shell-escape, `{verb.prompt|uri}` for URL-encode — will replace these workarounds.
+Without a filter, arbitrary content breaks the shell: a selection containing a single quote ends a `'...'` literal, and the rest gets parsed as commands. `|q` and `|uri` are the principled fix — prefer them over hand-rolled quoting.
 
 ## Validation
 
@@ -313,7 +326,7 @@ description = "Loudness-themed text verbs"
 name = "loud"
 accepts = ["text/*"]
 uses_adverbs = ["mode"]
-cmd = "{tr_command} <<< '{subject.text}'"
+cmd = "{tr_command} <<< {subject.text|q}"
 
 [[adverbs]]
 name = "mode"

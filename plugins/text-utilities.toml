@@ -1,118 +1,77 @@
 name = "text-utilities"
 description = "Pure-text transforms — base64, hashing, case shifting, counting, escaping"
 
-# All templates feed {subject.text} through a quoted-heredoc here-doc so that
-# selected content containing single quotes, parens, $-signs, or newlines is
-# preserved literally. Without the heredoc, the previous `<<< '{subject.text}'`
-# form broke on any selection with a single quote in it.
+# {subject.text|q} shell-quotes the content so it survives as a single safe
+# here-string token regardless of embedded quotes/newlines/metacharacters.
 
 [[verbs]]
 name = "upper"
 description = "Convert to UPPERCASE"
 accepts = ["text/*"]
-cmd = """tr a-z A-Z <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "tr a-z A-Z <<< {subject.text|q}"
 
 [[verbs]]
 name = "lower"
 description = "Convert to lowercase"
 accepts = ["text/*"]
-cmd = """tr A-Z a-z <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "tr A-Z a-z <<< {subject.text|q}"
 
 [[verbs]]
 name = "wc"
 description = "Word, line, and character counts"
 accepts = ["text/*"]
-cmd = """wc -lwc <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "wc -lwc <<< {subject.text|q}"
 
 [[verbs]]
 name = "trim"
 description = "Strip leading and trailing whitespace"
 accepts = ["text/*"]
-cmd = """awk '{$1=$1; print}' <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "awk '{$1=$1; print}' <<< {subject.text|q}"
 
 [[verbs]]
 name = "base64-encode"
 description = "Encode as base64"
 accepts = ["text/*"]
-cmd = """base64 -w 0 <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "base64 -w 0 <<< {subject.text|q}"
 
 [[verbs]]
 name = "base64-decode"
 description = "Decode from base64"
 accepts = ["text/*"]
-cmd = """base64 -d <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "base64 -d <<< {subject.text|q}"
 
 [[verbs]]
 name = "url-encode"
 description = "Percent-encode for use in a URL"
 accepts = ["text/*"]
-cmd = """jq -sRr @uri <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "jq -sRr @uri <<< {subject.text|q}"
 
 [[verbs]]
 name = "url-decode"
 description = "Decode a percent-encoded string"
 accepts = ["text/*"]
-cmd = """python3 -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.unquote(sys.stdin.read()))' <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "python3 -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.unquote(sys.stdin.read()))' <<< {subject.text|q}"
 
 [[verbs]]
 name = "sha256"
 description = "Compute SHA-256 hex digest"
 accepts = ["text/*"]
-cmd = """sha256sum <<'COSMIC_GOO_END' | awk '{print $1}'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "sha256sum <<< {subject.text|q} | awk '{print $1}'"
 
 [[verbs]]
 name = "md5"
 description = "Compute MD5 hex digest"
 accepts = ["text/*"]
-cmd = """md5sum <<'COSMIC_GOO_END' | awk '{print $1}'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "md5sum <<< {subject.text|q} | awk '{print $1}'"
 
 [[verbs]]
 name = "json-string"
 description = "Wrap text as a JSON-encoded string literal"
 accepts = ["text/*"]
-cmd = """jq -sR . <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-"""
+cmd = "jq -sR . <<< {subject.text|q}"
 
 [[verbs]]
 name = "shell-escape"
 description = "Quote text for safe inclusion in a shell command"
 accepts = ["text/*"]
-# Read via heredoc, then printf %q on the resulting variable. Reading is
-# safe; the quoting happens after the content is captured.
-cmd = """v=$(cat <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-); printf '%q\\n' "$v"
-"""
+cmd = "printf '%q\\n' {subject.text|q}"

@@ -1,12 +1,11 @@
 name = "claude-routing"
 description = "Routes text verbs to Fabric, Claude Desktop, Claude Code, or clipboard"
 
-# Routes use quoted-heredoc bash here-docs (<<'SENTINEL') for the prompt body
-# so that arbitrary selected content — single quotes, parens, backticks,
-# Unicode, anything — flows through verbatim without breaking shell parsing.
-# The sentinel COSMIC_GOO_END is deliberately uncommon; if a future caller
-# selects content with that exact line, regenerate the registry with a
-# different sentinel.
+# Templates use substitution filters (see doc/plugin-authoring.md):
+#   {verb.prompt|q}    shell-quoted — safe as a bare argv / here-string token
+#   {verb.prompt|uri}  percent-encoded — safe inside a single-quoted URL
+# This keeps arbitrary selected content (quotes, parens, newlines, $(...))
+# inert without the verbose quoted-heredoc dance.
 
 [[adverbs]]
 name = "via"
@@ -17,36 +16,18 @@ description = "Where to send the rendered prompt"
 
 [adverbs.values.fabric]
 description = "Pipe through Fabric (Anthropic API)"
-template = """fabric -p {verb.fabric_pattern} <<'COSMIC_GOO_END'
-{verb.prompt}
-COSMIC_GOO_END
-"""
+template = "fabric -p {verb.fabric_pattern} <<< {verb.prompt|q}"
 
 [adverbs.values.claude-desktop]
 description = "Open new chat in Claude Desktop"
-# URL-encode the prompt through a heredoc-fed jq, then xdg-open the result.
 # Subject to the R4 quirk (recon/findings.md): Claude Desktop only reliably
 # prefills on a cold start. The clipboard route is the safer fallback.
-template = """xdg-open "claude://claude.ai/new?q=$(jq -srR @uri <<'COSMIC_GOO_END'
-{verb.prompt}
-COSMIC_GOO_END
-)"
-"""
+template = "xdg-open 'claude://claude.ai/new?q={verb.prompt|uri}'"
 
 [adverbs.values.claude-code]
 description = "Open a new Claude Code session"
-template = """xdg-open "claude://code/new?q=$(jq -srR @uri <<'COSMIC_GOO_END'
-{verb.prompt}
-COSMIC_GOO_END
-)&folder=$(jq -srR @uri <<'COSMIC_GOO_END'
-{cwd}
-COSMIC_GOO_END
-)"
-"""
+template = "xdg-open 'claude://code/new?q={verb.prompt|uri}&folder={cwd|uri}'"
 
 [adverbs.values.clipboard]
 description = "Copy assembled prompt to clipboard"
-template = """wl-copy <<'COSMIC_GOO_END'
-{verb.prompt}
-COSMIC_GOO_END
-"""
+template = "wl-copy <<< {verb.prompt|q}"

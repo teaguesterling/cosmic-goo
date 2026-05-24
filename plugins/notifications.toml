@@ -6,13 +6,8 @@ name = "notify"
 description = "Send a desktop notification with the selected text as the body"
 accepts = ["text/*"]
 uses_adverbs = ["urgency"]
-# Capture body via quoted heredoc so arbitrary selected content survives
-# unscathed; then pass it as a single argv to notify-send.
-cmd = """body=$(cat <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-); notify-send -u {urgency_level} 'goo' "$body"
-"""
+# {subject.text|q} shell-quotes the body into a single safe argv.
+cmd = "notify-send -u {urgency_level} 'goo' {subject.text|q}"
 
 [[adverbs]]
 name = "urgency"

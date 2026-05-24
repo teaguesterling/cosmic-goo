@@ -173,6 +173,50 @@ EOF
     [ "$output" = "foo-bar-foo" ]
 }
 
+@test "_substitute: |q filter shell-quotes the value" {
+    vars='{"x":"a b'"'"'c"}'   # value is: a b'c
+    run _substitute "echo {x|q}" "$vars"
+    [ "$status" -eq 0 ]
+    # printf %q renders a space-and-quote-containing string safely; re-running
+    # the rendered command must reproduce the original value.
+    out=$(eval "${output}")
+    [ "$out" = "a b'c" ]
+}
+
+@test "_substitute: |uri filter percent-encodes the value" {
+    vars='{"x":"a b&c=d"}'
+    run _substitute "{x|uri}" "$vars"
+    [ "$status" -eq 0 ]
+    [ "$output" = "a%20b%26c%3Dd" ]
+}
+
+@test "_substitute: |raw is the same as no filter" {
+    vars='{"x":"a b/c"}'
+    raw=$(_substitute "{x|raw}" "$vars")
+    none=$(_substitute "{x}" "$vars")
+    [ "$raw" = "a b/c" ]
+    [ "$raw" = "$none" ]
+}
+
+@test "_substitute: unknown filter falls back to raw" {
+    vars='{"x":"value"}'
+    run _substitute "{x|bogus}" "$vars"
+    [ "$status" -eq 0 ]
+    [ "$output" = "value" ]
+}
+
+@test "_substitute: |q makes hostile content safe in a here-string" {
+    marker="$BATS_TEST_TMPDIR/pwned"
+    payload="a; \$(touch $marker) \`touch $marker\`"
+    vars=$(jq -nc --arg p "$payload" '{x: $p}')
+    rendered=$(_substitute "cat <<< {x|q}" "$vars")
+    out=$(eval "$rendered")
+    # The command substitution / backticks must NOT have executed.
+    [ ! -e "$marker" ]
+    # And the content round-trips verbatim.
+    [ "$out" = "$payload" ]
+}
+
 # ---------------- verb_apply: direct cmd ----------------
 
 @test "verb_apply: executes a direct cmd with subject substitution" {

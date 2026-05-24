@@ -13,13 +13,8 @@ name = "search"
 description = "Search the web for the selected text"
 accepts = ["text/*"]
 uses_adverbs = ["engine"]
-# URL-encode the query via a quoted-heredoc-fed jq so arbitrary selected
-# content (quotes, parens, multi-line) round-trips safely.
-cmd = """xdg-open "{engine_url}$(jq -srR @uri <<'COSMIC_GOO_END'
-{subject.text}
-COSMIC_GOO_END
-)"
-"""
+# {engine_url} is a raw URL prefix; {subject.text|uri} percent-encodes the query.
+cmd = "xdg-open '{engine_url}{subject.text|uri}'"
 
 [[adverbs]]
 name = "engine"
