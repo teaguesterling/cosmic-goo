@@ -78,15 +78,38 @@ Anything that isn't a known subcommand is interpreted as a verb name:
 goo <verb> [POSITIONAL_1] [POSITIONAL_2] [--FLAG=VALUE ...]
 ```
 
-### Positional resolution
+### Subject addressing
 
-| Positional supplied? | Resolution |
-|---|---|
-| no | Implicit subject: PRIMARY selection (`wl-paste --primary`) → clipboard (`wl-paste`) → focused app (`cos-cli`) |
-| yes, verb accepts `text/*` | Treated as text content; MIME detected via libmagic |
-| yes, verb accepts a handle type | Resolved against any source emitting that type; matches on `id` or `title` substring (case-insensitive) |
+A subject argument can take several forms. They all resolve through one model: each is rewritten to a canonical `cosmic-goo:` URI, then dispatched.
 
-A second positional becomes the **object** (for two-step verbs like `move-to-workspace`). It goes through the same resolution.
+| You type | Means | Example |
+|---|---|---|
+| bare text | literal text content | `goo upper "hello"` |
+| `./x`, `../x`, `/x`, `~/x` | a **file** (read contents; path in `metadata.path`) | `goo summarize ./notes.md` |
+| `https://…`, `claude://…` | a **URL** (`text/x-uri`) | `goo open https://example.com` |
+| `@source:query` | item from a named **source** (by `name` or `prefix`) | `goo activate @app:firefox` |
+| `@source` | the source's first/default item | `goo summarize @clip` |
+| `^` | the clipboard (alias for `@clip`) | `goo summarize ^` |
+| `^name` | a named clipboard buffer *(reserved — not yet implemented)* | — |
+| `+scheme:value` | explicit scheme handoff | `goo summarize +file:./notes.md` |
+| `cosmic-goo:…` / `cosmic-goo+…` | the canonical URI directly (for scripts/IPC) | `goo summarize 'cosmic-goo+file:///abs/x.md'` |
+
+When **no** positional is given, the subject falls back in order: **stdin** (if piped) → PRIMARY selection → clipboard → focused app (for handle verbs).
+
+```bash
+echo "text from a pipe" | goo summarize     # stdin wins when piped
+goo summarize                                # no pipe → PRIMARY selection
+```
+
+Resolution rules:
+
+- A **file** address (`./x`, `+file:`) must exist — the handler errors otherwise. An explicit path is an unambiguous "I mean a file" signal.
+- The verb's `accepts` type-checks the resolved subject. A file verb fed bare text fails the type check; a text verb fed bare text works. There's no separate "mode" — enforcement is the handler (existence) plus `accepts` (type).
+- `.text` is always the textual **content**; `.metadata.path` / `.id` carry identity. So `summarize ./x.md` reads the file's contents, while `open ./x.md` uses its path.
+
+A second positional becomes the **object** (for two-step verbs like `move-to`), resolved the same way.
+
+> The canonical `cosmic-goo:<source>:<input>` (source lookup) and `cosmic-goo+<scheme>:<value>` (scheme handoff) URIs are what the launcher meta-plugin and any IPC will pass between processes. The sigils (`@`, `^`, `+`) and native shapes are terminal-friendly shorthands that rewrite into them.
 
 ### Flag forms
 
@@ -158,6 +181,11 @@ What it completes:
 | `goo list <TAB>` | source names |
 | `goo VERB --<TAB>` | adverbs the verb opts into (`--name=`) |
 | `goo VERB --flag=<TAB>` | selector values for that adverb |
+| `goo VERB @<TAB>` | source prefixes (`@app:`, `@ws:`, `@file:`, …) |
+| `goo VERB @source:<TAB>` | items from that source (runs its `list_cmd`) |
+| `goo HANDLE-VERB <TAB>` | items for a handle verb (e.g. `goo activate <TAB>` → running apps) |
+
+Handle-verb and `@source:` completions invoke source `list_cmd`s on demand, so they're as fast as the underlying tool (cos-cli ~80ms). Text-verb positionals aren't completed (the subject is freeform prose, a path, or stdin).
 
 Zsh completion piggybacks on the same `__complete` backend — script TBD.
 

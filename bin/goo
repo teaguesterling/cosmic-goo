@@ -310,13 +310,53 @@ cmd_complete() {
                 .adverbs[] | select(.name == $a) | (.values // {}) | keys[]
             ' <<<"$registry"
             ;;
+        source-prefixes)
+            # Emit the `@prefix` tokens for sources that declare a prefix,
+            # for `goo VERB @<TAB>` completion.
+            jq -r '.sources[] | select(.prefix) | "@" + .prefix + ":"' <<<"$registry"
+            ;;
+        verb-accepts-handle)
+            # "yes" if the verb accepts any non-text (handle) type; used to
+            # decide whether bare-positional completion should list items.
+            [ -z "$arg" ] && return 0
+            jq -r --arg v "$arg" '
+                .verbs[] | select(.name == $v)
+                | (.accepts // [])
+                | if any(test("^text/") | not) then "yes" else "no" end
+            ' <<<"$registry" | head -n 1
+            ;;
+        verb-subject-items)
+            # Emit ids from every source whose `emits` matches one of the
+            # verb's accepted (handle) types. Runs list_cmds — used only for
+            # explicit bare-positional completion of handle verbs.
+            [ -z "$arg" ] && return 0
+            local accepts pattern source emits list_cmd
+            accepts=$(jq -r --arg v "$arg" '.verbs[] | select(.name == $v) | .accepts[]?' <<<"$registry")
+            while IFS= read -r pattern; do
+                [ -z "$pattern" ] && continue
+                while IFS= read -r source; do
+                    emits=$(jq -r '.emits // empty' <<<"$source")
+                    [ -z "$emits" ] && continue
+                    if mime_matches "$pattern" "$emits"; then
+                        list_cmd=$(jq -r '.list_cmd // empty' <<<"$source")
+                        [ -z "$list_cmd" ] && continue
+                        bash -c "$list_cmd" 2>/dev/null | jq -r '.[]?.id // empty' 2>/dev/null
+                    fi
+                done < <(jq -c '.sources[]' <<<"$registry")
+            done <<<"$accepts"
+            ;;
         source-items)
-            # arg is the source name; emit ids (one per line). May invoke
-            # the source's list_cmd, which can be slow — completions that
-            # call this should be optional/explicit.
+            # arg is a source name OR prefix; emit ids (one per line). Invokes
+            # the source's list_cmd, which can be slow — used only for
+            # explicit @source: completion.
             [ -z "$arg" ] && return 0
             local list_cmd
-            list_cmd=$(jq -r --arg s "$arg" '.sources[] | select(.name == $s) | .list_cmd' <<<"$registry")
+            # Select the first matching source inside jq so a multi-line
+            # list_cmd survives intact (piping to `head -n1` would truncate it).
+            list_cmd=$(jq -r --arg s "$arg" '
+                [.sources[] | select(.name == $s or (.prefix // "") == $s)]
+                | first | .list_cmd // empty
+            ' <<<"$registry")
             [ -z "$list_cmd" ] && return 0
             bash -c "$list_cmd" 2>/dev/null | jq -r '.[]?.id // empty' 2>/dev/null
             ;;

@@ -76,10 +76,44 @@ _goo() {
         return 0
     fi
 
-    # Positional after a verb: don't try to complete (we'd need to know what
-    # source emits the verb's accepted type and run its list_cmd — too slow
-    # and noisy for default completion). Users can opt in via a `--source-items`
-    # extension later.
+    # @source:item — addressing sigil completion.
+    if [[ "$cur" == @*:* ]]; then
+        # @source:<TAB> — list items from that source.
+        local srcpfx=${cur#@}
+        srcpfx=${srcpfx%%:*}
+        local q=${cur#*:}
+        local items
+        items=$(goo __complete source-items "$srcpfx" 2>/dev/null)
+        # shellcheck disable=SC2207
+        COMPREPLY=($(compgen -W "$items" -- "$q"))
+        local i
+        for i in "${!COMPREPLY[@]}"; do
+            COMPREPLY[i]="@${srcpfx}:${COMPREPLY[i]}"
+        done
+        return 0
+    fi
+    if [[ "$cur" == @* ]]; then
+        # @<TAB> — list source prefixes (@app:, @ws:, ...).
+        local prefixes
+        prefixes=$(goo __complete source-prefixes 2>/dev/null)
+        # shellcheck disable=SC2207
+        COMPREPLY=($(compgen -W "$prefixes" -- "$cur"))
+        compopt -o nospace 2>/dev/null
+        return 0
+    fi
+
+    # Bare positional after a verb: if the verb accepts a handle type, offer
+    # items from the matching sources. For text verbs we don't complete (the
+    # subject is freeform prose / a path / stdin).
+    local accepts_handle
+    accepts_handle=$(goo __complete verb-accepts-handle "$first" 2>/dev/null)
+    if [ "$accepts_handle" = "yes" ]; then
+        local items
+        items=$(goo __complete verb-subject-items "$first" 2>/dev/null)
+        # shellcheck disable=SC2207
+        COMPREPLY=($(compgen -W "$items" -- "$cur"))
+        return 0
+    fi
     return 0
 }
 
