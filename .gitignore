@@ -19,6 +19,7 @@ Cargo.lock
 # Build artifacts
 /dist/
 /build/
+doc/manual.html
 
 # Local overrides
 .cosmic-goo.local/

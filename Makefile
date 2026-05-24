@@ -4,7 +4,7 @@
 
 SHELL := /bin/bash
 
-.PHONY: help test shellcheck validate install install-user clean
+.PHONY: help test shellcheck validate install install-user clean manual open-manual
 
 help:  ## Show this help
 	@awk 'BEGIN { FS = ":.*##"; printf "Available targets:\n" } /^[a-zA-Z0-9_-]+:.*##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -49,5 +49,28 @@ install:  ## Install to /usr/local (system-wide) — Phase 1 TBD
 install-user:  ## Install to ~/.local (user-only) — Phase 1 TBD
 	@echo "install-user target not implemented yet"
 
+manual:  ## Render doc/ to a single self-contained HTML file at doc/manual.html
+	@if ! command -v pandoc >/dev/null 2>&1; then \
+		echo "pandoc not found. apt install pandoc"; exit 1; \
+	fi
+	@pandoc \
+		--standalone \
+		--embed-resources \
+		--toc \
+		--toc-depth=2 \
+		--metadata title="cosmic-goo manual" \
+		--metadata "subtitle=Phase 1 — Grammar Of Operations" \
+		--css=doc/manual.css \
+		-o doc/manual.html \
+		doc/intro.md \
+		doc/cli-reference.md \
+		doc/plugin-authoring.md \
+		doc/examples/ms-natural-4000-bindings.md \
+		doc/limitations.md
+	@echo "wrote doc/manual.html"
+
+open-manual: manual  ## Build the manual and open it in your default browser
+	@xdg-open doc/manual.html
+
 clean:  ## Remove build artifacts
-	@rm -rf dist/ build/
+	@rm -rf dist/ build/ doc/manual.html

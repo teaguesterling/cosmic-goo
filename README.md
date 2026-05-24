@@ -16,13 +16,21 @@ Plugins are TOML files declaring any combination of types, sources, verbs, and a
 
 ## Documentation
 
-The current design lives in [`docs/vision/`](docs/vision/) as the working spec:
+Authoritative current docs live in [`doc/`](doc/):
 
-- [`cosmic-goo-README.md`](docs/vision/cosmic-goo-README.md) — full project introduction
-- [`cosmic-goo-spec.md`](docs/vision/cosmic-goo-spec.md) — architecture and plugin format
-- [`cosmic-goo-implementation-plan.md`](docs/vision/cosmic-goo-implementation-plan.md) — task-level Phase 1–6 breakdown
-- [`cosmic-goo-CONTRIBUTING.md`](docs/vision/cosmic-goo-CONTRIBUTING.md) — plugin authoring & contribution guide
-- [`cosmic-goo-design-history.md`](docs/vision/cosmic-goo-design-history.md) — archived predecessor design (Cosmic Scenes)
+- [`doc/intro.md`](doc/intro.md) — what cosmic-goo is, status, install
+- [`doc/cli-reference.md`](doc/cli-reference.md) — `goo` command reference
+- [`doc/plugin-authoring.md`](doc/plugin-authoring.md) — how to write plugins
+- [`doc/examples/ms-natural-4000-bindings.md`](doc/examples/ms-natural-4000-bindings.md) — example MS Natural 4000 bindings
+- [`doc/limitations.md`](doc/limitations.md) — Phase 1 limitations and roadmap
+
+Render to a single browseable HTML manual:
+
+```bash
+make open-manual
+```
+
+Original design notes and the implementation plan are in [`docs/vision/`](docs/vision/) (frozen archive — `doc/` supersedes for current behaviour).
 
 Recon results from environment validation are in [`recon/findings.md`](recon/findings.md).
 
