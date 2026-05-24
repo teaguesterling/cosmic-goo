@@ -30,7 +30,7 @@ shellcheck:  ## Lint shell scripts under bin/ and lib/
 			if [ -n "$$files" ]; then \
 				found=1; \
 				echo "shellcheck $$d/"; \
-				echo "$$files" | xargs shellcheck || exit 1; \
+				echo "$$files" | xargs shellcheck -x || exit 1; \
 			fi; \
 		fi; \
 	done; \
