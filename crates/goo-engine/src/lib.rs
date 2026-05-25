@@ -9,3 +9,4 @@ pub mod mime;
 pub mod registry;
 pub mod selection;
 pub mod template;
+pub mod verbs;
