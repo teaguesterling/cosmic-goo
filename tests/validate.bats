@@ -192,3 +192,63 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" =~ "1 aliases" ]]
 }
+
+@test "validate: dispatch rule with no matches pattern is rejected" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/dsp.toml" <<'EOF'
+name = "dsp"
+[[verbs]]
+name = "go"
+accepts = ["text/*"]
+cmd = "true"
+[[dispatch]]
+verb = "go"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "no \"matches\"" ]]
+}
+
+@test "validate: dispatch rule with no verb is rejected" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/dsp.toml" <<'EOF'
+name = "dsp"
+[[dispatch]]
+matches = "foo"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "no \"verb\"" ]]
+}
+
+@test "validate: dispatch rule routing to an unknown verb is rejected" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/dsp.toml" <<'EOF'
+name = "dsp"
+[[dispatch]]
+matches = "foo"
+verb = "ghost"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "unknown verb" ]]
+}
+
+@test "validate: a well-formed dispatch rule passes" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/dsp.toml" <<'EOF'
+name = "dsp"
+[[verbs]]
+name = "open-url"
+accepts = ["text/x-uri"]
+cmd = "true"
+[[dispatch]]
+matches = 'RFC ([0-9]+)'
+type = "text/x-uri"
+set = { text = "https://rfc/${1}" }
+verb = "open-url"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "1 dispatch" ]]
+}

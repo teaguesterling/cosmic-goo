@@ -35,6 +35,7 @@ name = "test-verbs"
 [[verbs]]
 name = "echo-back"
 accepts = ["text/*"]
+default_for = "text/plain"
 cmd = "printf '%s' {subject.text|q}"
 
 [[verbs]]
@@ -91,6 +92,62 @@ expands = "loopb"
 [[aliases]]
 name = "loopb"
 expands = "loopa"
+EOF
+
+    # Content-dispatch rules (#32). Routed to echo-back (prints {subject.text})
+    # and wrap (uses the dump adverb) so we can assert the resolved subject.
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/test-dispatch.toml" <<'EOF'
+name = "test-dispatch"
+
+# Capture ${1}, rewrite the subject text.
+[[dispatch]]
+matches = 'RFC:?[[:space:]]*([0-9]+)'
+type = "text/plain"
+set = { text = "rfc-${1}" }
+verb = "echo-back"
+
+# Two captures: ${1} and ${2}.
+[[dispatch]]
+matches = '([a-z]+)=([0-9]+)'
+type = "text/plain"
+set = { text = "${1}:${2}" }
+verb = "echo-back"
+
+# No `set`: original text passes through unchanged.
+[[dispatch]]
+matches = 'hello'
+verb = "echo-back"
+
+# `adverbs` seed: route wrap through the dump adverb.
+[[dispatch]]
+matches = '^wrapme:(.*)$'
+set = { text = "${1}" }
+adverbs = { via = "dump" }
+verb = "wrap"
+
+# `adverbs` value itself interpolates captures: via comes from ${1}.
+[[dispatch]]
+matches = '^route ([a-z]+):(.*)$'
+set = { text = "${2}" }
+adverbs = { via = "${1}" }
+verb = "wrap"
+
+# Single-shot proof: rewrite to text that WOULD match the RFC rule above; the
+# table must NOT re-run, so echo-back sees the literal "RFC 999".
+[[dispatch]]
+matches = '^recurse$'
+set = { text = "RFC 999" }
+verb = "echo-back"
+
+# First-match-wins: two rules match "ZZZ"; only the first should fire.
+[[dispatch]]
+matches = 'ZZZ'
+set = { text = "first" }
+verb = "echo-back"
+[[dispatch]]
+matches = 'ZZZ'
+set = { text = "second" }
+verb = "echo-back"
 EOF
 
     # Handle sources + a custom sigil, for addressing/object tests.
@@ -296,4 +353,77 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" =~ "eb" ]]
     [[ "$output" =~ "wrapd" ]]
+}
+
+# ---------------- content dispatch (#32) ----------------
+
+@test "dispatch: rule rewrites subject text via capture and routes to verb" {
+    run "$GOO" dispatch "RFC 2616" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "rfc-2616" ]
+}
+
+@test "dispatch: matches a substring within the input" {
+    run "$GOO" dispatch "please read RFC 822 today" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "rfc-822" ]
+}
+
+@test "dispatch: interpolates multiple captures (\${1} and \${2})" {
+    run "$GOO" dispatch "port=8080" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "port:8080" ]
+}
+
+@test "dispatch: a rule with no set passes the original text through" {
+    run "$GOO" dispatch "say hello there" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "say hello there" ]
+}
+
+@test "dispatch: a rule's adverbs reach the verb" {
+    run "$GOO" dispatch "wrapme:payload" </dev/null
+    [ "$status" -eq 0 ]
+    [ -f "$DUMP_FILE" ]
+    [ "$(cat "$DUMP_FILE")" = "WRAPPED:payload:END" ]
+}
+
+@test "dispatch: captures interpolate into adverb values too" {
+    run "$GOO" dispatch "route dump:via-capture" </dev/null
+    [ "$status" -eq 0 ]
+    [ -f "$DUMP_FILE" ]
+    [ "$(cat "$DUMP_FILE")" = "WRAPPED:via-capture:END" ]
+}
+
+@test "dispatch: matching is single-shot (rewritten text is not re-dispatched)" {
+    run "$GOO" dispatch "recurse" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "RFC 999" ]
+}
+
+@test "dispatch: first matching rule wins" {
+    run "$GOO" dispatch "ZZZ" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "first" ]
+}
+
+@test "dispatch: reads input from stdin too" {
+    run bash -c 'printf "%s" "RFC 1" | "$0" dispatch' "$GOO"
+    [ "$status" -eq 0 ]
+    [ "$output" = "rfc-1" ]
+}
+
+@test "dispatch: no rule match falls back to the type's default verb" {
+    # "plain words" matches no rule; native detection -> text/plain ->
+    # default_for echo-back, which prints the text back.
+    run "$GOO" dispatch "plain words" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "plain words" ]
+}
+
+@test "dispatch: no match and no default verb is a clean error" {
+    # A URL resolves to text/x-uri, for which this fixture has no default_for.
+    run "$GOO" dispatch "https://example.com/x" </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "no default verb" ]]
 }

@@ -1,0 +1,43 @@
+# dispatch.toml.example — a starter content-dispatch rule table (#32).
+#
+# Copy to ~/.config/cosmic-goo/plugins/dispatch.toml and adapt. NOTHING here is
+# active until you do: no dispatch rules ship by default, by design (the
+# "configuration ratchet" — goo only does what your config tells it to).
+#
+# Rules are tried in file order; the first whose `matches` ERE hits wins.
+# `${N}` interpolates capture group N (0 = whole match) into `set` values.
+# Regex is bash ERE: use POSIX classes (\s -> [[:space:]], \d -> [[:digit:]]).
+#
+# These route to verbs from the default plugin set (urls/files): open-url,
+# search, open. `goo validate` will flag any rule whose verb doesn't exist.
+
+name = "dispatch"
+tier = "desktop"
+description = "Example content-dispatch rules (copy to your config to enable)"
+
+# A bare URL -> open it in the browser.
+[[dispatch]]
+matches = '^(https?|ftp)://[^[:space:]]+$'
+type    = "text/x-uri"
+verb    = "open-url"
+
+# RFC NNNN -> open the canonical text at rfc-editor.org.
+[[dispatch]]
+matches = 'RFC:?[[:space:]]*([0-9]+)'
+type    = "text/x-uri"
+set     = { text = "https://www.rfc-editor.org/rfc/rfc${1}.txt" }
+verb    = "open-url"
+
+# owner/repo shorthand (e.g. "gh torvalds/linux") -> the GitHub repo page.
+[[dispatch]]
+matches = '^gh[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$'
+type    = "text/x-uri"
+set     = { text = "https://github.com/${1}" }
+verb    = "open-url"
+
+# "todo: <text>" -> search GitHub code for the text.
+[[dispatch]]
+matches = '^todo:[[:space:]]+(.*)$'
+set     = { text = "${1}" }
+adverbs = { engine = "github" }
+verb    = "search"

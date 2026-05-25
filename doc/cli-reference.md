@@ -79,6 +79,26 @@ GOO_PICKER=rofi goo compose # force a specific picker
 
 > This is the v0 shell dialog — a sequential picker, not yet the spec's side-by-side three-panel GUI. The native libcosmic/iced version is later polish on the same flow. Scripted/test invocations can pre-seed selections via `GOO_COMPOSE_ANSWERS` (a file with one choice per line).
 
+### `goo dispatch <input>`
+
+Classifies raw content and routes it to a verb — the plumber-style "just do the
+sensible thing with this datum" entry point. It reads a positional or piped
+stdin, then:
+
+1. tries each `[[dispatch]]` rule in load order; the **first** whose `matches`
+   ERE hits wins. Its `type`, `set` (with `${N}` capture interpolation), `verb`,
+   and `adverbs` build and route the subject. Matching is single-shot — a
+   rewritten subject is not re-fed through the table.
+2. if no rule matches, falls back to native subject detection plus the detected
+   type's `default_for` verb.
+
+```bash
+goo dispatch "RFC 2616"              # a rule → open-url on the rfc-editor URL
+echo "https://example.com" | goo dispatch   # no rule → text/x-uri default verb
+```
+
+Rules live in plugin TOML (see [plugin authoring](plugin-authoring.md#content-dispatch)); none ship by default — dispatch only does what your config tells it to. `goo validate` checks every rule has a `matches` and a `verb` that exists.
+
 ## Verb invocation
 
 Anything that isn't a known subcommand is interpreted as a verb name:

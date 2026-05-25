@@ -283,6 +283,37 @@ subcommand (`list`, `describe`, `plugins`, `validate`, `compose`, `help`); it
 shadowing a verb is a valid use (the alias wins). Because `expands` is run with
 the same trust as a verb's `cmd`, only define aliases in plugins you trust.
 
+## Content dispatch
+
+A `[[dispatch]]` rule classifies raw text by a regex and routes it to a verb —
+a plumber-style "this content → that verb" table, used by `goo dispatch <input>`.
+It's the content-aware layer on top of type-based `default_for`: rules are tried
+in load order, the first whose `matches` hits wins, and if none match, dispatch
+falls back to native detection + the type's default verb.
+
+```toml
+[[dispatch]]
+matches = 'RFC:?[[:space:]]*([0-9]+)'    # ERE; capture groups -> ${1}, ${2}, …
+type    = "text/x-uri"                    # type assigned to the resulting subject
+set     = { text = "https://www.rfc-editor.org/rfc/rfc${1}.txt" }  # subject overrides
+verb    = "open-url"                      # verb to route to
+adverbs = { engine = "google" }          # optional adverb seed (omit if none)
+```
+
+`set` is deep-merged over a base `{ type, text: <input> }` subject, so you can
+rewrite `text` or add `metadata = { line = "${2}" }`. `${0}` is the whole match,
+`${1}…` the groups. Matching is **single-shot**: a rewritten subject is not
+re-classified, so no cycles.
+
+The regex is bash ERE — use POSIX classes, not Perl shorthands: `\s` →
+`[[:space:]]`, `\d` → `[[:digit:]]`, `\w` → `[[:alnum:]_]`.
+
+Rules are ordered, not keyed: within a plugin they fire in file order; **don't**
+depend on ordering *across* plugins. No dispatch rules ship by default — copy
+[`plugins/dispatch.toml.example`](https://github.com/teaguesterling/cosmic-goo/blob/main/plugins/dispatch.toml.example)
+into your config and adapt it. `goo validate` requires each rule to have a
+`matches` pattern and a `verb` that exists.
+
 ## Template substitution
 
 The dispatcher substitutes `{path.to.var}` placeholders before running the command. Paths are dotted into a context dict containing:

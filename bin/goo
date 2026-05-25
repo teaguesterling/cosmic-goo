@@ -38,6 +38,8 @@ export COSMIC_GOO_BUILTIN_PLUGINS_DIR="${COSMIC_GOO_BUILTIN_PLUGINS_DIR:-$GOO_DI
 . "$GOO_DIR/lib/verbs.sh"
 # shellcheck source=../lib/address.sh
 . "$GOO_DIR/lib/address.sh"
+# shellcheck source=../lib/dispatch.sh
+. "$GOO_DIR/lib/dispatch.sh"
 # shellcheck source=../lib/dialog.sh
 . "$GOO_DIR/lib/dialog.sh"
 
@@ -53,6 +55,7 @@ USAGE
     goo list <source>                    Emit source items as JSON
     goo describe <verb>                  Show verb details
     goo compose                          Pick subject → verb → object → adverbs
+    goo dispatch <input>                 Classify content and route to a verb
     goo plugins                          List loaded plugins
     goo validate                         Validate all loaded plugins
 
@@ -261,7 +264,7 @@ resolve_object() {
 # ---------------- command aliases (#26) ----------------
 
 # Reserved first-word subcommands that an alias can never shadow.
-_RESERVED_SUBCOMMANDS="compose list describe plugins validate __complete help -h --help"
+_RESERVED_SUBCOMMANDS="compose list describe plugins validate dispatch __complete help -h --help"
 
 # Echo an alias's `expands` string for NAME, or fail (1) if no such alias.
 # Aliases are whole-invocation shortcuts: the first word is a verb (or another
@@ -393,15 +396,39 @@ cmd_validate() {
         esac
     done < <(jq -r '.aliases[]? | .name // ""' <<<"$registry")
 
+    # 7. Dispatch rules: each needs a `matches` pattern and a `verb` that exists.
+    local dn di rule rmatch rverb
+    dn=$(jq '.dispatch | length' <<<"$registry")
+    for (( di = 0; di < dn; di++ )); do
+        rule=$(jq -c ".dispatch[$di]" <<<"$registry")
+        rmatch=$(jq -r '.matches // ""' <<<"$rule")
+        rverb=$(jq -r '.verb // ""' <<<"$rule")
+        if [ -z "$rmatch" ]; then
+            printf 'dispatch rule #%d has no "matches" pattern\n' "$((di+1))" >&2
+            errors=$((errors+1))
+        fi
+        if [ -z "$rverb" ]; then
+            printf 'dispatch rule #%d has no "verb"\n' "$((di+1))" >&2
+            errors=$((errors+1))
+        else
+            case "$verb_names" in
+                *" $rverb "*) ;;
+                *) printf 'dispatch rule #%d routes to unknown verb "%s"\n' "$((di+1))" "$rverb" >&2
+                   errors=$((errors+1)) ;;
+            esac
+        fi
+    done
+
     if [ "$errors" -eq 0 ]; then
-        printf 'goo validate: OK (%d plugins, %d types, %d sources, %d verbs, %d adverbs, %d sigils, %d aliases)\n' \
+        printf 'goo validate: OK (%d plugins, %d types, %d sources, %d verbs, %d adverbs, %d sigils, %d aliases, %d dispatch)\n' \
             "$(jq '.plugins | length' <<<"$registry")" \
             "$(jq '.types | length' <<<"$registry")" \
             "$(jq '.sources | length' <<<"$registry")" \
             "$(jq '.verbs | length' <<<"$registry")" \
             "$(jq '.adverbs | length' <<<"$registry")" \
             "$(jq '.sigils | length' <<<"$registry")" \
-            "$(jq '.aliases | length' <<<"$registry")"
+            "$(jq '.aliases | length' <<<"$registry")" \
+            "$(jq '.dispatch | length' <<<"$registry")"
         return 0
     fi
     printf 'goo validate: %d error(s)\n' "$errors" >&2
@@ -443,6 +470,47 @@ cmd_describe() {
     ' <<<"$verb"
 }
 
+# ---------------- subcommand: dispatch (#32) ----------------
+#
+# Classify raw content and route it to a verb. First a [[dispatch]] rule whose
+# ERE matches the input wins (its type/set/verb/adverbs apply); failing that, we
+# fall back to native subject detection + the type's `default_for` verb. So
+# dispatch is the content-aware layer sitting on top of type-based defaults.
+
+cmd_dispatch() {
+    local input=${1:-}
+    # Stdin parity with verb invocation: a positional wins, else piped stdin.
+    if [ -z "$input" ] && [ ! -t 0 ]; then
+        input=$(cat)
+    fi
+    [ -z "$input" ] && die "dispatch: no input (give a positional or pipe stdin)"
+
+    local m
+    if m=$(dispatch_match "$input"); then
+        # A rule matched: build the subject from its type + interpolated `set`.
+        local verb_name type adverbs fields subject verb_json
+        verb_name=$(jq -r '.verb // empty' <<<"$m")
+        [ -z "$verb_name" ] && die "dispatch: matched rule has no verb"
+        type=$(jq -r '.type // "text/plain"' <<<"$m")
+        adverbs=$(jq -c '.adverbs' <<<"$m")
+        fields=$(jq -c '.fields' <<<"$m")
+        # Deep-merge the rule's interpolated fields over a base {type, text}.
+        subject=$(jq -nc --arg t "$type" --arg x "$input" --argjson f "$fields" \
+            '{type: $t, text: $x} * $f')
+        verb_json=$(verb_lookup "$verb_name") \
+            || die "dispatch: rule routes to unknown verb '$verb_name'"
+        verb_apply "$verb_json" "$subject" null "$adverbs"
+    else
+        # No rule: classify natively, then route to the type's default verb.
+        local subject type verb_json
+        subject=$(address_resolve "$input") || die "dispatch: cannot resolve '$input'"
+        type=$(jq -r '.type // "text/plain"' <<<"$subject")
+        verb_json=$(verb_default_for "$type")
+        [ -z "$verb_json" ] && die "dispatch: no rule matched and no default verb for type '$type'"
+        verb_apply "$verb_json" "$subject" null '{}'
+    fi
+}
+
 # ---------------- subcommand: __complete (for shell completions) ----------------
 #
 # Hidden surface. Bash/zsh completion scripts call this to get candidates for
@@ -457,7 +525,7 @@ cmd_complete() {
     case "$stage" in
         subcommands)
             # static subcommands plus all verb names plus command aliases
-            printf 'list\ndescribe\nplugins\nvalidate\ncompose\nhelp\n'
+            printf 'list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nhelp\n'
             jq -r '.verbs[]?.name' <<<"$registry"
             jq -r '.aliases[]?.name' <<<"$registry"
             ;;
@@ -712,6 +780,7 @@ dispatch() {
         describe)          shift; cmd_describe "$@" ;;
         plugins)           shift; cmd_plugins "$@" ;;
         validate)          shift; cmd_validate "$@" ;;
+        dispatch)          shift; cmd_dispatch "$@" ;;
         __complete)        shift; cmd_complete "$@" ;;
         -h|--help|help)    usage ;;
         *)
