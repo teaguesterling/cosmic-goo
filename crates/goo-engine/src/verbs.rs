@@ -9,7 +9,8 @@
 //! optimization (#31), not needed for the conformance port. This is the spike's
 //! conclusion (task #42).
 
-use serde_json::Value;
+use crate::{adverbs, address, mime, template};
+use serde_json::{json, Value};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -21,6 +22,357 @@ pub fn satisfies(predicate: &str, subject: &Value) -> bool {
         return true;
     }
     jq_truthy(predicate, &subject.to_string())
+}
+
+/// A verb's `valid_when` predicate evaluated against `subject` (absent → true).
+fn valid_for(verb: &Value, subject: &Value) -> bool {
+    let expr = verb.get("valid_when").and_then(|v| v.as_str()).unwrap_or("");
+    satisfies(expr, subject)
+}
+
+/// True if any of `verb.accepts` glob-matches `mime`. A verb with no `accepts`
+/// never matches a (non-empty) type — mirrors `jq -r '.accepts[]?'` yielding
+/// nothing in the shell.
+fn accepts_type(verb: &Value, mime: &str) -> bool {
+    verb.get("accepts")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| p.as_str())
+                .any(|pat| mime::mime_matches(pat, mime))
+        })
+        .unwrap_or(false)
+}
+
+/// JSON for the verb named `name`, optionally filtered to those whose `accepts`
+/// matches `type_filter`. Mirrors `verb_lookup`. `None` on miss.
+pub fn lookup(reg: &Value, name: &str, type_filter: Option<&str>) -> Option<Value> {
+    let verb = reg
+        .get("verbs")?
+        .as_array()?
+        .iter()
+        .find(|v| v.get("name").and_then(|n| n.as_str()) == Some(name))?;
+    if let Some(t) = type_filter {
+        if !accepts_type(verb, t) {
+            return None;
+        }
+    }
+    Some(verb.clone())
+}
+
+/// The verb whose `default_for` matches `type` — a single type string or an
+/// array of types (a polymorphic default like `open`). First match wins.
+/// Mirrors `verb_default_for`.
+pub fn default_for(reg: &Value, type_: &str) -> Option<Value> {
+    reg.get("verbs")?
+        .as_array()?
+        .iter()
+        .find(|v| match v.get("default_for") {
+            Some(Value::Array(arr)) => arr.iter().any(|d| d.as_str() == Some(type_)),
+            Some(Value::String(s)) => s == type_,
+            _ => false,
+        })
+        .cloned()
+}
+
+/// Every verb applicable to `subject` — type-accepted *and* passing its
+/// `valid_when`. Mirrors `verb_for_subject` (order = registry order).
+pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
+    let stype = match subject.get("type").and_then(|t| t.as_str()) {
+        Some(s) if !s.is_empty() => s,
+        _ => return Vec::new(),
+    };
+    let verbs = match reg.get("verbs").and_then(|v| v.as_array()) {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+    verbs
+        .iter()
+        .filter(|v| accepts_type(v, stype) && valid_for(v, subject))
+        .cloned()
+        .collect()
+}
+
+/// A fully-rendered command, ready for `bash -c`. `confirm` mirrors the verb's
+/// `confirm` flag — the caller (the `goo` bin) prompts and may decline (130).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rendered {
+    pub cmd: String,
+    pub confirm: bool,
+}
+
+/// Resolve adverbs, build the substitution context, and render the verb's
+/// command — the pure (no-exec) core of `verb_apply`. The bin executes
+/// `Rendered.cmd` via `bash -c` (honouring `confirm`). Errors mirror the shell's
+/// stderr messages.
+///
+/// `object` is `Value::Null` for one-step verbs; `user_adverbs` is an object
+/// (possibly `{}`).
+pub fn render(
+    reg: &Value,
+    verb: &Value,
+    subject: &Value,
+    object: &Value,
+    user_adverbs: &Value,
+) -> Result<Rendered, String> {
+    // 1. Subject type must match accepts (when the subject is typed).
+    let stype = subject.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if !stype.is_empty() && !accepts_type(verb, stype) {
+        return Err(format!(
+            "subject type '{stype}' does not match verb accepts"
+        ));
+    }
+
+    // 1b. Honour valid_when against the subject.
+    if !valid_for(verb, subject) {
+        return Err("subject does not satisfy this verb's valid_when predicate".into());
+    }
+
+    // 2. Validate object type if the verb declares object_type.
+    let expected_obj = verb.get("object_type").and_then(|t| t.as_str()).unwrap_or("");
+    if !expected_obj.is_empty() {
+        let got = object.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if got.is_empty() {
+            return Err(format!("verb requires object of type '{expected_obj}'"));
+        }
+        if !mime::mime_matches(expected_obj, got) {
+            return Err(format!(
+                "object type '{got}' does not match '{expected_obj}'"
+            ));
+        }
+    }
+
+    // 3. Resolve adverbs (selected values, injected template_vars, route).
+    let resolved = adverbs::resolve(reg, verb, user_adverbs);
+
+    // 4. Build the substitution context; template_vars spread at top level.
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut context = json!({
+        "subject": subject,
+        "object": object,
+        "verb": verb,
+        "adverbs": resolved["selected"],
+        "cwd": cwd,
+    });
+    if let Some(tv) = resolved["template_vars"].as_object() {
+        let obj = context.as_object_mut().unwrap();
+        for (k, v) in tv {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+
+    // 5. Render verb.prompt first, re-injecting so {verb.prompt} resolves in the
+    //    command/route template.
+    let raw_prompt = verb.get("prompt").and_then(|p| p.as_str()).unwrap_or("");
+    if !raw_prompt.is_empty() {
+        let rendered_prompt = template::substitute(raw_prompt, &context);
+        context["verb"]["prompt"] = json!(rendered_prompt);
+    }
+
+    // 6. Pick the template: adverb route → verb cmd → error.
+    let template_str = match resolved["route_template"].as_str().filter(|s| !s.is_empty()) {
+        Some(r) => r.to_string(),
+        None => match verb.get("cmd").and_then(|c| c.as_str()).filter(|s| !s.is_empty()) {
+            Some(c) => c.to_string(),
+            None => {
+                return Err("verb has neither cmd nor an adverb-routed template".into())
+            }
+        },
+    };
+
+    let cmd = template::substitute(&template_str, &context);
+    let confirm = verb.get("confirm").and_then(|c| c.as_bool()).unwrap_or(false);
+    Ok(Rendered { cmd, confirm })
+}
+
+/// Resolve the indirect OBJECT of a two-step verb against its `object_type`.
+/// Port of `resolve_object` in `bin/goo`. Returns `Value::Null` for verbs with
+/// no `object_type`; otherwise the matched candidate tagged with `{type}`.
+///
+/// Candidate pool (in order): an explicit address arg → resolve directly; else
+/// `object_list_cmd` (subject-substituted, `bash -c`) → `object_source` (named
+/// source `list_cmd`) → any source whose `emits` matches `object_type`. The
+/// pool is then filtered by `object_valid_when` (subject-substituted jq), and
+/// matched against `object_arg` by id/title substring (empty arg → first).
+pub fn resolve_object(
+    reg: &Value,
+    verb: &Value,
+    object_arg: &str,
+    subject: &Value,
+) -> Result<Value, String> {
+    let otype = verb.get("object_type").and_then(|t| t.as_str()).unwrap_or("");
+    if otype.is_empty() {
+        return Ok(Value::Null);
+    }
+
+    // Explicit address form → resolve directly (bypasses the candidate pool).
+    if !object_arg.is_empty() && address::is_explicit(object_arg, reg) {
+        return address::resolve(object_arg, reg, Some(verb));
+    }
+
+    // Gather candidate items (a JSON array as text).
+    let items_text = gather_object_items(reg, verb, subject, otype)?;
+    let mut items: Vec<Value> = serde_json::from_str(&items_text)
+        .ok()
+        .and_then(|v: Value| v.as_array().cloned())
+        .unwrap_or_default();
+
+    // object_valid_when: subject-substituted jq predicate over each candidate.
+    if let Some(ovw) = verb.get("object_valid_when").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        let octx = json!({ "subject": subject });
+        let pred = template::substitute(ovw, &octx);
+        let prog = format!("(try (. // []) catch []) | map(select({pred}))");
+        let filtered = jq_filter(&prog, &Value::Array(items.clone()));
+        items = filtered
+            .as_ref()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
+        if items.is_empty() {
+            return Err(format!(
+                "no object of type '{otype}' satisfies this verb's object_valid_when"
+            ));
+        }
+    }
+
+    // Match object_arg against id/title (case-insensitive); empty → first.
+    let tag = |item: &Value| {
+        let mut o = item.clone();
+        if let Some(m) = o.as_object_mut() {
+            m.insert("type".into(), json!(otype));
+        }
+        o
+    };
+    let chosen = if object_arg.is_empty() {
+        // bash: `.[0] | select(. != null)` — the *first* item, iff non-null.
+        items.into_iter().next().filter(|i| !i.is_null()).map(|i| tag(&i))
+    } else {
+        let q = object_arg.to_lowercase();
+        items
+            .iter()
+            .find(|i| {
+                let field = |k: &str| {
+                    i.get(k)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_lowercase()
+                };
+                field("id").contains(&q) || field("title").contains(&q)
+            })
+            .map(tag)
+    };
+
+    chosen.ok_or_else(|| {
+        if object_arg.is_empty() {
+            format!("could not list objects of type '{otype}' for this verb")
+        } else {
+            format!("no object matching '{object_arg}' of type '{otype}'")
+        }
+    })
+}
+
+/// Run the candidate-gathering branch of `resolve_object`: `object_list_cmd`
+/// (subject-substituted) → `object_source` → emits-matching source. Returns the
+/// raw stdout (expected to be a JSON array); errors if nothing produced output.
+fn gather_object_items(
+    reg: &Value,
+    verb: &Value,
+    subject: &Value,
+    otype: &str,
+) -> Result<String, String> {
+    let err = || format!("could not list objects of type '{otype}' for this verb");
+
+    if let Some(olist) = verb.get("object_list_cmd").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        let ctx = json!({ "subject": subject });
+        let rendered = template::substitute(olist, &ctx);
+        let out = bash_stdout(&rendered);
+        return if out.trim().is_empty() { Err(err()) } else { Ok(out) };
+    }
+
+    let sources = reg.get("sources").and_then(|s| s.as_array());
+    if let Some(osrc) = verb.get("object_source").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        let lc = sources.and_then(|arr| {
+            arr.iter()
+                .find(|s| {
+                    s.get("name").and_then(|n| n.as_str()) == Some(osrc)
+                        || s.get("prefix").and_then(|p| p.as_str()) == Some(osrc)
+                })
+                .and_then(|s| s.get("list_cmd"))
+                .and_then(|c| c.as_str())
+        });
+        if let Some(lc) = lc {
+            let out = bash_stdout(lc);
+            if !out.trim().is_empty() {
+                return Ok(out);
+            }
+        }
+        return Err(err());
+    }
+
+    // Else: first source whose emits matches object_type and produces output.
+    if let Some(arr) = sources {
+        for source in arr {
+            let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
+            if emits.is_empty() || !mime::mime_matches(otype, emits) {
+                continue;
+            }
+            if let Some(lc) = source.get("list_cmd").and_then(|c| c.as_str()) {
+                let out = bash_stdout(lc);
+                if !out.trim().is_empty() {
+                    return Ok(out);
+                }
+            }
+        }
+    }
+    Err(err())
+}
+
+/// Run `bash -c <cmd>` and capture stdout (stderr discarded), mirroring the
+/// shell's `bash -c "$cmd" 2>/dev/null`.
+fn bash_stdout(cmd: &str) -> String {
+    Command::new("bash")
+        .args(["-c", cmd])
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// Apply the jq `program` to `input`, returning the parsed JSON output (or
+/// `None` on error). Used for the user-authored `object_valid_when` filter.
+fn jq_filter(program: &str, input: &Value) -> Option<Value> {
+    let mut child = Command::new("jq")
+        .args(["-c", program])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(input.to_string().as_bytes());
+    }
+    let out = child.wait_with_output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&out.stdout).ok()
+}
+
+/// Convenience for the unit tests / bin: render then run via `bash -c`,
+/// returning captured stdout. (Real interactive use inherits stdio; the bin
+/// owns that path.)
+#[cfg(test)]
+fn render_and_run(
+    reg: &Value,
+    verb: &Value,
+    subject: &Value,
+    object: &Value,
+    user_adverbs: &Value,
+) -> Result<String, String> {
+    let r = render(reg, verb, subject, object, user_adverbs)?;
+    Ok(bash_stdout(&r.cmd))
 }
 
 fn jq_truthy(expr: &str, input: &str) -> bool {
@@ -42,8 +394,405 @@ fn jq_truthy(expr: &str, input: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::satisfies;
+    use super::*;
+    use crate::registry;
     use serde_json::json;
+
+    // The `tests/verbs.bats` `fixture.toml`, loaded through the real registry
+    // path so the verb/adverb shapes are exactly what the shell sees.
+    fn fixture() -> Value {
+        registry::from_fixture_toml(
+            "fixture",
+            r#"
+name = "fixture"
+
+[[types]]
+name = "application/vnd.fixture.thing"
+display = "fixture thing"
+kind = "handle"
+
+[[verbs]]
+name = "echo-text"
+accepts = ["text/*"]
+default_for = "text/plain"
+cmd = "echo {subject.text}"
+
+[[verbs]]
+name = "echo-id"
+accepts = ["application/vnd.fixture.thing"]
+cmd = "echo {subject.id}"
+
+[[verbs]]
+name = "open-poly"
+accepts = ["inode/*", "text/x-uri"]
+default_for = ["inode/file", "text/x-uri"]
+cmd = "xdg-open {subject.id|q}"
+
+[[verbs]]
+name = "destructive"
+accepts = ["application/vnd.fixture.thing"]
+cmd = "echo would-delete {subject.id}"
+confirm = true
+
+[[verbs]]
+name = "two-step"
+accepts = ["application/vnd.fixture.thing"]
+object_type = "application/vnd.fixture.thing"
+cmd = "echo move {subject.id} to {object.id}"
+
+[[verbs]]
+name = "only-zip"
+accepts = ["text/*"]
+valid_when = ".text | endswith(\".zip\")"
+cmd = "echo zipping {subject.text}"
+
+[[verbs]]
+name = "critique"
+accepts = ["text/*"]
+uses_adverbs = ["via"]
+fabric_pattern = "analyze_claims"
+prompt = "Review:\n{subject.text}"
+
+[[verbs]]
+name = "think"
+accepts = ["text/*"]
+uses_adverbs = ["via", "depth"]
+prompt = "{depth_prefix}:\n{subject.text}"
+
+[[adverbs]]
+name = "via"
+kind = "selector"
+default = "clipboard"
+
+[adverbs.values.fabric]
+template = "cat <<< '{verb.prompt}' | fabric -p {verb.fabric_pattern}"
+
+[adverbs.values.clipboard]
+template = "cat <<< '{verb.prompt}'"
+
+[[adverbs]]
+name = "depth"
+kind = "selector"
+default = "normal"
+
+[adverbs.values.normal]
+template_var = { depth_prefix = "Think about" }
+
+[adverbs.values.ultra]
+template_var = { depth_prefix = "Ultrathink about" }
+"#,
+        )
+    }
+
+    // ---- lookup ----
+
+    #[test]
+    fn lookup_returns_known_verb() {
+        let reg = fixture();
+        assert_eq!(lookup(&reg, "echo-text", None).unwrap()["name"], json!("echo-text"));
+    }
+
+    #[test]
+    fn lookup_unknown_is_none() {
+        assert!(lookup(&fixture(), "does-not-exist", None).is_none());
+    }
+
+    #[test]
+    fn lookup_type_filter_accepts_and_rejects() {
+        let reg = fixture();
+        assert!(lookup(&reg, "echo-text", Some("text/plain")).is_some());
+        assert!(lookup(&reg, "echo-text", Some("application/vnd.fixture.thing")).is_none());
+    }
+
+    // ---- default_for ----
+
+    #[test]
+    fn default_for_string_match() {
+        assert_eq!(default_for(&fixture(), "text/plain").unwrap()["name"], json!("echo-text"));
+    }
+
+    #[test]
+    fn default_for_no_default_is_none() {
+        assert!(default_for(&fixture(), "image/png").is_none());
+    }
+
+    #[test]
+    fn default_for_array_matches_each_listed_type() {
+        let reg = fixture();
+        assert_eq!(default_for(&reg, "inode/file").unwrap()["name"], json!("open-poly"));
+        assert_eq!(default_for(&reg, "text/x-uri").unwrap()["name"], json!("open-poly"));
+    }
+
+    // ---- for_subject ----
+
+    fn names(verbs: &[Value]) -> Vec<String> {
+        verbs.iter().map(|v| v["name"].as_str().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn for_subject_text_plain() {
+        let reg = fixture();
+        let n = names(&for_subject(&reg, &json!({"type":"text/plain","text":"hi"})));
+        for want in ["echo-text", "critique", "think"] {
+            assert!(n.contains(&want.to_string()), "missing {want} in {n:?}");
+        }
+        for unwanted in ["echo-id", "destructive", "two-step"] {
+            assert!(!n.contains(&unwanted.to_string()), "unexpected {unwanted}");
+        }
+    }
+
+    #[test]
+    fn for_subject_vendor_type() {
+        let reg = fixture();
+        let n = names(&for_subject(&reg, &json!({"type":"application/vnd.fixture.thing","id":"x"})));
+        for want in ["echo-id", "destructive", "two-step"] {
+            assert!(n.contains(&want.to_string()), "missing {want}");
+        }
+        for unwanted in ["echo-text", "critique"] {
+            assert!(!n.contains(&unwanted.to_string()), "unexpected {unwanted}");
+        }
+    }
+
+    #[test]
+    fn for_subject_filters_on_valid_when() {
+        let reg = fixture();
+        let zip = names(&for_subject(&reg, &json!({"type":"text/plain","text":"a.zip"})));
+        let txt = names(&for_subject(&reg, &json!({"type":"text/plain","text":"a.txt"})));
+        assert!(zip.contains(&"only-zip".to_string()));
+        assert!(!txt.contains(&"only-zip".to_string()));
+        assert!(zip.contains(&"echo-text".to_string()));
+        assert!(txt.contains(&"echo-text".to_string()));
+    }
+
+    // ---- render / apply ----
+
+    fn verb(reg: &Value, name: &str) -> Value {
+        lookup(reg, name, None).unwrap()
+    }
+
+    #[test]
+    fn render_executes_direct_cmd_with_subject_substitution() {
+        let reg = fixture();
+        let out = render_and_run(
+            &reg,
+            &verb(&reg, "echo-text"),
+            &json!({"type":"text/plain","text":"hello world"}),
+            &Value::Null,
+            &json!({}),
+        )
+        .unwrap();
+        assert_eq!(out.trim_end(), "hello world");
+    }
+
+    #[test]
+    fn render_handle_verb_substitutes_id() {
+        let reg = fixture();
+        let out = render_and_run(
+            &reg,
+            &verb(&reg, "echo-id"),
+            &json!({"type":"application/vnd.fixture.thing","id":"abc-123"}),
+            &Value::Null,
+            &json!({}),
+        )
+        .unwrap();
+        assert_eq!(out.trim_end(), "abc-123");
+    }
+
+    #[test]
+    fn render_rejects_mismatched_subject_type() {
+        let reg = fixture();
+        let err = render(
+            &reg,
+            &verb(&reg, "echo-id"),
+            &json!({"type":"text/plain","text":"oops"}),
+            &Value::Null,
+            &json!({}),
+        )
+        .unwrap_err();
+        assert!(err.contains("does not match verb accepts"), "{err}");
+    }
+
+    #[test]
+    fn render_two_step_substitutes_object() {
+        let reg = fixture();
+        let out = render_and_run(
+            &reg,
+            &verb(&reg, "two-step"),
+            &json!({"type":"application/vnd.fixture.thing","id":"src"}),
+            &json!({"type":"application/vnd.fixture.thing","id":"dst"}),
+            &json!({}),
+        )
+        .unwrap();
+        assert_eq!(out.trim_end(), "move src to dst");
+    }
+
+    #[test]
+    fn render_two_step_fails_without_object() {
+        let reg = fixture();
+        let err = render(
+            &reg,
+            &verb(&reg, "two-step"),
+            &json!({"type":"application/vnd.fixture.thing","id":"src"}),
+            &Value::Null,
+            &json!({}),
+        )
+        .unwrap_err();
+        assert!(err.contains("requires object"), "{err}");
+    }
+
+    #[test]
+    fn render_rejects_subject_failing_valid_when() {
+        let reg = fixture();
+        let err = render(
+            &reg,
+            &verb(&reg, "only-zip"),
+            &json!({"type":"text/plain","text":"notes.txt"}),
+            &Value::Null,
+            &json!({}),
+        )
+        .unwrap_err();
+        assert!(err.contains("valid_when"), "{err}");
+    }
+
+    #[test]
+    fn render_runs_when_valid_when_passes() {
+        let reg = fixture();
+        let out = render_and_run(
+            &reg,
+            &verb(&reg, "only-zip"),
+            &json!({"type":"text/plain","text":"archive.zip"}),
+            &Value::Null,
+            &json!({}),
+        )
+        .unwrap();
+        assert!(out.contains("zipping archive.zip"), "{out}");
+    }
+
+    #[test]
+    fn render_confirm_flag_is_surfaced() {
+        let reg = fixture();
+        let r = render(
+            &reg,
+            &verb(&reg, "destructive"),
+            &json!({"type":"application/vnd.fixture.thing","id":"q"}),
+            &Value::Null,
+            &json!({}),
+        )
+        .unwrap();
+        assert!(r.confirm);
+        assert_eq!(r.cmd, "echo would-delete q");
+    }
+
+    // ---- adverb-routed render ----
+
+    #[test]
+    fn render_critique_via_clipboard_routes_through_prompt() {
+        let reg = fixture();
+        let out = render_and_run(
+            &reg,
+            &verb(&reg, "critique"),
+            &json!({"type":"text/plain","text":"important text"}),
+            &Value::Null,
+            &json!({"via":"clipboard"}),
+        )
+        .unwrap();
+        assert!(out.contains("Review:"), "{out}");
+        assert!(out.contains("important text"), "{out}");
+    }
+
+    #[test]
+    fn render_critique_uses_default_adverb() {
+        let reg = fixture();
+        // No adverbs given → via defaults to clipboard; renders without error.
+        let r = render(
+            &reg,
+            &verb(&reg, "critique"),
+            &json!({"type":"text/plain","text":"x"}),
+            &Value::Null,
+            &json!({}),
+        )
+        .unwrap();
+        assert!(r.cmd.contains("cat <<<"), "{}", r.cmd);
+    }
+
+    #[test]
+    fn render_think_depth_ultra_injects_template_var() {
+        let reg = fixture();
+        let out = render_and_run(
+            &reg,
+            &verb(&reg, "think"),
+            &json!({"type":"text/plain","text":"the thing"}),
+            &Value::Null,
+            &json!({"via":"clipboard","depth":"ultra"}),
+        )
+        .unwrap();
+        assert!(out.contains("Ultrathink about"), "{out}");
+    }
+
+    #[test]
+    fn render_think_depth_normal_default_injection() {
+        let reg = fixture();
+        let out = render_and_run(
+            &reg,
+            &verb(&reg, "think"),
+            &json!({"type":"text/plain","text":"x"}),
+            &Value::Null,
+            &json!({"via":"clipboard"}),
+        )
+        .unwrap();
+        assert!(out.contains("Think about"), "{out}");
+    }
+
+    // ---- resolve_object ----
+
+    #[test]
+    fn resolve_object_null_for_one_step_verb() {
+        let reg = fixture();
+        let r = resolve_object(&reg, &verb(&reg, "echo-text"), "", &json!({"type":"text/plain"}))
+            .unwrap();
+        assert_eq!(r, Value::Null);
+    }
+
+    #[test]
+    fn resolve_object_subject_dependent_list_first_item() {
+        // object_list_cmd renders {subject.id} into a JSON-array command; no arg
+        // → first candidate, tagged with object_type.
+        let reg = fixture();
+        let v = json!({
+            "name": "twostep",
+            "accepts": ["application/vnd.fixture.thing"],
+            "object_type": "application/vnd.fixture.thing",
+            "object_list_cmd": r#"printf '[{"id":"{subject.id}-a"},{"id":"{subject.id}-b"}]'"#,
+            "cmd": "echo move {subject.id} to {object.id}"
+        });
+        let obj = resolve_object(&reg, &v, "", &json!({"id":"src"})).unwrap();
+        assert_eq!(obj["id"], json!("src-a"));
+        assert_eq!(obj["type"], json!("application/vnd.fixture.thing"));
+    }
+
+    #[test]
+    fn resolve_object_matches_arg_by_id_substring() {
+        let reg = fixture();
+        let v = json!({
+            "object_type": "application/vnd.fixture.thing",
+            "object_list_cmd": r#"printf '[{"id":"alpha"},{"id":"beta"}]'"#,
+        });
+        let obj = resolve_object(&reg, &v, "bet", &json!(null)).unwrap();
+        assert_eq!(obj["id"], json!("beta"));
+    }
+
+    #[test]
+    fn resolve_object_valid_when_filters_pool() {
+        let reg = fixture();
+        let v = json!({
+            "object_type": "application/vnd.fixture.thing",
+            "object_list_cmd": r#"printf '[{"id":"keep","ok":true},{"id":"drop","ok":false}]'"#,
+            "object_valid_when": ".ok == true",
+        });
+        // No arg → first candidate AFTER the valid_when filter.
+        let obj = resolve_object(&reg, &v, "", &json!(null)).unwrap();
+        assert_eq!(obj["id"], json!("keep"));
+    }
 
     #[test]
     fn absent_predicate_is_always_true() {

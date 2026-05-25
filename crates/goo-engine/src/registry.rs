@@ -197,6 +197,16 @@ pub fn load_all() -> Value {
     reg
 }
 
+/// Build a registry from a single in-memory plugin TOML, mirroring the real
+/// discover→parse→merge path. Test-only helper shared across module test suites
+/// (e.g. the `tests/verbs.bats` `fixture.toml`).
+#[cfg(test)]
+pub(crate) fn from_fixture_toml(name: &str, src: &str) -> Value {
+    let parsed: Value = toml::from_str(src).unwrap();
+    let c = contrib(Path::new(&format!("/p/{name}.toml")), Path::new("/p"), &parsed);
+    merge(&empty_registry(), &c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

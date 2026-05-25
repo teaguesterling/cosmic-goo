@@ -5,6 +5,8 @@
 //! ported one slice at a time; this crate currently covers MIME matching.
 
 pub mod address;
+pub mod adverbs;
+pub mod dispatch;
 pub mod mime;
 pub mod registry;
 pub mod selection;
