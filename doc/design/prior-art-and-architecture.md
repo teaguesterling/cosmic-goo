@@ -180,3 +180,106 @@ designing carefully — both the bash spike and the eventual Rust daemon speak i
 - **Content-dispatch rule table** (`[[dispatch]]`, plumber-style) — the deferred classifier.
 - **Daemon protocol design** + a socat/FIFO spike, then Rust `good` — alongside Phase 2.
 - **Ranking** (`rank_adjust`) — with the launcher.
+
+## Decisions from the design discussion (2026-05-24)
+
+### Command name vs package name
+
+There is a dead-but-real Debian package named **`goo`** ("generic object-orientator
+(programming language)", universe/devel, v0.155). Locally harmless (a
+`~/.local/bin/goo` symlink wins on PATH). **For distribution: keep `goo` as the
+everyday command, but ship the package artifact as `cosmic-goo` (or
+`goo-standalone`) and expose `goo` via `update-alternatives`** — an opt-in
+symlink, no hard `Conflicts: goo`. Same pattern as `vi`→`vim`.
+
+### `valid_when` = a jq boolean expression (and it unifies with `?params`)
+
+Add an optional per-verb predicate, evaluated against the subject JSON:
+
+```toml
+valid_when = ".id | test(\"\\\\.(zip|tar|gz)$\")"   # verb hidden unless this is true
+```
+
+- Default omitted ⇒ all items of an accepted type (today's behaviour).
+- A **jq expression** is the primary form — in-process-fast, declarative, and
+  subsumes the "regex / glob / map-of-mimetype→regex" options (branch on `.type`
+  inside the expr). One mechanism, not three.
+- Escape hatch `valid_when_cmd = "<shell test>"` for real I/O (git remote
+  present, file size, device exists) — evaluated **lazily** (focused candidate /
+  execute time), never in the bulk "list applicable verbs" pass.
+- **rhai/embedded scripting is the Rust-era answer** (no process spawn); skip in bash.
+- **Unification:** `?params` (filter a source's items at lookup, e.g.
+  `@app:firefox?title=*Claude*`) and `valid_when` (filter verbs for a subject)
+  are the same thing from opposite ends — *predicates over subject JSON*. Build
+  one jq-predicate evaluator; both fall out. Spec `valid_when` as a jq expr so
+  they share it.
+- Perf: per-(verb×subject) jq spawns are cheap once, painful per-keystroke in the
+  launcher → full value arrives with the in-process daemon/Rust engine.
+
+### `object_source` — named + subject-dependent indirect objects
+
+A two-step verb may name the source for its object, and that source may depend on
+the subject (rendered with `{subject.*}` in scope):
+
+```toml
+[[verbs]]
+name = "move-to-output-ws"
+accepts = ["application/vnd.cos-cli.app"]
+object_type = "application/vnd.cos-cli.workspace"
+object_source = "workspaces"
+object_list_cmd = "cos-cli info --json | jq '... | select(.output==\"{subject.metadata.output}\")'"
+```
+
+Reuses the template engine — "the object source sees the subject." This is
+Kupfer's `object_source(for_item)`.
+
+### The deferred GUI *is* Kupfer's three-pane model
+
+The spec's libcosmic dialog mockup already draws Kupfer's GUI. Mapping the
+deferred features onto panes:
+
+| Kupfer GUI | cosmic-goo pane | powered by |
+|---|---|---|
+| object pane (fuzzy, ranked) | Subject | sources + `rank_adjust` |
+| action pane = *valid* actions for the object | Verb | `verb_for_subject` + `valid_when` (live filter) |
+| indirect-object pane `if requires_object` | Object (conditional) | `object_source` (subject-filtered) |
+
+The compose **v0 sequential picker** is the one-pane-at-a-time degenerate case.
+The native dialog "integrates ours" = build the side-by-side three-pane and wire
+valid_when → verb pane, object_source → object pane, rank → ordering. Nothing to
+invent; the model is settled.
+
+### Reusing Kupfer plugins (a `kupfer-bridge`)
+
+Feasible for the simple majority (FileLeaf/TextLeaf/AppLeaf + stateless actions
+with stable string ids — most of Kupfer's catalog), via a Python harness that
+imports `kupfer.*` + the plugin, exposes its `Source`s as goo sources and
+`Action`s as goo verbs. **Caveats:** depends on Kupfer being importable; Leaves
+holding live Python objects don't round-trip through goo's stateless string ids;
+async/GUI-coupled actions need the Kupfer runtime. **Practical only with a warm
+Python host ⇒ a daemon-era feature** (cold `import kupfer` per one-shot is
+hundreds of ms). Good cheap way to bootstrap a plugin library once the daemon
+exists.
+
+### The Rust implementation (sketch)
+
+Rust replaces the **engine**, not the **plugins** (plugins stay TOML + shell;
+Rust assembles and `exec`s the rendered command). A cargo workspace:
+
+- **`goo-engine`** (lib) — `Registry` (toml crate), `MimeMatcher`, `Resolver`
+  (today's `address.sh`), `Dispatch` (template `{var|filter}` via
+  `shell-escape`/`percent-encoding`), `DispatchRules` (plumber-style, `regex`).
+  The canonical URI becomes `enum Address { Source{name,input,params},
+  Scheme{scheme,value} }` with `FromStr`/`Display` — the IPC wire type.
+- **`goo`** (bin) — thin client: argv → `Request`, try socket→`good`, else
+  in-process engine, `exec`.
+- **`good`** (bin) — warm engine + UNIX-socket server (newline-JSON), inotify on
+  plugin dirs, async verbs (Kupfer late-results). Later: daemon-resident
+  publisher sources (clipboard/now-playing/focus push updates instead of cold
+  `list_cmd`s; the "sockets for plugins" idea).
+- **`goo-compose`** (bin) — libcosmic/iced three-pane, over engine or socket.
+
+**The bats suite is the conformance test for the port:** it drives `bin/goo`'s
+observable behaviour, so a Rust `goo` that passes the same suite is provably
+equivalent. The bash engine is the executable spec; Rust migrates crate-by-crate
+against it.
