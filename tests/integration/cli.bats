@@ -5,7 +5,7 @@
 
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
-    GOO="$REPO_ROOT/bin/goo"
+    GOO="${GOO_BIN:-$REPO_ROOT/bin/goo}"
 
     export COSMIC_GOO_BUILTIN_PLUGINS_DIR="$BATS_TEST_TMPDIR/plugins"
     export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/xdg"
