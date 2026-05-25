@@ -133,3 +133,62 @@ EOF
     run "$GOO" validate </dev/null
     [ "$status" -eq 0 ]
 }
+
+@test "validate: alias with no expansion is rejected" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/al.toml" <<'EOF'
+name = "al"
+[[aliases]]
+name = "g"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "no expansion" ]]
+}
+
+@test "validate: alias shadowing a reserved subcommand is rejected" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/al.toml" <<'EOF'
+name = "al"
+[[aliases]]
+name = "list"
+expands = "echo hi"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "reserved subcommand" ]]
+}
+
+@test "validate: alias shadowing a verb passes but warns" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/al.toml" <<'EOF'
+name = "al"
+[[verbs]]
+name = "go"
+accepts = ["text/*"]
+cmd = "true"
+[[aliases]]
+name = "go"
+expands = "go --fast"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "shadows a verb" ]]
+}
+
+@test "validate: a well-formed alias passes" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/al.toml" <<'EOF'
+name = "al"
+[[verbs]]
+name = "search"
+accepts = ["text/*"]
+cmd = "true"
+[[aliases]]
+name = "g"
+expands = "search --engine=google"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "1 aliases" ]]
+}

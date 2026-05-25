@@ -255,6 +255,34 @@ expands = ":app:"     # @firefox -> :app:firefox -> cosmic-goo:app:firefox
 
 User config wins over built-ins (later-loaded plugins override by `char`). `goo validate` rejects sigils whose `char` is multi-character, missing an expansion, or collides with a reserved/native prefix (`:`, `+`, `.`, `/`, `~`, or any alphanumeric — those would break URL/path/text detection).
 
+## Aliases
+
+Where a sigil abbreviates a **subject**, an alias abbreviates a **whole
+invocation** — a verb plus adverbs and/or a baked-in subject. Declare with
+`[[aliases]]`:
+
+```toml
+[[aliases]]
+name = "g"
+expands = "search --engine=google"   # goo g "rust traits" -> goo search --engine=google "rust traits"
+description = "Google web search"      # optional
+
+[[aliases]]
+name = "today"
+expands = "append-to ~/journal.md"    # bake in the object; goo today "got the loader fast"
+```
+
+The alias's `expands` string is shell-tokenized (quotes and spaces honored) and
+prepended at the verb position; your trailing arguments follow. Expansions are
+re-dispatched, so an alias may chain to another alias — a depth guard breaks
+cycles. Override is by `name` (later-loaded wins), like verbs.
+
+`goo validate` rejects an alias with no `expands` or one whose `name` shadows a
+subcommand (`list`, `describe`, `plugins`, `validate`, `compose`, `help`); it
+*warns* — but allows — an alias that shares a verb's name, since deliberately
+shadowing a verb is a valid use (the alias wins). Because `expands` is run with
+the same trust as a verb's `cmd`, only define aliases in plugins you trust.
+
 ## Template substitution
 
 The dispatcher substitutes `{path.to.var}` placeholders before running the command. Paths are dotted into a context dict containing:

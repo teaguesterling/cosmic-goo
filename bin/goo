@@ -258,6 +258,22 @@ resolve_object() {
     printf '%s\n' "$match"
 }
 
+# ---------------- command aliases (#26) ----------------
+
+# Reserved first-word subcommands that an alias can never shadow.
+_RESERVED_SUBCOMMANDS="compose list describe plugins validate __complete help -h --help"
+
+# Echo an alias's `expands` string for NAME, or fail (1) if no such alias.
+# Aliases are whole-invocation shortcuts: the first word is a verb (or another
+# alias), optionally followed by adverb flags and/or a subject address.
+alias_expansion() {
+    local name=$1 registry exp
+    registry=$(plugin_load_all 2>/dev/null) || return 1
+    exp=$(jq -r --arg n "$name" '.aliases[]? | select(.name==$n) | .expands // empty' <<<"$registry")
+    [ -z "$exp" ] && return 1
+    printf '%s' "$exp"
+}
+
 # ---------------- subcommand: plugins ----------------
 
 cmd_plugins() {
@@ -353,14 +369,39 @@ cmd_validate() {
         esac
     done < <(jq -r '.plugins[] | select(.tier != null) | "\(.name)\t\(.tier)"' <<<"$registry")
 
+    # 6. Command aliases: must have a name + expands, must not shadow a
+    #    subcommand. A name colliding with a verb is allowed (the alias wins,
+    #    that's the point) but warned so it isn't a silent surprise.
+    local verb_names
+    verb_names=" $(jq -r '.verbs[]?.name' <<<"$registry" | tr '\n' ' ') "
+    while IFS= read -r aname; do
+        [ -z "$aname" ] && continue
+        local aexp
+        aexp=$(jq -r --arg n "$aname" '.aliases[] | select(.name==$n) | .expands // ""' <<<"$registry" | head -n1)
+        if [ -z "$aexp" ]; then
+            printf 'alias "%s" has no expansion\n' "$aname" >&2
+            errors=$((errors+1))
+        fi
+        case " $_RESERVED_SUBCOMMANDS " in
+            *" $aname "*)
+                printf 'alias "%s" shadows a reserved subcommand and will never fire\n' "$aname" >&2
+                errors=$((errors+1)) ;;
+        esac
+        case "$verb_names" in
+            *" $aname "*)
+                printf 'warning: alias "%s" shadows a verb of the same name (alias wins)\n' "$aname" >&2 ;;
+        esac
+    done < <(jq -r '.aliases[]? | .name // ""' <<<"$registry")
+
     if [ "$errors" -eq 0 ]; then
-        printf 'goo validate: OK (%d plugins, %d types, %d sources, %d verbs, %d adverbs, %d sigils)\n' \
+        printf 'goo validate: OK (%d plugins, %d types, %d sources, %d verbs, %d adverbs, %d sigils, %d aliases)\n' \
             "$(jq '.plugins | length' <<<"$registry")" \
             "$(jq '.types | length' <<<"$registry")" \
             "$(jq '.sources | length' <<<"$registry")" \
             "$(jq '.verbs | length' <<<"$registry")" \
             "$(jq '.adverbs | length' <<<"$registry")" \
-            "$(jq '.sigils | length' <<<"$registry")"
+            "$(jq '.sigils | length' <<<"$registry")" \
+            "$(jq '.aliases | length' <<<"$registry")"
         return 0
     fi
     printf 'goo validate: %d error(s)\n' "$errors" >&2
@@ -415,9 +456,10 @@ cmd_complete() {
     registry=$(plugin_load_all 2>/dev/null) || return 0
     case "$stage" in
         subcommands)
-            # static subcommands plus all verb names
+            # static subcommands plus all verb names plus command aliases
             printf 'list\ndescribe\nplugins\nvalidate\ncompose\nhelp\n'
             jq -r '.verbs[]?.name' <<<"$registry"
+            jq -r '.aliases[]?.name' <<<"$registry"
             ;;
         verbs)
             jq -r '.verbs[]?.name' <<<"$registry"
@@ -659,13 +701,36 @@ cmd_verb() {
 
 # ---------------- dispatch ----------------
 
-case "${1:-}" in
-    ""|compose)        shift 2>/dev/null || true; cmd_compose "$@" ;;
-    list)              shift; cmd_list "$@" ;;
-    describe)          shift; cmd_describe "$@" ;;
-    plugins)           shift; cmd_plugins "$@" ;;
-    validate)          shift; cmd_validate "$@" ;;
-    __complete)        shift; cmd_complete "$@" ;;
-    -h|--help|help)    usage ;;
-    *)                 cmd_verb "$@" ;;
-esac
+# Resolve subcommands and verbs. The verb branch (`*)`) first tries to expand a
+# command alias; an alias rewrites the leading word into its `expands` tokens
+# (verb + adverbs + optional subject), then we re-dispatch so the expansion may
+# itself hit a subcommand or another alias. A depth guard breaks alias cycles.
+dispatch() {
+    case "${1:-}" in
+        ""|compose)        shift 2>/dev/null || true; cmd_compose "$@" ;;
+        list)              shift; cmd_list "$@" ;;
+        describe)          shift; cmd_describe "$@" ;;
+        plugins)           shift; cmd_plugins "$@" ;;
+        validate)          shift; cmd_validate "$@" ;;
+        __complete)        shift; cmd_complete "$@" ;;
+        -h|--help|help)    usage ;;
+        *)
+            local exp
+            if exp=$(alias_expansion "$1"); then
+                _ALIAS_DEPTH=$(( ${_ALIAS_DEPTH:-0} + 1 ))
+                [ "$_ALIAS_DEPTH" -gt 16 ] && die "alias expansion too deep (cycle?): $1"
+                shift
+                # `exp` is trusted plugin config (same trust as bash-eval'd cmd
+                # templates). eval gives it real shell tokenization (quotes,
+                # spaces); the user's remaining args follow the expansion.
+                eval "set -- $exp \"\$@\"" 2>/dev/null \
+                    || die "alias expansion is not tokenizable (unbalanced quotes?): $exp"
+                dispatch "$@"
+            else
+                cmd_verb "$@"
+            fi
+            ;;
+    esac
+}
+
+dispatch "$@"

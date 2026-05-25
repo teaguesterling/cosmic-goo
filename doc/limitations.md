@@ -39,12 +39,12 @@ These were limitations in earlier drafts and are now fixed:
 
 ## Roadmap
 
-The CLI, 21 plugins, addressing, completion, filters, and the compose dialog are done. Remaining, roughly in spec-phase order:
+The CLI, 21 plugins, addressing, completion, filters, command aliases, and the compose dialog are done. Remaining, roughly in spec-phase order:
 
 - **pop-launcher meta-plugin** — inline `cosmic-launcher` composition with type-aware autocomplete, emitting the canonical `cosmic-goo:` URIs the CLI already understands.
 - **scenes plugin** — workspace/app/tmux/cwd "scenes": anchors (browser, mail, Claude Desktop) and favorite slots.
 - **native compose dialog** — a libcosmic/iced three-panel GUI replacing the shell picker; sub-100ms wake, possibly a `goo-composed` daemon.
-- **command aliases** — user-defined `@g`/`%x`-style verb+adverb shortcuts (the configuration ratchet).
-- **broadening & polish** — `fabric` patterns as verbs, `content-dispatch` via `sitting_duck`, packaging, more bindings examples.
+- **content-dispatch rule table** — plumber-style "this content → that verb" routing.
+- **broadening & polish** — `fabric` patterns as verbs, packaging, more bindings examples.
 
 Full task-level breakdown: [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md).

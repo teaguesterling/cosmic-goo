@@ -128,6 +128,31 @@ A second positional becomes the **object** (for two-step verbs like `move-to`), 
 
 > The canonical `cosmic-goo:<source>:<input>` (source lookup) and `cosmic-goo+<scheme>:<value>` (scheme handoff) URIs are what the launcher meta-plugin and any IPC will pass between processes. The sigils (`@`, `^`, `+`) and native shapes are terminal-friendly shorthands that rewrite into them.
 
+### Command aliases
+
+An **alias** is a whole-invocation shortcut: a name that expands, at the verb
+position, into a verb plus any adverb flags and/or a subject. Where a *sigil*
+abbreviates a **subject** (`@firefox` → `:app:firefox`), an alias abbreviates the
+**whole sentence**. Define them in any plugin TOML (usually your user config):
+
+```toml
+[[aliases]]
+name = "g"
+expands = "search --engine=google"   # then: goo g "rust traits"
+description = "Google web search"      # optional, shown in completion/help
+
+[[aliases]]
+name = "note"
+expands = "append-to ~/notes.md"      # an alias may bake in a subject/object too
+```
+
+`goo g "rust traits"` becomes `goo search --engine=google "rust traits"` — the
+alias tokens come first, your trailing arguments follow. The expansion is
+re-dispatched, so an alias may chain to another alias; a depth guard breaks
+cycles. Aliases can never shadow a subcommand (`list`, `describe`, …); an alias
+sharing a verb's name *does* win (that's the point), and `goo validate` warns
+when one does. Alias names also complete at `goo <TAB>` alongside verbs.
+
 ### Flag forms
 
 | Form | Example | Meaning |

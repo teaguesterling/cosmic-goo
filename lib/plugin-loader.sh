@@ -103,7 +103,8 @@ plugin_load() {
             sources: ((.sources // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
             verbs:   ((.verbs   // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
             adverbs: ((.adverbs // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
-            sigils:  ((.sigils  // []) | map(. + {_plugin: $pname, _plugin_dir: $dir}))
+            sigils:  ((.sigils  // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
+            aliases: ((.aliases // []) | map(. + {_plugin: $pname, _plugin_dir: $dir}))
         }
     ' <<<"$plugin_json"
 }
@@ -123,7 +124,8 @@ _plugin_merge() {
             sources: override($new.sources; $reg.sources),
             verbs:   override($new.verbs;   $reg.verbs),
             adverbs: override($new.adverbs; $reg.adverbs),
-            sigils:  override_char($new.sigils; $reg.sigils)
+            sigils:  override_char($new.sigils; $reg.sigils),
+            aliases: override($new.aliases; $reg.aliases)
         }
     '
 }
@@ -178,7 +180,7 @@ plugin_load_all() {
         cat "$cache"
         return 0
     fi
-    local registry='{"plugins":[],"types":[],"sources":[],"verbs":[],"adverbs":[],"sigils":[]}'
+    local registry='{"plugins":[],"types":[],"sources":[],"verbs":[],"adverbs":[],"sigils":[],"aliases":[]}'
     local file contrib
     while IFS= read -r file; do
         if contrib=$(plugin_load "$file"); then

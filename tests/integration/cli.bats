@@ -65,6 +65,34 @@ object_list_cmd = "printf '[{\"id\":\"{subject.id}-slot\",\"title\":\"derived\"}
 cmd = "printf '%s' {object.id|q}"
 EOF
 
+    # Command aliases (#26): whole-invocation shortcuts.
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/test-aliases.toml" <<'EOF'
+name = "test-aliases"
+
+# Bare verb shortcut.
+[[aliases]]
+name = "eb"
+expands = "echo-back"
+
+# Verb + adverb (routes wrap through the dump adverb).
+[[aliases]]
+name = "wrapd"
+expands = "wrap --via=dump"
+
+# Alias -> alias chain (one hop).
+[[aliases]]
+name = "eb2"
+expands = "eb"
+
+# A two-cycle, to exercise the depth guard.
+[[aliases]]
+name = "loopa"
+expands = "loopb"
+[[aliases]]
+name = "loopb"
+expands = "loopa"
+EOF
+
     # Handle sources + a custom sigil, for addressing/object tests.
     cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/test-gadgets.toml" <<'EOF'
 name = "test-gadgets"
@@ -234,4 +262,38 @@ EOF
     run "$GOO" put :gad:cog nonexistent-slot </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" =~ "no object matching" ]]
+}
+
+# ---------------- command aliases (#26) ----------------
+
+@test "alias expands to a bare verb, trailing args follow" {
+    run "$GOO" eb "via alias" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "via alias" ]
+}
+
+@test "alias carries adverb flags into the expansion" {
+    run "$GOO" wrapd "aliased text" </dev/null
+    [ "$status" -eq 0 ]
+    [ -f "$DUMP_FILE" ]
+    [ "$(cat "$DUMP_FILE")" = "WRAPPED:aliased text:END" ]
+}
+
+@test "alias chains to another alias (one hop)" {
+    run "$GOO" eb2 "two hops" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "two hops" ]
+}
+
+@test "alias cycle is caught by the depth guard" {
+    run "$GOO" loopa "x" </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "too deep" ]]
+}
+
+@test "alias names appear in completion subcommands" {
+    run "$GOO" __complete subcommands </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "eb" ]]
+    [[ "$output" =~ "wrapd" ]]
 }
