@@ -8,3 +8,4 @@ pub mod address;
 pub mod mime;
 pub mod registry;
 pub mod selection;
+pub mod template;
