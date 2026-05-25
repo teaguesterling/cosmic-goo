@@ -4,5 +4,7 @@
 //! conformance contract (see `doc/design/rust-port-scoping.md`). Modules are
 //! ported one slice at a time; this crate currently covers MIME matching.
 
+pub mod address;
 pub mod mime;
 pub mod registry;
+pub mod selection;

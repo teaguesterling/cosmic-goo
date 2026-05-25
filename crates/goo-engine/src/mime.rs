@@ -58,6 +58,72 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     true
 }
 
+use std::io::Write;
+use std::path::Path;
+use std::process::{Command, Stdio};
+
+/// MIME type of a file on disk via libmagic (`file --mime-type -b`). Err if the
+/// path doesn't exist — mirrors `mime_detect_path`.
+pub fn detect_path(path: &str) -> Result<String, String> {
+    if !Path::new(path).exists() {
+        return Err(format!("mime_detect_path: not found: {path}"));
+    }
+    let out = Command::new("file")
+        .args(["--mime-type", "-b", "--", path])
+        .output()
+        .map_err(|e| format!("mime_detect_path: {e}"))?;
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// MIME type of an arbitrary string — port of `mime_detect_content`. In order:
+/// URI scheme → `text/x-uri`; an existing single-line path → its file type;
+/// libmagic on the content; else `text/plain`.
+pub fn detect_content(content: &str) -> String {
+    if looks_like_uri(content) {
+        return "text/x-uri".to_string();
+    }
+    if !content.contains('\n') && Path::new(content).exists() {
+        if let Ok(m) = detect_path(content) {
+            return m;
+        }
+    }
+    if let Some(detected) = file_on_stdin(content) {
+        if !detected.is_empty() && detected != "application/octet-stream" {
+            return detected;
+        }
+    }
+    "text/plain".to_string()
+}
+
+/// `^[A-Za-z][A-Za-z0-9+.-]*://` followed by a non-space — the RFC-3986 scheme
+/// shape the shell uses to spot a URL.
+fn looks_like_uri(s: &str) -> bool {
+    let Some(idx) = s.find("://") else { return false };
+    if idx == 0 {
+        return false;
+    }
+    let mut scheme = s[..idx].chars();
+    if !scheme.next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    if !scheme.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')) {
+        return false;
+    }
+    s[idx + 3..].chars().next().is_some_and(|c| !c.is_whitespace())
+}
+
+fn file_on_stdin(content: &str) -> Option<String> {
+    let mut child = Command::new("file")
+        .args(["--mime-type", "-b", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+    child.stdin.take()?.write_all(content.as_bytes()).ok()?;
+    let out = child.wait_with_output().ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::mime_matches;
@@ -127,5 +193,41 @@ mod tests {
     #[test]
     fn exact_with_no_wildcard_is_strict() {
         assert!(!mime_matches("text/pla", "text/plain"));
+    }
+
+    // ---- detection (mirror tests/types.bats mime_detect_*) ----
+    use super::{detect_content, detect_path};
+
+    #[test]
+    fn detect_https_url() {
+        assert_eq!(detect_content("https://example.com"), "text/x-uri");
+    }
+    #[test]
+    fn detect_http_url_with_query() {
+        assert_eq!(detect_content("http://example.com/path?q=1"), "text/x-uri");
+    }
+    #[test]
+    fn detect_custom_scheme_url() {
+        assert_eq!(detect_content("claude://claude.ai/new?q=hi"), "text/x-uri");
+    }
+    #[test]
+    fn detect_plain_text() {
+        assert!(detect_content("just some words here").starts_with("text/"));
+    }
+    #[test]
+    fn detect_multiline_is_not_url_or_path() {
+        assert!(detect_content("line one\nline two").starts_with("text/"));
+    }
+    #[test]
+    fn detect_existing_path_is_its_file_type() {
+        let dir = std::env::temp_dir().join(format!("goo-mime-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("sample.txt");
+        std::fs::write(&f, "hello\n").unwrap();
+        let p = f.to_str().unwrap();
+        assert!(detect_content(p).starts_with("text/"));
+        assert!(detect_path(p).unwrap().starts_with("text/"));
+        assert!(detect_path(&format!("{p}.nope")).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
