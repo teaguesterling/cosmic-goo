@@ -67,6 +67,49 @@ setup() {
     echo "$output" | jq -e 'type == "array"' >/dev/null
 }
 
+@test "real plugins: screenshots/OCR/QR verbs are present" {
+    local verbs
+    verbs=$("$GOO" __complete verbs </dev/null)
+    for v in screenshot capture-region capture-file \
+             ocr-region ocr-image scan-qr scan-qr-image \
+             qr-encode qr-save; do
+        echo "$verbs" | grep -qx "$v" || { echo "missing verb: $v" >&2; return 1; }
+    done
+}
+
+@test "real plugins: qr-encode produces output" {
+    run "$GOO" qr-encode "https://example.com" </dev/null
+    [ "$status" -eq 0 ]
+    [ -n "$output" ]
+}
+
+@test "real plugins: QR round-trips (qr-save -> scan-qr-image)" {
+    local payload="cosmic-goo round trip 42"
+    local png
+    png=$("$GOO" qr-save "$payload" </dev/null)
+    [ -f "$png" ]
+    run "$GOO" scan-qr-image "$png" </dev/null
+    rm -f "$png"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$payload" ]
+}
+
+@test "real plugins: capture verbs take no subject" {
+    for v in screenshot capture-region ocr-region scan-qr; do
+        run "$GOO" describe "$v" </dev/null
+        [ "$status" -eq 0 ]
+        echo "$output" | grep -q "^accepts: *$" || { echo "$v should have empty accepts" >&2; return 1; }
+    done
+}
+
+@test "real plugins: image verbs accept image/*" {
+    for v in ocr-image scan-qr-image; do
+        run "$GOO" describe "$v" </dev/null
+        [ "$status" -eq 0 ]
+        [[ "$output" =~ "accepts: image/*" ]]
+    done
+}
+
 @test "real plugins: clipboard-history verbs are scoped to the vendor type" {
     # clip-paste must NOT be offered for a plain-text subject.
     run "$GOO" __complete verb-accepts-handle clip-paste </dev/null

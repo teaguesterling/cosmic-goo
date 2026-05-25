@@ -1,0 +1,67 @@
+name = "screenshots"
+description = "Screen capture, OCR, and QR via grim/slurp/tesseract/zbarimg/qrencode"
+
+# Region verbs use `grim -g "$(slurp)"` — slurp prompts you to drag a region.
+# Cancelling slurp (Esc) makes the verb fail cleanly. Captures go to the
+# clipboard as image/png; OCR/QR-decode print text to stdout (pipe to wl-copy
+# in a binding if you want them on the clipboard).
+
+# ---- full / region capture (no subject) ----
+
+[[verbs]]
+name = "screenshot"
+description = "Capture the whole screen to the clipboard"
+accepts = []
+cmd = "grim - | wl-copy --type image/png"
+
+[[verbs]]
+name = "capture-region"
+description = "Select a region and copy it to the clipboard"
+accepts = []
+cmd = "grim -g \"$(slurp)\" - | wl-copy --type image/png"
+
+[[verbs]]
+name = "capture-file"
+description = "Select a region and save it to a PNG; prints the path"
+accepts = []
+cmd = "dir=${GOO_SCREENSHOT_DIR:-$HOME/Pictures/Screenshots}; mkdir -p \"$dir\"; out=\"$dir/Screenshot_$(date +%Y-%m-%d_%H-%M-%S).png\"; grim -g \"$(slurp)\" \"$out\" && printf '%s\\n' \"$out\""
+
+# ---- OCR (region or image file) ----
+
+[[verbs]]
+name = "ocr-region"
+description = "Select a region and OCR it to stdout"
+accepts = []
+cmd = "grim -g \"$(slurp)\" - | tesseract - - 2>/dev/null"
+
+[[verbs]]
+name = "ocr-image"
+description = "OCR an image file to stdout"
+accepts = ["image/*"]
+cmd = "tesseract {subject.metadata.path|q} - 2>/dev/null"
+
+# ---- QR / barcode ----
+
+[[verbs]]
+name = "scan-qr"
+description = "Select a region and decode any QR/barcode in it"
+accepts = []
+cmd = "grim -g \"$(slurp)\" - | zbarimg -q --raw - 2>/dev/null"
+
+[[verbs]]
+name = "scan-qr-image"
+description = "Decode a QR/barcode from an image file"
+accepts = ["image/*"]
+cmd = "zbarimg -q --raw {subject.metadata.path|q}"
+
+[[verbs]]
+name = "qr-encode"
+description = "Render the text as a QR code in the terminal"
+accepts = ["text/*"]
+cmd = "qrencode -t ANSIUTF8 {subject.text|q}"
+
+[[verbs]]
+name = "qr-save"
+description = "Render the text as a QR PNG; prints the path"
+accepts = ["text/*"]
+cmd = "out=\"$(mktemp --suffix=.png /tmp/goo-qr-XXXXXX)\"; qrencode -o \"$out\" {subject.text|q} && printf '%s\\n' \"$out\""
