@@ -57,17 +57,22 @@ description = "Decode a percent-encoded string"
 accepts = ["text/*"]
 cmd = "printf '%s' {subject.text|q} | python3 -c 'import sys, urllib.parse; sys.stdout.write(urllib.parse.unquote(sys.stdin.read()))'"
 
+# Hashing is file-aware: if the subject is a file (has metadata.path), hash the
+# file's actual bytes — handles binary and matches `sha256sum <file>` exactly
+# (no trailing-newline mangling from reading contents into .text). Otherwise
+# hash {subject.text}. So `sha256 "hi"` hashes the text; `sha256 ./img.png`
+# hashes the file's bytes.
 [[verbs]]
 name = "sha256"
-description = "Compute SHA-256 hex digest"
-accepts = ["text/*"]
-cmd = "printf '%s' {subject.text|q} | sha256sum | awk '{print $1}'"
+description = "SHA-256 hex digest (of file bytes when given a file, else of text)"
+accepts = ["text/*", "inode/*", "image/*", "audio/*", "video/*", "application/*"]
+cmd = "p={subject.metadata.path|q}; if [ -n \"$p\" ] && [ -f \"$p\" ]; then sha256sum -- \"$p\"; else printf '%s' {subject.text|q} | sha256sum; fi | awk '{print $1}'"
 
 [[verbs]]
 name = "md5"
-description = "Compute MD5 hex digest"
-accepts = ["text/*"]
-cmd = "printf '%s' {subject.text|q} | md5sum | awk '{print $1}'"
+description = "MD5 hex digest (of file bytes when given a file, else of text)"
+accepts = ["text/*", "inode/*", "image/*", "audio/*", "video/*", "application/*"]
+cmd = "p={subject.metadata.path|q}; if [ -n \"$p\" ] && [ -f \"$p\" ]; then md5sum -- \"$p\"; else printf '%s' {subject.text|q} | md5sum; fi | awk '{print $1}'"
 
 [[verbs]]
 name = "json-string"

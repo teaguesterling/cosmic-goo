@@ -197,6 +197,27 @@ setup() {
     [ "$output" = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" ]
 }
 
+@test "real plugins: sha256 of a file matches sha256sum (incl. trailing newline)" {
+    printf 'hello\n' > "$BATS_TEST_TMPDIR/f.txt"   # trailing newline
+    run "$GOO" sha256 "$BATS_TEST_TMPDIR/f.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(sha256sum "$BATS_TEST_TMPDIR/f.txt" | awk '{print $1}')" ]
+}
+
+@test "real plugins: sha256 of a binary file matches sha256sum" {
+    head -c 256 /dev/urandom > "$BATS_TEST_TMPDIR/b.dat"
+    run "$GOO" sha256 "$BATS_TEST_TMPDIR/b.dat" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(sha256sum "$BATS_TEST_TMPDIR/b.dat" | awk '{print $1}')" ]
+}
+
+@test "real plugins: md5 of a binary file matches md5sum" {
+    head -c 256 /dev/urandom > "$BATS_TEST_TMPDIR/b.dat"
+    run "$GOO" md5 "$BATS_TEST_TMPDIR/b.dat" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(md5sum "$BATS_TEST_TMPDIR/b.dat" | awk '{print $1}')" ]
+}
+
 @test "real plugins: url-encode percent-encodes" {
     run "$GOO" url-encode "a b&c" </dev/null
     [ "$status" -eq 0 ]
