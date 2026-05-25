@@ -241,6 +241,23 @@ resolve_object() {
         die "could not list objects of type '$otype' for this verb"
     fi
 
+    # object_valid_when: a jq predicate run over each candidate, with {subject.*}
+    # substituted in first — so the object pool can depend on the subject (e.g.
+    # "only workspaces on this app's output"). The candidate is `.`. Skipped for
+    # explicit-address objects (those returned above — an explicit pick bypasses
+    # the pool). This is the object-side analogue of a verb's valid_when.
+    local ovw
+    ovw=$(jq -r '.object_valid_when // empty' <<<"$verb_json")
+    if [ -n "$ovw" ]; then
+        local octx opred
+        octx=$(jq -nc --argjson s "$subject_json" '{subject: $s}')
+        opred=$(_substitute "$ovw" "$octx")
+        items=$(jq -c "(try (. // []) catch []) | map(select($opred))" <<<"$items" 2>/dev/null)
+        if [ -z "$items" ] || [ "$items" = "[]" ]; then
+            die "no object of type '$otype' satisfies this verb's object_valid_when"
+        fi
+    fi
+
     # Match object_arg against id/title (case-insensitive); no arg → first item.
     local match
     if [ -z "$object_arg" ]; then
@@ -760,9 +777,16 @@ cmd_verb() {
         # text content so the template can still reference {subject.text}.
         subject=$(jq -nc --arg text "$subject_arg" '{type:"text/plain", text:$text}')
     fi
-    if [ -n "$object_arg" ]; then
-        # Resolve the object against the verb's object_type (+ object_source /
-        # object_list_cmd), with the subject in scope for subject-dependent objects.
+    # Resolve the object whenever the verb declares an object_type — even with no
+    # object argument, in which case resolve_object takes the first candidate
+    # (after object_valid_when filtering), mirroring how a subject defaults to
+    # the first item. resolve_object is a no-op (returns null) for verbs with no
+    # object_type, so a stray second positional on a one-step verb is ignored.
+    local has_object_type
+    has_object_type=$(jq -r '.object_type // empty' <<<"$verb")
+    if [ -n "$object_arg" ] || [ -n "$has_object_type" ]; then
+        # The subject is in scope for subject-dependent objects (object_list_cmd
+        # and object_valid_when).
         object=$(resolve_object "$verb" "$object_arg" "$subject") || exit 1
     fi
 

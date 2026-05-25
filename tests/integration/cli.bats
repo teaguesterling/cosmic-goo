@@ -64,6 +64,24 @@ accepts = ["application/vnd.test.gadget"]
 object_type = "application/vnd.test.slot"
 object_list_cmd = "printf '[{\"id\":\"{subject.id}-slot\",\"title\":\"derived\"}]'"
 cmd = "printf '%s' {object.id|q}"
+
+# object_valid_when: a STATIC predicate prunes the candidate pool (slots: one,two).
+[[verbs]]
+name = "put-filt"
+accepts = ["application/vnd.test.gadget"]
+object_type = "application/vnd.test.slot"
+object_source = "slots"
+object_valid_when = ".id == \"two\""
+cmd = "printf '%s->%s' {subject.id|q} {object.id|q}"
+
+# object_valid_when: a SUBJECT-DEPENDENT predicate ({subject.*} substituted in).
+[[verbs]]
+name = "put-own"
+accepts = ["application/vnd.test.gadget"]
+object_type = "application/vnd.test.slot"
+object_list_cmd = "printf '[{\"id\":\"a\",\"owner\":\"cog\"},{\"id\":\"b\",\"owner\":\"sprocket\"}]'"
+object_valid_when = ".owner == \"{subject.id}\""
+cmd = "printf '%s' {object.id|q}"
 EOF
 
     # Command aliases (#26): whole-invocation shortcuts.
@@ -319,6 +337,28 @@ EOF
     run "$GOO" put :gad:cog nonexistent-slot </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" =~ "no object matching" ]]
+}
+
+@test "object_valid_when prunes the candidate pool (static predicate)" {
+    # slots = {one, two}; predicate keeps only id==two, so the no-arg pick is two.
+    run "$GOO" put-filt :gad:cog </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "cog->two" ]
+}
+
+@test "object_valid_when: a pruned-out candidate can't be matched" {
+    run "$GOO" put-filt :gad:cog one </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "no object matching" ]]
+}
+
+@test "object_valid_when sees the subject (subject-dependent filter)" {
+    run "$GOO" put-own :gad:cog </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "a" ]               # owner==cog → only candidate a
+    run "$GOO" put-own :gad:sprocket </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "b" ]               # owner==sprocket → only candidate b
 }
 
 # ---------------- command aliases (#26) ----------------

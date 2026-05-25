@@ -103,7 +103,8 @@ accepts = ["text/*"]
 cmd = "tr a-z A-Z <<< {subject.text|q}"
 ```
 
-**Two-step verb** taking an object:
+**Two-step verb** taking an object. Declare `object_type`; the object is then
+available as `{object.*}` in `cmd`, resolved the same way subjects are:
 
 ```toml
 [[verbs]]
@@ -112,6 +113,25 @@ accepts = ["application/vnd.my-tool.thing"]
 object_type = "application/vnd.my-tool.workspace"
 cmd = "my-tool move --thing {subject.id} --workspace {object.id}"
 ```
+
+Where the object's candidates come from, in priority order:
+
+1. an explicit address as the second positional (`goo move-to :thing:x :ws:2`) — resolved directly, bypassing the pool;
+2. **`object_list_cmd`** — a shell snippet emitting a JSON array, with `{subject.*}` substituted in first, so candidates can *depend on the subject*;
+3. **`object_source`** — a named source (by `name` or `prefix`) whose `emits` matches `object_type`;
+4. failing those, **any source whose `emits` matches `object_type`** (so declaring just `object_type` is often enough).
+
+With no object argument, the **first** candidate is taken (mirroring how a subject defaults to the first item) — so narrow the pool deliberately:
+
+```toml
+object_type       = "application/vnd.cos-cli.workspace"
+object_source     = "workspaces"
+object_valid_when = '.metadata.output == "{subject.metadata.output}"'
+# only workspaces on the same output as the app — {subject.*} is substituted
+# into the predicate, then it's run as a jq filter over each candidate.
+```
+
+`object_valid_when` is the object-side analogue of `valid_when` (below): a jq predicate, evaluated per candidate (the candidate is `.`), with `{subject.*}` available. It prunes the pool before matching/first-pick.
 
 **Adverb-routed verb** — the `cmd` is supplied by a selector adverb the verb opts into:
 
