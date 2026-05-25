@@ -1,4 +1,5 @@
 name = "text-verbs"
+tier = "desktop"
 description = "Selection-aware text actions (critique, summarize, think, draft-response)"
 
 [[verbs]]

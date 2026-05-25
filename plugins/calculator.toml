@@ -1,4 +1,5 @@
 name = "calculator"
+tier = "core"
 description = "Evaluate expressions with qalc (libqalculate)"
 
 [[verbs]]

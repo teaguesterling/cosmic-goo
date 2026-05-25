@@ -36,6 +36,7 @@ nav:
   - Tutorial: tutorial.md
   - CLI reference: cli-reference.md
   - Plugin authoring: plugin-authoring.md
+  - Distribution & tiers: distribution.md
   - Examples:
       - MS Natural 4000 bindings: examples/ms-natural-4000-bindings.md
   - Limitations & roadmap: limitations.md

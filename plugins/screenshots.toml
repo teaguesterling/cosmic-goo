@@ -1,4 +1,5 @@
 name = "screenshots"
+tier = "desktop"
 description = "Screen capture, OCR, and QR via grim/slurp/tesseract/zbarimg/qrencode"
 
 # Region verbs use `grim -g "$(slurp)"` — slurp prompts you to drag a region.

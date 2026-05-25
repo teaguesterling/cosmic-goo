@@ -96,7 +96,8 @@ plugin_load() {
                 name: $pname,
                 dir: $dir,
                 file: $file,
-                description: (.description // null)
+                description: (.description // null),
+                tier: (.tier // null)
             }],
             types:   ((.types   // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
             sources: ((.sources // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),

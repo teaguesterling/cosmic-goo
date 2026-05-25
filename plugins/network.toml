@@ -1,4 +1,5 @@
 name = "network"
+tier = "desktop"
 description = "NetworkManager connections — bring up / down (nmcli)"
 
 [[types]]

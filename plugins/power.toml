@@ -1,4 +1,5 @@
 name = "power"
+tier = "desktop"
 description = "Session and power actions — lock, suspend, hibernate, shutdown"
 
 # These take no subject (accepts = [] elides the subject requirement).

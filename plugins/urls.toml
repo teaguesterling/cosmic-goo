@@ -1,4 +1,5 @@
 name = "urls"
+tier = "desktop"
 description = "URL actions — open in browser, web search, QR generation"
 
 [[verbs]]

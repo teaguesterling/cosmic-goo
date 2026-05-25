@@ -1,4 +1,5 @@
 name = "sigils"
+tier = "core"
 description = "Default addressing sigils. Override or add your own in ~/.config/cosmic-goo/plugins/."
 
 # A sigil is a single leading character that expands into a canonical-ish

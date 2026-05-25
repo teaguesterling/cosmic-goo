@@ -1,4 +1,5 @@
 name = "tmux"
+tier = "core"
 description = "tmux sessions via tmux-use (assumed at ~/.dotfiles/tmux-use/tmux-use.sh)"
 
 # tmux-use is a shell script the user has in their dotfiles. It's not on PATH

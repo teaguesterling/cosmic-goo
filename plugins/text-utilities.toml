@@ -1,4 +1,5 @@
 name = "text-utilities"
+tier = "core"
 description = "Pure-text transforms — base64, hashing, case shifting, counting, escaping"
 
 # {subject.text|q} shell-quotes the content so it survives as a single safe

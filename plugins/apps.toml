@@ -1,4 +1,5 @@
 name = "apps"
+tier = "cosmic"
 description = "Running applications via cos-cli — activate, close, move, window state"
 
 [[types]]

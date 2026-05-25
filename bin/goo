@@ -267,6 +267,18 @@ cmd_validate() {
         fi
     done < <(jq -c '.sigils[]?' <<<"$registry")
 
+    # 5. Plugin tier (optional) must be one of core|desktop|cosmic.
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local pname ptier
+        pname=${line%%$'\t'*}; ptier=${line#*$'\t'}
+        case "$ptier" in
+            core|desktop|cosmic) ;;
+            *) printf 'plugin "%s" has invalid tier "%s" (want core|desktop|cosmic)\n' "$pname" "$ptier" >&2
+               errors=$((errors+1)) ;;
+        esac
+    done < <(jq -r '.plugins[] | select(.tier != null) | "\(.name)\t\(.tier)"' <<<"$registry")
+
     if [ "$errors" -eq 0 ]; then
         printf 'goo validate: OK (%d plugins, %d types, %d sources, %d verbs, %d adverbs, %d sigils)\n' \
             "$(jq '.plugins | length' <<<"$registry")" \

@@ -1,4 +1,5 @@
 name = "media"
+tier = "desktop"
 description = "Media player transport via playerctl (MPRIS)"
 
 # No-subject verbs (accepts = []) — they act on the active MPRIS player.

@@ -1,4 +1,5 @@
 name = "clipboard-history"
+tier = "desktop"
 description = "Clipboard history via cliphist — paste back, delete, wipe"
 
 # SETUP (required for any history to exist):

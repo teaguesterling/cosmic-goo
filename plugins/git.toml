@@ -1,4 +1,5 @@
 name = "git"
+tier = "core"
 description = "Git repositories — open, status, pull, GitHub PRs"
 
 [[types]]

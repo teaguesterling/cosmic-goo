@@ -1,4 +1,5 @@
 name = "bluetooth"
+tier = "desktop"
 description = "Bluetooth paired devices — connect / disconnect (bluez)"
 
 [[types]]

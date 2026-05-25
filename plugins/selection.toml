@@ -1,4 +1,5 @@
 name = "selection"
+tier = "desktop"
 description = "Implicit subjects from the current PRIMARY selection and clipboard"
 
 # The `selection` and `clipboard` sources emit a single synthetic item whose

@@ -1,4 +1,5 @@
 name = "audio"
+tier = "desktop"
 description = "Audio volume and output device control (wpctl / pactl)"
 
 [[types]]

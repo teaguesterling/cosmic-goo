@@ -1,4 +1,5 @@
 name = "files"
+tier = "desktop"
 description = "File operations — open, reveal in file manager, copy path, read"
 
 # Conventions for inode/file subjects (cosmic-goo-wide):

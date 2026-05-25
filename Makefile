@@ -4,7 +4,16 @@
 
 SHELL := /bin/bash
 
-.PHONY: help test shellcheck validate install install-user clean docs serve docs-install install-completion
+.PHONY: help test shellcheck validate install install-cosmic install-core uninstall tiers clean docs serve docs-install install-completion
+
+# Install layout / tier selection.
+# PREFIX defaults to a user install (~/.local, no root). TIERS selects which
+# plugin tiers to install: core (pure), desktop (freedesktop/Wayland), cosmic
+# (cos-cli). `install` = goo-standalone (core+desktop); `install-cosmic` adds
+# the cosmic tier; `install-core` is the minimal headless engine.
+PREFIX ?= $(HOME)/.local
+TIERS  ?= core desktop
+GOO_SHARE = $(PREFIX)/share/cosmic-goo
 
 help:  ## Show this help
 	@awk 'BEGIN { FS = ":.*##"; printf "Available targets:\n" } /^[a-zA-Z0-9_-]+:.*##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -43,11 +52,38 @@ validate:  ## Run goo validate (Phase 1 — once bin/goo exists)
 		echo "bin/goo not built yet"; \
 	fi
 
-install:  ## Install to /usr/local (system-wide) — Phase 1 TBD
-	@echo "install target not implemented yet"
+install:  ## Install goo (standalone: core+desktop tiers) to $PREFIX (default ~/.local)
+	@echo "Installing goo to $(PREFIX) [tiers: $(TIERS)]"
+	@install -d "$(GOO_SHARE)/bin" "$(GOO_SHARE)/lib" "$(GOO_SHARE)/plugins" "$(PREFIX)/bin"
+	@install -m 0755 bin/goo "$(GOO_SHARE)/bin/goo"
+	@install -m 0644 lib/*.sh "$(GOO_SHARE)/lib/"
+	@n=0; for f in plugins/*.toml; do \
+		t=$$(grep -m1 '^tier = ' "$$f" | sed 's/tier = //; s/"//g'); \
+		[ -z "$$t" ] && t=desktop; \
+		case " $(TIERS) " in *" $$t "*) install -m 0644 "$$f" "$(GOO_SHARE)/plugins/"; n=$$((n+1));; esac; \
+	done; echo "  installed $$n plugin(s)"
+	@ln -sf "$(GOO_SHARE)/bin/goo" "$(PREFIX)/bin/goo"
+	@echo "  linked $(PREFIX)/bin/goo -> $(GOO_SHARE)/bin/goo"
+	@echo "Done. Ensure $(PREFIX)/bin is on PATH. (bin/goo finds lib/ and plugins/ as siblings under $(GOO_SHARE).)"
 
-install-user:  ## Install to ~/.local (user-only) — Phase 1 TBD
-	@echo "install-user target not implemented yet"
+install-cosmic:  ## Install with the cosmic tier too (cosmic-goo: core+desktop+cosmic)
+	@$(MAKE) install TIERS="core desktop cosmic"
+
+install-core:  ## Install the minimal headless engine (core tier only)
+	@$(MAKE) install TIERS="core"
+
+uninstall:  ## Remove an install from $PREFIX
+	@rm -f "$(PREFIX)/bin/goo"; rm -rf "$(GOO_SHARE)"; echo "Removed $(PREFIX)/bin/goo and $(GOO_SHARE)"
+
+tiers:  ## List plugins grouped by dependency tier
+	@for tier in core desktop cosmic; do \
+		printf '\033[1m%s\033[0m\n' "$$tier"; \
+		for f in plugins/*.toml; do \
+			t=$$(grep -m1 '^tier = ' "$$f" | sed 's/tier = //; s/"//g'); \
+			[ -z "$$t" ] && t=desktop; \
+			[ "$$t" = "$$tier" ] && printf '  %s\n' "$$(basename "$$f" .toml)"; \
+		done; \
+	done
 
 docs:  ## Build the docs site (output at site/)
 	@if ! command -v mkdocs >/dev/null 2>&1; then \

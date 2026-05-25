@@ -1,4 +1,5 @@
 name = "workspaces"
+tier = "cosmic"
 description = "COSMIC workspaces via cos-cli"
 
 # Workspaces in COSMIC are nested under workspace_groups[] (one group per

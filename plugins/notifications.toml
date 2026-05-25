@@ -1,4 +1,5 @@
 name = "notifications"
+tier = "desktop"
 description = "Desktop notifications via libnotify"
 
 [[verbs]]
