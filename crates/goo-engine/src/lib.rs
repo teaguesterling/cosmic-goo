@@ -5,3 +5,4 @@
 //! ported one slice at a time; this crate currently covers MIME matching.
 
 pub mod mime;
+pub mod registry;
