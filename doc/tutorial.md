@@ -59,7 +59,7 @@ A subject can be more than literal text. The shapes:
 
 ```
 $ goo wc ./README.md            # a FILE (./ ~/ / are read as files — contents, not the path)
-$ goo open-url https://x.com    # a URL (scheme:// is recognized)
+$ goo open https://x.com        # a URL (scheme:// is recognized; `open` handles files AND links)
 $ goo upper ^                    # ^ = the clipboard (a built-in sigil for +clip:)
 $ goo activate :app:firefox      # :source:query — look "firefox" up in the apps source
 $ goo switch :ws:0:1             # workspace 0:1, via the workspaces source

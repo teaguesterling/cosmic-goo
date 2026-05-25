@@ -31,7 +31,7 @@ setup() {
              upper lower base64-encode sha256 \
              activate close move-to switch \
              open reveal copy-path \
-             lock suspend shutdown notify search open-url; do
+             lock suspend shutdown notify search; do
         echo "$verbs" | grep -qx "$v" || { echo "missing verb: $v" >&2; return 1; }
     done
 }

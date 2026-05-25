@@ -1,13 +1,8 @@
 name = "urls"
 tier = "desktop"
-description = "URL actions — open in browser, web search, QR generation"
-
-[[verbs]]
-name = "open-url"
-description = "Open a URL in the default browser"
-accepts = ["text/x-uri"]
-default_for = "text/x-uri"
-cmd = "xdg-open '{subject.text}'"
+description = "URL actions — web search by engine"
+# Opening a URL is handled by the polymorphic `open` verb (files plugin): it
+# xdg-opens any addressable entity by its .id, which for a URL is the URL.
 
 [[verbs]]
 name = "search"

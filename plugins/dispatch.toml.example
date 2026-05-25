@@ -8,8 +8,9 @@
 # `${N}` interpolates capture group N (0 = whole match) into `set` values.
 # Regex is bash ERE: use POSIX classes (\s -> [[:space:]], \d -> [[:digit:]]).
 #
-# These route to verbs from the default plugin set (urls/files): open-url,
-# search, open. `goo validate` will flag any rule whose verb doesn't exist.
+# These route to verbs from the default plugin set (files/urls): open (files
+# AND URLs, via xdg-open) and search. `goo validate` flags any rule whose verb
+# doesn't exist.
 
 name = "dispatch"
 tier = "desktop"
@@ -19,21 +20,21 @@ description = "Example content-dispatch rules (copy to your config to enable)"
 [[dispatch]]
 matches = '^(https?|ftp)://[^[:space:]]+$'
 type    = "text/x-uri"
-verb    = "open-url"
+verb    = "open"
 
 # RFC NNNN -> open the canonical text at rfc-editor.org.
 [[dispatch]]
 matches = 'RFC:?[[:space:]]*([0-9]+)'
 type    = "text/x-uri"
 set     = { text = "https://www.rfc-editor.org/rfc/rfc${1}.txt" }
-verb    = "open-url"
+verb    = "open"
 
 # owner/repo shorthand (e.g. "gh torvalds/linux") -> the GitHub repo page.
 [[dispatch]]
 matches = '^gh[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$'
 type    = "text/x-uri"
 set     = { text = "https://github.com/${1}" }
-verb    = "open-url"
+verb    = "open"
 
 # "todo: <text>" -> search GitHub code for the text.
 [[dispatch]]

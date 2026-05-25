@@ -93,8 +93,8 @@ stdin, then:
    type's `default_for` verb.
 
 ```bash
-goo dispatch "RFC 2616"              # a rule → open-url on the rfc-editor URL
-echo "https://example.com" | goo dispatch   # no rule → text/x-uri default verb
+goo dispatch "RFC 2616"              # a rule → open on the rfc-editor URL
+echo "https://example.com" | goo dispatch   # no rule → text/x-uri default verb (open)
 ```
 
 Rules live in plugin TOML (see [plugin authoring](plugin-authoring.md#content-dispatch)); none ship by default — dispatch only does what your config tells it to. `goo validate` checks every rule has a `matches` and a `verb` that exists.
@@ -142,7 +142,7 @@ Resolution rules:
 
 - A **file** address (`./x`, `+file:`) must exist — the handler errors otherwise. An explicit path is an unambiguous "I mean a file" signal.
 - The verb's `accepts` type-checks the resolved subject. A file verb fed bare text fails the type check; a text verb fed bare text works. There's no separate "mode" — enforcement is the handler (existence) plus `accepts` (type).
-- `.text` is always the textual **content**; `.metadata.path` / `.id` carry identity. So `summarize ./x.md` reads the file's contents, while `open ./x.md` uses its path.
+- **The subject convention:** `.text` is the **content/value** (what it *is*); `.id` is the **address/locator** (how to *refer to* it — a path for a file, the URL for a link, the handle for an app). An entity is *addressable* iff it has an `.id`; pure text values have only `.text`. So `summarize ./x.md` reads the file's contents (`.text`), while `open ./x.md` (or `open https://…`) acts on its locator (`.id`) — one polymorphic `open` covers files and URLs because both carry an `.id`.
 
 A second positional becomes the **object** (for two-step verbs like `move-to`), resolved the same way.
 

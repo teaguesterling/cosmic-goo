@@ -28,10 +28,14 @@ list_cmd = """find . -maxdepth 2 -type f ! -path '*/.git/*' 2>/dev/null \\
 
 [[verbs]]
 name = "open"
-description = "Open a file in its default application"
-accepts = ["inode/*"]
-default_for = "inode/file"
-cmd = "xdg-open '{subject.metadata.path}'"
+description = "Open a file or URL in its default application"
+# Polymorphic opener: any addressable entity whose .id is a path or URL.
+# xdg-open handles both, so one verb covers files and links (no separate
+# open-url). accepts still scopes it; .id is the addressable locator (path for
+# a file, the URL for a link) per the subject convention above.
+accepts = ["inode/*", "text/x-uri"]
+default_for = ["inode/file", "text/x-uri"]
+cmd = "xdg-open {subject.id|q}"
 
 [[verbs]]
 name = "reveal"

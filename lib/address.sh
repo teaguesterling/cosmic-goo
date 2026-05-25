@@ -209,13 +209,15 @@ _addr_resolve_scheme() {
             ;;
         http|https|ftp|ftps|mailto|claude|file*)
             # Treat as a URI reference. Reconstruct the original scheme:value.
+            # .id carries the locator (its identity) so an opener verb can use
+            # one field for both files (.id = path) and URLs (.id = the URL).
             local url="$scheme:$value"
-            jq -nc --arg url "$url" '{type:"text/x-uri", text:$url}'
+            jq -nc --arg url "$url" '{type:"text/x-uri", text:$url, id:$url}'
             ;;
         *)
             # Unknown scheme: best-effort URI reference.
             local url="$scheme:$value"
-            jq -nc --arg url "$url" '{type:"text/x-uri", text:$url}'
+            jq -nc --arg url "$url" '{type:"text/x-uri", text:$url, id:$url}'
             ;;
     esac
 }

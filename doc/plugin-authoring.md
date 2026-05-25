@@ -296,7 +296,7 @@ falls back to native detection + the type's default verb.
 matches = 'RFC:?[[:space:]]*([0-9]+)'    # ERE; capture groups -> ${1}, ${2}, …
 type    = "text/x-uri"                    # type assigned to the resulting subject
 set     = { text = "https://www.rfc-editor.org/rfc/rfc${1}.txt" }  # subject overrides
-verb    = "open-url"                      # verb to route to
+verb    = "open"                          # verb to route to
 adverbs = { engine = "google" }          # optional adverb seed (omit if none)
 ```
 

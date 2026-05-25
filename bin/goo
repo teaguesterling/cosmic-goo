@@ -461,7 +461,7 @@ cmd_describe() {
         (if .description then "\ndescription: \(.description)" else "" end) +
         "\naccepts: \(.accepts | join(", "))" +
         (if .object_type then "\nobject_type: \(.object_type)" else "" end) +
-        (if .default_for then "\ndefault_for: \(.default_for)" else "" end) +
+        (if .default_for then "\ndefault_for: " + (if (.default_for|type)=="array" then (.default_for|join(", ")) else .default_for end) else "" end) +
         (if .uses_adverbs then "\nuses_adverbs: \(.uses_adverbs | join(", "))" else "" end) +
         (if .cmd then "\ncmd: \(.cmd)" else "" end) +
         (if .prompt then "\nprompt:\n  " + (.prompt | gsub("\n"; "\n  ")) else "" end) +
@@ -495,8 +495,10 @@ cmd_dispatch() {
         adverbs=$(jq -c '.adverbs' <<<"$m")
         fields=$(jq -c '.fields' <<<"$m")
         # Deep-merge the rule's interpolated fields over a base {type, text}.
+        # Default .id to .text so a dispatched datum is its own addressable
+        # locator (lets rules route to `open` etc., which read {subject.id}).
         subject=$(jq -nc --arg t "$type" --arg x "$input" --argjson f "$fields" \
-            '{type: $t, text: $x} * $f')
+            '({type: $t, text: $x} * $f) | (.id //= .text)')
         verb_json=$(verb_lookup "$verb_name") \
             || die "dispatch: rule routes to unknown verb '$verb_name'"
         verb_apply "$verb_json" "$subject" null "$adverbs"

@@ -84,8 +84,13 @@ verb_lookup() {
 
 verb_default_for() {
     local type=$1
+    # default_for may be a single type ("inode/file") or an array of types
+    # (["inode/file","text/x-uri"]) — a polymorphic default like `open`.
     jq -c --arg t "$type" '
-        .verbs[] | select((.default_for // null) == $t)
+        .verbs[] | select(
+            (.default_for // empty) as $d
+            | if ($d | type) == "array" then ($d | index($t)) != null else $d == $t end
+        )
     ' <<<"$(_verbs_registry)" | head -n 1
 }
 

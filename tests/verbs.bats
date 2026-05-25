@@ -32,6 +32,13 @@ name = "echo-id"
 accepts = ["application/vnd.fixture.thing"]
 cmd = "echo {subject.id}"
 
+# Polymorphic default: default_for is an ARRAY of types.
+[[verbs]]
+name = "open-poly"
+accepts = ["inode/*", "text/x-uri"]
+default_for = ["inode/file", "text/x-uri"]
+cmd = "xdg-open {subject.id|q}"
+
 [[verbs]]
 name = "destructive"
 accepts = ["application/vnd.fixture.thing"]
@@ -127,6 +134,18 @@ EOF
     run verb_default_for "image/png"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+@test "verb_default_for: resolves an ARRAY default_for (polymorphic verb)" {
+    run verb_default_for "inode/file"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.name == "open-poly"' >/dev/null
+}
+
+@test "verb_default_for: array default_for matches each listed type" {
+    run verb_default_for "text/x-uri"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.name == "open-poly"' >/dev/null
 }
 
 # ---------------- verb_for_subject ----------------
