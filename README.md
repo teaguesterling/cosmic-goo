@@ -2,7 +2,7 @@
 
 > **G**rammar **O**f **O**perations — a compositional sentence layer over the COSMIC launcher.
 
-**Status**: pre-alpha, Phase 1 in progress. Not yet runnable end-to-end.
+**Status**: alpha. The `goo` CLI is fully usable — 21 plugins, ~74 verbs, subject addressing, tab completion, and a picker-driven compose dialog. Not yet built: the pop-launcher meta-plugin (inline composition) and the native libcosmic compose GUI.
 
 ## What it is
 

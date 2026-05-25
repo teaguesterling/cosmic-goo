@@ -12,9 +12,9 @@ Plugins are TOML files declaring any combination of **types**, **sources**, **ve
 
 ## Status
 
-**Phase 1 functionally complete.** The library backbone, the CLI, four built-in plugins, and an integration test suite are in place. End-to-end on the developer host: `goo critique "text" --via=clipboard` puts a rendered prompt on the system clipboard; `goo activate Alacritty` finds and focuses the running app via `cos-cli`.
+**The `goo` CLI is fully usable.** 21 built-in plugins (~74 verbs, 12 sources), subject addressing with sigils + native file/URL detection, `{var|q|uri}` template filters, bash tab completion, a registry cache, and a picker-driven compose dialog — covered by ~190 tests. E.g. `goo critique "text" --via=clipboard` renders a prompt onto the clipboard; `goo activate Alacritty` focuses the app; `goo calc "2+2*10"` → `22`; `goo qr-encode https://…` draws a QR in the terminal.
 
-Not yet shipped: the pop-launcher meta-plugin (Phase 2), the scenes plugin (Phase 3), the compose dialog (Phase 4). See [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md) for the full plan.
+Not yet shipped: the pop-launcher meta-plugin for *inline* composition in `cosmic-launcher` (Phase 2), the scenes plugin (Phase 3), and the native libcosmic compose GUI (the current dialog is a shell-driven picker). See [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md) for the full plan and [`tutorial.md`](tutorial.md) to learn the CLI by example.
 
 ## Quick taste
 
@@ -40,12 +40,12 @@ this paragraph could be tighter
 
 ## Getting it running
 
-cosmic-goo is shell-only in Phase 1. Clone the repo and you're done:
+cosmic-goo is shell-only today (Rust arrives with the native compose dialog later). Clone the repo and you're done:
 
 ```bash
 git clone <repo>
 cd cosmic-goo
-make test         # verify (85 tests, ~5 seconds)
+make test         # verify (~190 tests)
 bin/goo --help
 ```
 

@@ -1,57 +1,50 @@
-# Phase 1 limitations and roadmap
+# Limitations and roadmap
 
-## Known limitations
-
-### Template substitution is raw
-
-The dispatcher inserts `{var}` substitutions verbatim into the bash command, with no automatic shell-escaping or URL-encoding. Template authors are responsible for safety — see [plugin-authoring](plugin-authoring.md#phase-1-limitation-raw-substitution).
-
-**Workarounds**: use single-quoted here-strings (`cmd <<< '{var}'`) for multi-line content; inline `jq -srR @uri` for URL-encoded query strings.
-
-**Planned fix**: a filter syntax `{var|q}` (shell-escape), `{var|uri}` (URL-encode), `{var|raw}` (current behaviour, but explicit).
+## Current limitations
 
 ### `claude://` URL handler is flaky on Linux
 
 The smoke test (R4 in `recon/findings.md`) found that `xdg-open "claude://claude.ai/new?q=..."` only reliably prefills the new-chat input on a **cold start** of Claude Desktop. Subsequent invocations may route to Cowork or fail to update the prompt input.
 
-**Impact**: `goo critique --via=claude-desktop` and `goo critique --via=claude-code` may visibly open Claude Desktop without the prompt populated, requiring a manual paste.
+**Impact**: `goo critique --via=claude-desktop` / `--via=claude-code` may open Claude Desktop without the prompt populated, needing a manual paste.
 
-**Workaround**: use `--via=clipboard` as a fallback and paste manually. The clipboard route is the most reliable Phase 1 path.
+**Workaround**: `--via=clipboard` is the reliable route — paste wherever you like.
 
-**Planned fix**: investigate `aaddrick/claude-desktop-debian` source; consider making `claude-routing` always pre-copy to clipboard as a side effect.
+**Planned fix**: investigate the `aaddrick/claude-desktop-debian` URL handler; possibly have `claude-routing` always pre-copy to clipboard as a side effect.
 
-### Cold-load plugin discovery is ~370ms
+### Compose/launcher enumerate every cheap source's `list_cmd`
 
-With ~4 plugins, parsing TOML through Python `tomlq` takes around 370ms. The implementation plan targeted <100ms.
+`goo compose` and bare-positional completion run the `list_cmd` of every source marked `enumerate = true`. Slow or huge sources are opted out with `enumerate = false` (bluetooth, files, services, repos, clipboard-history — reachable on demand via `:prefix:`). The remaining enumerable sources are run serially, not in parallel, so the subject picker's cold open is roughly the sum of `apps` + `workspaces` + `tmux` + `sinks` + `network` (~300ms here). Parallelizing them is a future optimization.
 
-**Workaround**: ignore it for CLI use; it's still under half a second.
+### `clipboard-history` needs session setup
 
-**Planned fix**: either (a) switch to `mikefarah/yq` (Go binary, faster startup), (b) add a registry JSON cache with mtime invalidation, or (c) write a small Python loader that handles many TOMLs in one process.
+`cliphist` only has data if (1) `COSMIC_DATA_CONTROL_ENABLED=1` is set (wlr-data-control) and (2) a `wl-paste --watch cliphist store` daemon runs in the session. Until then the source yields `[]` cleanly. See `plugins/clipboard-history.toml`.
 
 ### `cos-cli` PATH
 
-`cos-cli` lives in `~/.cargo/bin` after `cargo install`, but that directory isn't on the non-interactive bash PATH on a clean Pop!_OS setup. `lib/selection.sh` and `plugins/apps.toml` work around this by falling back to `$HOME/.cargo/bin/cos-cli`; if you `cargo install` to a different prefix, set the `COS_CLI` env var.
+`cos-cli` installs to `~/.cargo/bin`, which isn't on the non-interactive bash PATH on a clean Pop!_OS setup. `lib/selection.sh` and `plugins/apps.toml` fall back to `$HOME/.cargo/bin/cos-cli`; override with the `COS_CLI` env var for other prefixes.
 
-### Source-style scoping (`:tmux dotfiles`) isn't implemented
+### Inline launcher composition isn't built yet
 
-The spec's launcher inline composition uses sigils like `/.../`, `:source name`, `*verb*`, `--adverb=value`. The Phase-1 CLI doesn't parse those — it uses straightforward positional + `--flag` parsing. Sigil parsing is Phase 2 (meta-plugin).
+The spec's `cosmic-launcher` inline grammar (typing a sentence with type-aware autocomplete) is the pop-launcher meta-plugin — not yet implemented. Today you compose via the CLI or the `goo compose` picker dialog. Note the CLI *does* understand the addressing sigils (`:source:`, `+scheme:`, `^`, customizable) — see [cli-reference](cli-reference.md#subject-addressing).
 
-### `goo compose` is a stub
+## Resolved since the original plan
 
-The compose dialog binary is Phase 4. Until then `goo compose` prints a placeholder.
+These were limitations in earlier drafts and are now fixed:
+
+- **Raw template substitution** → solved by `{var|q}` / `{var|uri}` filters ([plugin-authoring](plugin-authoring.md#filters-making-substitutions-safe)).
+- **`goo compose` was a stub** → now a working picker-driven dialog (fuzzel/rofi/wofi/fzf). The *native libcosmic GUI* is still future polish.
+- **~370ms cold load** → a registry mtime cache (`$XDG_RUNTIME_DIR/cosmic-goo/registry.json`) makes warm loads ~10ms; cold load only recurs after a plugin edit.
+- **Source scoping unimplemented** → `:source:query` addressing works in the CLI now (Phase 2 reuses it for the launcher).
 
 ## Roadmap
 
-Phase 1 (current) → CLI works end-to-end.
+The CLI, 21 plugins, addressing, completion, filters, and the compose dialog are done. Remaining, roughly in spec-phase order:
 
-**Phase 2**: pop-launcher meta-plugin. Inline composition with type-aware autocomplete. Subject/verb/object stages.
-
-**Phase 3**: scenes plugin (the first "rich" directory-form plugin). Anchor scenes (browser, mail, Claude Desktop). Favorite scene slots (1–5). Scene capture wizard.
-
-**Phase 4**: compose dialog (`goo-compose`). Libcosmic/iced GUI. Three-panel UI. Sub-150ms cold start, sub-30ms with a `goo-composed` daemon.
-
-**Phase 5**: broadening — `tmux`, `files`, `workspaces`, `clipboard-history`, `fabric` plugins. Selection-caching daemon if needed. `content-dispatch` graduates from regex heuristics to `sitting_duck` integration.
-
-**Phase 6**: open-source polish — pre-built packages, screenshots, bindings examples for several keyboards.
+- **pop-launcher meta-plugin** — inline `cosmic-launcher` composition with type-aware autocomplete, emitting the canonical `cosmic-goo:` URIs the CLI already understands.
+- **scenes plugin** — workspace/app/tmux/cwd "scenes": anchors (browser, mail, Claude Desktop) and favorite slots.
+- **native compose dialog** — a libcosmic/iced three-panel GUI replacing the shell picker; sub-100ms wake, possibly a `goo-composed` daemon.
+- **command aliases** — user-defined `@g`/`%x`-style verb+adverb shortcuts (the configuration ratchet).
+- **broadening & polish** — `fabric` patterns as verbs, `content-dispatch` via `sitting_duck`, packaging, more bindings examples.
 
 Full task-level breakdown: [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md).

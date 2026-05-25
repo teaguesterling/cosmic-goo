@@ -33,6 +33,7 @@ theme:
 
 nav:
   - Intro: index.md
+  - Tutorial: tutorial.md
   - CLI reference: cli-reference.md
   - Plugin authoring: plugin-authoring.md
   - Examples:
