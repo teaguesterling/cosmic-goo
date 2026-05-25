@@ -263,6 +263,11 @@ exists.
 
 ### The Rust implementation (sketch)
 
+> Detailed scoping — crate split, the jq-evaluator question, templating/exit-code/
+> cache decisions, and the migration order — lives in
+> [rust-port-scoping.md](rust-port-scoping.md). The sketch below is the original
+> outline it builds on.
+
 Rust replaces the **engine**, not the **plugins** (plugins stay TOML + shell;
 Rust assembles and `exec`s the rendered command). A cargo workspace:
 
