@@ -109,7 +109,7 @@ goo <verb> [POSITIONAL_1] [POSITIONAL_2] [--FLAG=VALUE ...]
 
 ### Subject addressing
 
-A subject argument can take several forms. They all resolve through one model: each is rewritten to a canonical `cosmic-goo:` URI, then dispatched.
+A subject argument can take several forms. They all resolve through one model: each is rewritten to a canonical `goo://` URI, then dispatched.
 
 | You type | Means | Example |
 |---|---|---|
@@ -121,14 +121,14 @@ A subject argument can take several forms. They all resolve through one model: e
 | `:source` | the source's first/default item | `goo summarize :clip` |
 | `+scheme:value` | explicit scheme handoff | `goo summarize +file:./notes.md` |
 | `^` / `^name` | clipboard (a built-in **custom sigil** → `+clip:`; `^name` reserved) | `goo summarize ^` |
-| `cosmic-goo:…` / `cosmic-goo+…` | the canonical URI directly (for scripts/IPC) | `goo summarize 'cosmic-goo+file:///abs/x.md'` |
+| `goo://…` / `goo+…` | the canonical URI directly (for scripts/IPC) | `goo summarize 'goo+file:///abs/x.md'` |
 
-`:` and `+` are the two **core** sigils — they are literally the canonical URI forms minus the `cosmic-goo` scheme name (`:source:input` ⟷ `cosmic-goo:source:input`; `+scheme:value` ⟷ `cosmic-goo+scheme:value`). Everything else is a **customizable sigil**: a single character that expands into one of those forms. `^` → `+clip:` ships as a default; `@` ships intentionally undefined (claim it in your own config). Define your own in any plugin TOML:
+`:` and `+` are the two **core** sigils. `:source:input` rewrites to the canonical, registrable URL form **`goo://source/input`** (`?params` ride along); `+scheme:value` rewrites to **`goo+scheme:value`** (a direct handoff). Everything else is a **customizable sigil**: a single character that expands into one of those forms. `^` → `+clip:` ships as a default; `@` ships intentionally undefined (claim it in your own config). Define your own in any plugin TOML:
 
 ```toml
 [[sigils]]
 char = "@"
-expands = ":app:"     # then @firefox -> :app:firefox -> cosmic-goo:app:firefox
+expands = ":app:"     # then @firefox -> :app:firefox -> goo://app/firefox
 ```
 
 When **no** positional is given, the subject falls back in order: **stdin** (if piped) → PRIMARY selection → clipboard → focused app (for handle verbs).
@@ -146,7 +146,7 @@ Resolution rules:
 
 A second positional becomes the **object** (for two-step verbs like `move-to`), resolved the same way.
 
-> The canonical `cosmic-goo:<source>:<input>` (source lookup) and `cosmic-goo+<scheme>:<value>` (scheme handoff) URIs are what the launcher meta-plugin and any IPC will pass between processes. The sigils (`@`, `^`, `+`) and native shapes are terminal-friendly shorthands that rewrite into them.
+> The canonical `goo://<source>/<input>` (source lookup) and `goo+<scheme>:<value>` (scheme handoff) URIs are what the launcher meta-plugin and any IPC will pass between processes. The `goo://` form is registrable as `x-scheme-handler/goo` (so `xdg-open goo://app/firefox` could route here). The sigils (`@`, `^`, `+`) and native shapes are terminal-friendly shorthands that rewrite into them. A broader REST/WebDAV-shaped evolution (domains, matrix params, one unified scheme) is [a considered design](design/addressing-and-protocol.md), not yet built.
 
 ### Command aliases
 

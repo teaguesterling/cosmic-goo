@@ -6,23 +6,23 @@
 # lib/selection.sh, lib/plugin-loader.sh.
 #
 # Canonical URI forms:
-#   cosmic-goo:<source>:<input>[?<params>]   enumerable source lookup (search a
-#                                            source's list_cmd output)
-#   cosmic-goo+<scheme>:<value>              scheme handoff (direct construction,
-#                                            no search)
+#   goo://<source>/<input>[?<params>]   enumerable source lookup (search a
+#                                       source's list_cmd output). The // form is
+#                                       registrable as x-scheme-handler/goo.
+#   goo+<scheme>:<value>                scheme handoff (direct construction, no
+#                                       search). Renamed from cosmic-goo+; full
+#                                       unification under one goo:// scheme is a
+#                                       later step (doc/design/addressing-and-protocol.md).
 #
 # Sigil aliases (pure textual prefix rewrites into the canonical form):
-#   @x   -> cosmic-goo:x         (e.g. @app:firefox -> cosmic-goo:app:firefox)
-#   +x   -> cosmic-goo+x         (e.g. +file:a.md  -> cosmic-goo+file:a.md)
-#   ^x   -> cosmic-goo+clip:x    (e.g. ^alt        -> cosmic-goo+clip:alt)
+#   :x   -> goo://… (source)     (e.g. :app:firefox -> goo://app/firefox)
+#   +x   -> goo+x   (handoff)    (e.g. +file:a.md   -> goo+file:a.md)
+#   ^x   -> +clip:x -> goo+clip:x
 #
 # Native shapes (no sigil — they identify themselves lexically):
-#   ./x ../x /x ~/x   -> cosmic-goo+file://<abspath>
-#   <scheme>://...    -> cosmic-goo+<scheme>://...   (http, https, claude, ...)
-#   anything else     -> cosmic-goo+text:<literal>
-#
-# Reserved, not yet implemented: ?params on source lookups, @source/path
-# (slash hierarchy), named clipboard buffers (^name), file+exists modifiers.
+#   ./x ../x /x ~/x   -> goo+file://<abspath>
+#   <scheme>://...    -> goo+<scheme>://...   (http, https, claude, ...)
+#   anything else     -> goo+text:<literal>
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     echo "lib/address.sh: source this file, do not exec it" >&2
@@ -44,9 +44,9 @@ if ! declare -F plugin_load_all >/dev/null 2>&1; then
     . "$(_addr_dir)/plugin-loader.sh"
 fi
 
-# Core structural sigils are fixed (they ARE the canonical URI forms):
-#   :x  -> cosmic-goo:x     (source path)
-#   +x  -> cosmic-goo+x     (scheme handoff)
+# Core structural sigils are fixed (they map to the canonical URI forms):
+#   :x  -> goo://… (source lookup)
+#   +x  -> goo+x   (scheme handoff)
 # Everything else is a customizable sigil: a single char that expands to a
 # string (usually starting with : or +), declared via [[sigils]] in any plugin.
 # A built-in sigils.toml ships ^ -> +clip:. Users add/override in their own
@@ -83,7 +83,7 @@ _addr_sigil_expand() {
 address_is_explicit() {
     local raw=$1
     case "$raw" in
-        :*|+*|./*|../*|/*|[~]/*|cosmic-goo:*|cosmic-goo+*) return 0 ;;
+        :*|+*|./*|../*|/*|[~]/*|goo://*|goo+*) return 0 ;;
         [a-zA-Z]*://*) return 0 ;;
     esac
     # Custom sigil? First char registered.
@@ -106,12 +106,44 @@ _addr_abspath() {
     fi
 }
 
-# Rewrite a user-typed argument into a canonical cosmic-goo URI.
+# Convert a source-form blob "<source>[:<input>][?<params>]" (the value of the
+# ':' sigil) into the canonical goo://<source>/<input>[?<params>] URI.
+_addr_source_uri() {
+    local s=$1 params="" src inp
+    case "$s" in *\?*) params="?${s#*\?}"; s="${s%%\?*}" ;; esac
+    case "$s" in
+        *:*) src="${s%%:*}"; inp="${s#*:}" ;;
+        *)   src="$s"; inp="" ;;
+    esac
+    printf 'goo://%s/%s%s' "$src" "$inp" "$params"
+}
+
+# Reverse of _addr_source_uri: "source/input?params" -> the legacy
+# "source:input?params" blob that _addr_resolve_source still parses. Splits the
+# authority off the first '/', so multi-slash inputs are preserved.
+_addr_source_args() {
+    local r=$1 q="" a p
+    case "$r" in *\?*) q="?${r#*\?}"; r="${r%%\?*}" ;; esac
+    case "$r" in
+        */*) a="${r%%/*}"; p="${r#*/}" ;;
+        *)   a="$r"; p="" ;;
+    esac
+    local out=$a
+    [ -n "$p" ] && out="$a:$p"
+    printf '%s%s' "$out" "$q"
+}
+
+# Rewrite a user-typed argument into a canonical goo URI.
+#   :source:input[?params]  ->  goo://source/input[?params]   (registrable, //)
+#   +scheme:value           ->  goo+scheme:value              (direct handoff)
+#   native shapes           ->  goo+file:// , goo+<scheme>:// , goo+text:
+# (Full unification of the handoff forms under one goo:// scheme is deferred —
+# see doc/design/addressing-and-protocol.md / task #40.)
 address_canonicalize() {
     local raw=$1
 
     # Already canonical.
-    case "$raw" in cosmic-goo:*|cosmic-goo+*) printf '%s' "$raw"; return 0 ;; esac
+    case "$raw" in goo://*|goo+*) printf '%s' "$raw"; return 0 ;; esac
 
     # Custom sigil expansion (single leading char -> expansion + rest), unless
     # the leading char is a core/native one we handle structurally below.
@@ -128,12 +160,12 @@ address_canonicalize() {
 
     # Core structural sigils + native shapes.
     case "$raw" in
-        cosmic-goo:*|cosmic-goo+*) printf '%s' "$raw" ;;
-        :*) printf 'cosmic-goo:%s' "${raw#:}" ;;
-        +*) printf 'cosmic-goo+%s' "${raw#+}" ;;
-        ./*|../*|/*|[~]/*) printf 'cosmic-goo+file://%s' "$(_addr_abspath "$raw")" ;;
-        [a-zA-Z]*://*) printf 'cosmic-goo+%s' "$raw" ;;
-        *) printf 'cosmic-goo+text:%s' "$raw" ;;
+        goo://*|goo+*) printf '%s' "$raw" ;;
+        :*) _addr_source_uri "${raw#:}" ;;
+        +*) printf 'goo+%s' "${raw#+}" ;;
+        ./*|../*|/*|[~]/*) printf 'goo+file://%s' "$(_addr_abspath "$raw")" ;;
+        [a-zA-Z]*://*) printf 'goo+%s' "$raw" ;;
+        *) printf 'goo+text:%s' "$raw" ;;
     esac
 }
 
@@ -144,11 +176,11 @@ address_resolve() {
     local uri
     uri=$(address_canonicalize "$raw")
     case "$uri" in
-        cosmic-goo:*)
-            _addr_resolve_source "${uri#cosmic-goo:}" "$verb_json"
+        goo://*)
+            _addr_resolve_source "$(_addr_source_args "${uri#goo://}")" "$verb_json"
             ;;
-        cosmic-goo+*)
-            local rest=${uri#cosmic-goo+}
+        goo+*)
+            local rest=${uri#goo+}
             local scheme=${rest%%:*}
             local value=${rest#*:}
             _addr_resolve_scheme "$scheme" "$value"
@@ -222,7 +254,8 @@ _addr_resolve_scheme() {
     esac
 }
 
-# Source handler (cosmic-goo:<source>:<input>[?<params>]).
+# Source handler. Receives the legacy "<source>:<input>[?<params>]" blob
+# (reconstructed by _addr_source_args from the goo://source/input?params URI).
 # Looks up a source by name OR prefix, runs its list_cmd, and matches `input`
 # against item id/title. Params after `?` are parsed off and ignored for now.
 # Build a JSON object {key:value,...} from a `&`-separated `key=value` param

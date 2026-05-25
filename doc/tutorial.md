@@ -65,7 +65,7 @@ $ goo activate :app:firefox      # :source:query — look "firefox" up in the ap
 $ goo switch :ws:0:1             # workspace 0:1, via the workspaces source
 ```
 
-The `:source:` form and `^`/`+`/`@` sigils all rewrite to a canonical `cosmic-goo:` URI under the hood — see [cli-reference](cli-reference.md#subject-addressing). Two everyday rules:
+The `:source:` form and `^`/`+`/`@` sigils all rewrite to a canonical `goo://` URI under the hood — see [cli-reference](cli-reference.md#subject-addressing). Two everyday rules:
 
 - **Files and URLs need no sigil** — `./notes.md` and `https://…` are recognized by shape.
 - **`:source:query`** reaches anything a source lists. Discover sources with `goo list`:

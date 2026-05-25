@@ -248,10 +248,10 @@ Every adverb declares scope via exactly one of:
 
 ## Sigils
 
-A sigil is a single leading character that expands into a canonical address prefix when you type a subject. The two **core** sigils are fixed because they *are* the canonical URI forms:
+A sigil is a single leading character that expands into a canonical address when you type a subject. The two **core** sigils are fixed:
 
-- `:x` → `cosmic-goo:x` (source path — look up `x` in a source)
-- `+x` → `cosmic-goo+x` (scheme handoff — hand `x` to a scheme handler)
+- `:source:input` → `goo://source/input` (source lookup — search `input` in a source; the registrable `//` form)
+- `+scheme:value` → `goo+scheme:value` (scheme handoff — hand `value` to a scheme handler)
 
 Everything else is a **customizable sigil**, declared with `[[sigils]]` in any plugin:
 

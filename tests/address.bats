@@ -45,8 +45,8 @@ EOF
     address_is_explicit "/abs/foo"
     address_is_explicit "~/foo"
     address_is_explicit "https://example.com"
-    address_is_explicit "cosmic-goo:app:x"
-    address_is_explicit "cosmic-goo+file:x"
+    address_is_explicit "goo://app/x"
+    address_is_explicit "goo+file:x"
 }
 
 @test "is_explicit: registered custom sigils are explicit" {
@@ -62,44 +62,59 @@ EOF
 
 # ---------------- address_canonicalize ----------------
 
-@test "canonicalize: : -> cosmic-goo:" {
+@test "canonicalize: :source:input -> goo://source/input" {
     run address_canonicalize ":app:firefox"
-    [ "$output" = "cosmic-goo:app:firefox" ]
+    [ "$output" = "goo://app/firefox" ]
+}
+
+@test "canonicalize: :source with no input -> goo://source/" {
+    run address_canonicalize ":things"
+    [ "$output" = "goo://things/" ]
+}
+
+@test "canonicalize: input keeps embedded colons (goo://ws/0:1)" {
+    run address_canonicalize ":ws:0:1"
+    [ "$output" = "goo://ws/0:1" ]
+}
+
+@test "canonicalize: ?params ride along on the source URI" {
+    run address_canonicalize ":things:thing?title=beta"
+    [ "$output" = "goo://things/thing?title=beta" ]
 }
 
 @test "canonicalize: custom sigil % expands then canonicalizes" {
     run address_canonicalize "%alpha"
-    [ "$output" = "cosmic-goo:thing:alpha" ]
+    [ "$output" = "goo://thing/alpha" ]
 }
 
 @test "canonicalize: undefined @ falls through to text" {
     run address_canonicalize "@app:firefox"
-    [ "$output" = "cosmic-goo+text:@app:firefox" ]
+    [ "$output" = "goo+text:@app:firefox" ]
 }
 
-@test "canonicalize: + -> cosmic-goo+" {
+@test "canonicalize: + -> goo+ (handoff)" {
     run address_canonicalize "+file:a.md"
-    [ "$output" = "cosmic-goo+file:a.md" ]
+    [ "$output" = "goo+file:a.md" ]
 }
 
-@test "canonicalize: native URL -> cosmic-goo+scheme://" {
+@test "canonicalize: native URL -> goo+scheme://" {
     run address_canonicalize "https://example.com/x"
-    [ "$output" = "cosmic-goo+https://example.com/x" ]
+    [ "$output" = "goo+https://example.com/x" ]
 }
 
-@test "canonicalize: absolute path -> cosmic-goo+file://abspath" {
+@test "canonicalize: absolute path -> goo+file://abspath" {
     run address_canonicalize "/tmp/foo"
-    [ "$output" = "cosmic-goo+file:///tmp/foo" ]
+    [ "$output" = "goo+file:///tmp/foo" ]
 }
 
-@test "canonicalize: bare text -> cosmic-goo+text:" {
+@test "canonicalize: bare text -> goo+text:" {
     run address_canonicalize "hello world"
-    [ "$output" = "cosmic-goo+text:hello world" ]
+    [ "$output" = "goo+text:hello world" ]
 }
 
 @test "canonicalize: already-canonical passes through" {
-    run address_canonicalize "cosmic-goo:app:firefox"
-    [ "$output" = "cosmic-goo:app:firefox" ]
+    run address_canonicalize "goo://app/firefox"
+    [ "$output" = "goo://app/firefox" ]
 }
 
 # ---------------- scheme handlers ----------------
