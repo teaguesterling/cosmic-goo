@@ -1,0 +1,11 @@
+[package]
+name = "goo-engine"
+version = "0.1.0"
+edition = "2021"
+description = "cosmic-goo engine — registry, MIME matching, addressing, templating, dispatch"
+license = "MIT"
+
+# Zero external dependencies for this slice (std only). Deps are introduced
+# deliberately, surfaced in the diff (jaq for valid_when, serde_json for the
+# registry, etc.) — see doc/design/rust-port-scoping.md.
+[dependencies]

@@ -11,10 +11,12 @@ recon/*.log
 .idea/
 .vscode/
 
-# Rust (Phase 4+)
+# Rust
 /target/
+crates/target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock IS committed: application workspace, not a published library
+# (see doc/design/rust-port-scoping.md §5).
 
 # Build artifacts
 /dist/
