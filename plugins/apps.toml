@@ -49,6 +49,7 @@ name = "move-to"
 description = "Move an app to a workspace"
 accepts = ["application/vnd.cos-cli.app"]
 object_type = "application/vnd.cos-cli.workspace"
+object_source = "workspaces"   # draw object candidates from the workspaces source
 cmd = "$HOME/.cargo/bin/cos-cli move -i {subject.metadata.index} -w {object.metadata.index} -g {object.metadata.group_index}"
 
 [[verbs]]

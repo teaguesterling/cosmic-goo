@@ -47,9 +47,25 @@ prompt = "WRAPPED:{subject.text}:END"
 name = "name-of"
 accepts = ["application/vnd.test.gadget"]
 cmd = "printf '%s' {subject.id|q}"
+
+# Two-step: object drawn from a NAMED source (object_source).
+[[verbs]]
+name = "put"
+accepts = ["application/vnd.test.gadget"]
+object_type = "application/vnd.test.slot"
+object_source = "slots"
+cmd = "printf '%s->%s' {subject.id|q} {object.id|q}"
+
+# Two-step: subject-DEPENDENT object candidates (object_list_cmd sees {subject.*}).
+[[verbs]]
+name = "put-dep"
+accepts = ["application/vnd.test.gadget"]
+object_type = "application/vnd.test.slot"
+object_list_cmd = "printf '[{\"id\":\"{subject.id}-slot\",\"title\":\"derived\"}]'"
+cmd = "printf '%s' {object.id|q}"
 EOF
 
-    # A handle source + a custom sigil, for addressing tests.
+    # Handle sources + a custom sigil, for addressing/object tests.
     cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/test-gadgets.toml" <<'EOF'
 name = "test-gadgets"
 
@@ -58,6 +74,12 @@ name = "gadgets"
 prefix = "gad"
 emits = "application/vnd.test.gadget"
 list_cmd = "echo '[{\"id\":\"sprocket\",\"title\":\"Sprocket\"},{\"id\":\"cog\",\"title\":\"Cog\"}]'"
+
+[[sources]]
+name = "slots"
+prefix = "slot"
+emits = "application/vnd.test.slot"
+list_cmd = "echo '[{\"id\":\"one\",\"title\":\"Slot One\"},{\"id\":\"two\",\"title\":\"Slot Two\"}]'"
 
 [[sigils]]
 char = "%"
@@ -185,4 +207,31 @@ EOF
     run "$GOO" list gadgets </dev/null
     [ "$status" -eq 0 ]
     echo "$output" | jq -e 'map(.id) | contains(["sprocket","cog"])' >/dev/null
+}
+
+# ---------------- two-step objects (#34) ----------------
+
+@test "two-step verb resolves object from a named object_source" {
+    run "$GOO" put :gad:cog two </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "cog->two" ]
+}
+
+@test "two-step verb resolves object via explicit :source: address" {
+    run "$GOO" put :gad:sprocket :slot:one </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "sprocket->one" ]
+}
+
+@test "two-step verb: object_list_cmd sees the subject (subject-dependent)" {
+    # object candidates are derived from the subject's id: <id>-slot
+    run "$GOO" put-dep :gad:cog cog-slot </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "cog-slot" ]
+}
+
+@test "two-step verb errors when the object can't be matched" {
+    run "$GOO" put :gad:cog nonexistent-slot </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "no object matching" ]]
 }

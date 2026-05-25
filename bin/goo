@@ -184,6 +184,80 @@ resolve_subject() {
     die "no subject provided and no implicit subject available (stdin/selection/clipboard/implicit-source all empty)"
 }
 
+# Resolve the OBJECT (indirect object) of a two-step verb. Unlike the buggy
+# old path (which reused the verb's subject `accepts`), this matches the verb's
+# `object_type`, and honours:
+#   - object_list_cmd : a subject-dependent candidate list (rendered with the
+#                       subject in scope via {subject.*}) — Kupfer's object_source(for_item)
+#   - object_source   : a named source to draw candidates from
+#   - else            : any source whose emits matches object_type
+# Echoes the object JSON (tagged with object_type), or fails.
+resolve_object() {
+    local verb_json=$1 object_arg=$2 subject_json=${3:-null}
+    local otype
+    otype=$(jq -r '.object_type // empty' <<<"$verb_json")
+    [ -z "$otype" ] && { printf 'null\n'; return 0; }
+
+    # Explicit address form → resolve directly (the addressing layer type-tags it).
+    if [ -n "$object_arg" ] && address_is_explicit "$object_arg"; then
+        address_resolve "$object_arg"
+        return $?
+    fi
+
+    # Gather candidate items for the object.
+    local items="" olist osrc registry
+    olist=$(jq -r '.object_list_cmd // empty' <<<"$verb_json")
+    osrc=$(jq -r '.object_source // empty' <<<"$verb_json")
+    if [ -n "$olist" ]; then
+        # Subject-dependent: render {subject.*} into the candidate command.
+        local ctx rendered
+        ctx=$(jq -nc --argjson s "$subject_json" '{subject: $s}')
+        rendered=$(_substitute "$olist" "$ctx")
+        items=$(bash -c "$rendered" 2>/dev/null)
+    else
+        registry=$(plugin_load_all)
+        if [ -n "$osrc" ]; then
+            local lc
+            lc=$(jq -r --arg s "$osrc" '[.sources[] | select(.name==$s or (.prefix//"")==$s)] | first | .list_cmd // empty' <<<"$registry")
+            [ -n "$lc" ] && items=$(bash -c "$lc" 2>/dev/null)
+        else
+            local source emits lc
+            while IFS= read -r source; do
+                emits=$(jq -r '.emits // empty' <<<"$source")
+                [ -z "$emits" ] && continue
+                if mime_matches "$otype" "$emits"; then
+                    lc=$(jq -r '.list_cmd // empty' <<<"$source")
+                    [ -z "$lc" ] && continue
+                    items=$(bash -c "$lc" 2>/dev/null)
+                    [ -n "$items" ] && break
+                fi
+            done < <(jq -c '.sources[]' <<<"$registry")
+        fi
+    fi
+    if [ -z "$items" ]; then
+        die "could not list objects of type '$otype' for this verb"
+    fi
+
+    # Match object_arg against id/title (case-insensitive); no arg → first item.
+    local match
+    if [ -z "$object_arg" ]; then
+        match=$(jq -c --arg t "$otype" \
+            '(try (. // []) catch []) | .[0] | select(. != null) | . + {type: $t}' <<<"$items" 2>/dev/null)
+    else
+        match=$(jq -c --arg q "$object_arg" --arg t "$otype" '
+            (try (. // []) catch []) | .[]?
+            | select(
+                (((.id    // "") | ascii_downcase) | contains($q | ascii_downcase))
+                or
+                (((.title // "") | ascii_downcase) | contains($q | ascii_downcase))
+              )
+            | . + {type: $t}
+        ' <<<"$items" 2>/dev/null | head -n 1)
+    fi
+    [ -z "$match" ] && die "no object matching '$object_arg' of type '$otype'"
+    printf '%s\n' "$match"
+}
+
 # ---------------- subcommand: plugins ----------------
 
 cmd_plugins() {
@@ -575,8 +649,9 @@ cmd_verb() {
         subject=$(jq -nc --arg text "$subject_arg" '{type:"text/plain", text:$text}')
     fi
     if [ -n "$object_arg" ]; then
-        # Treat object same way for now (text or via source lookup).
-        object=$(resolve_subject "$verb" "$object_arg") || exit 1
+        # Resolve the object against the verb's object_type (+ object_source /
+        # object_list_cmd), with the subject in scope for subject-dependent objects.
+        object=$(resolve_object "$verb" "$object_arg" "$subject") || exit 1
     fi
 
     verb_apply "$verb" "$subject" "$object" "$adverbs"

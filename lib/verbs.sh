@@ -138,20 +138,34 @@ _substitute() {
     local template=$1 vars_json=$2
     local result=""
     local rest=$template
-    while [[ "$rest" =~ ^([^{]*)\{([a-zA-Z_][a-zA-Z0-9_.-]*)([|]([a-z]+))?\}(.*)$ ]]; do
-        local before=${BASH_REMATCH[1]}
-        local path=${BASH_REMATCH[2]}
-        local filter=${BASH_REMATCH[4]}
-        rest=${BASH_REMATCH[5]}
-        local value
-        value=$(jq -r ".${path} // empty" <<<"$vars_json" 2>/dev/null)
-        case "$filter" in
-            q|sh|shell) value=$(printf '%q' "$value") ;;
-            uri|url)    value=$(printf '%s' "$value" | jq -sRr '@uri') ;;
-            raw|"")     : ;;
-            *)          : ;;  # unknown filter: leave raw rather than erroring
-        esac
-        result+="${before}${value}"
+    # Left-to-right scan. We can't anchor the prefix with [^{]* because a
+    # template may contain literal '{' that are NOT placeholders (e.g. a JSON
+    # object literal in an object_list_cmd: printf '[{"id":"{subject.id}"}]').
+    # So: cut up to the next '{', then test whether what follows is a real
+    # {path} / {path|filter} placeholder. If it is, substitute; if not, emit a
+    # literal '{' and keep scanning past it.
+    while [[ "$rest" == *'{'* ]]; do
+        local before=${rest%%\{*}   # text up to (not incl.) the first '{'
+        local after=${rest#*\{}     # everything after that first '{'
+        result+="$before"
+        if [[ "$after" =~ ^([a-zA-Z_][a-zA-Z0-9_.-]*)([|]([a-z]+))?\}(.*)$ ]]; then
+            local path=${BASH_REMATCH[1]}
+            local filter=${BASH_REMATCH[3]}
+            rest=${BASH_REMATCH[4]}
+            local value
+            value=$(jq -r ".${path} // empty" <<<"$vars_json" 2>/dev/null)
+            case "$filter" in
+                q|sh|shell) value=$(printf '%q' "$value") ;;
+                uri|url)    value=$(printf '%s' "$value" | jq -sRr '@uri') ;;
+                raw|"")     : ;;
+                *)          : ;;  # unknown filter: leave raw rather than erroring
+            esac
+            result+="$value"
+        else
+            # Not a placeholder — that '{' is literal. Emit it and continue.
+            result+="{"
+            rest=$after
+        fi
     done
     result+="$rest"
     printf '%s' "$result"
