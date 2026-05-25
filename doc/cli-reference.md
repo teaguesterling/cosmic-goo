@@ -70,7 +70,7 @@ $ goo list apps | jq '.[].id'
 
 Opens a picker-driven dialog that walks you through building a sentence: pick a **subject** (current selection/clipboard, or an item from any source), then a **verb** (filtered to those that accept the subject's type), then an **object** if the verb takes one, then any **adverb** values, then confirm a preview and execute.
 
-It drives a dmenu-protocol picker — `fuzzel`, `rofi`, `wofi`, or `fzf`, auto-detected (override with `GOO_PICKER`). Each step reuses the same backend as the CLI (`address_resolve`, `verb_for_subject`, `verb_apply`), so a compose run executes identically to typing the equivalent `goo <verb> <subject> …`.
+It drives a dmenu-protocol picker — `fuzzel`, `rofi`, `wofi`, or `fzf`, with `zenity` as a GTK fallback for systems without a wlroots picker — auto-detected (override with `GOO_PICKER`). Each step reuses the same backend as the CLI (`address_resolve`, `verb_for_subject`, `verb_apply`), so a compose run executes identically to typing the equivalent `goo <verb> <subject> …`.
 
 ```bash
 goo compose                 # auto-detected picker

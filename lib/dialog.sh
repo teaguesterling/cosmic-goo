@@ -4,9 +4,10 @@
 # Source this file; do not exec it.
 #
 # Provides a dmenu-protocol picker (candidates on stdin, selection on stdout)
-# that works across fuzzel / rofi / wofi / fzf. The picker is chosen via
-# GOO_PICKER, else auto-detected. A test/scripted mode reads pre-seeded
-# answers from a file so the compose flow can be driven non-interactively.
+# that works across fuzzel / rofi / wofi / fzf, with zenity as a GTK fallback
+# for systems without a wlroots picker. The picker is chosen via GOO_PICKER,
+# else auto-detected. A test/scripted mode reads pre-seeded answers from a file
+# so the compose flow can be driven non-interactively.
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     echo "lib/dialog.sh: source this file, do not exec it" >&2
@@ -20,7 +21,7 @@ dialog_picker() {
         return 0
     fi
     local c
-    for c in fuzzel rofi wofi fzf; do
+    for c in fuzzel rofi wofi fzf zenity; do
         if command -v "$c" >/dev/null 2>&1; then
             printf '%s' "$c"
             return 0
@@ -52,7 +53,7 @@ dialog_pick() {
 
     local backend
     backend=$(dialog_picker) || {
-        echo "goo compose: no picker found (install fuzzel/rofi/wofi/fzf or set GOO_PICKER)" >&2
+        echo "goo compose: no picker found (install fuzzel/rofi/wofi/fzf/zenity or set GOO_PICKER)" >&2
         return 1
     }
     case "$backend" in
@@ -60,6 +61,16 @@ dialog_pick() {
         rofi)   rofi -dmenu -i -p "$prompt" ;;
         wofi)   wofi --dmenu --insensitive --prompt "$prompt" ;;
         fzf)    fzf --prompt "$prompt ❯ " --height=40% --reverse ;;
+        zenity)
+            # zenity --list takes rows as argv, not stdin, so slurp first. One
+            # column; the whole "addr<TAB>label" line is the row and is returned
+            # verbatim (callers strip at the tab). Non-zero exit = cancel.
+            local rows
+            mapfile -t rows
+            [ "${#rows[@]}" -eq 0 ] && return 1
+            zenity --list --title="goo" --text="$prompt" \
+                   --column="$prompt" --hide-header "${rows[@]}" 2>/dev/null
+            ;;
         *)
             echo "goo compose: unknown picker '$backend'" >&2
             return 1
