@@ -89,6 +89,19 @@ verb_default_for() {
     ' <<<"$(_verbs_registry)" | head -n 1
 }
 
+# A verb's `valid_when` (optional) is a jq boolean expression evaluated against
+# the subject JSON. The verb applies to the subject only if it's truthy. Absent
+# => always applies (to items of an accepted type). Same machinery the
+# ?params source filter compiles into (see lib/address.sh).
+verb_valid_for() {
+    local verb_json=$1 subject_json=$2
+    local expr
+    expr=$(jq -r '.valid_when // empty' <<<"$verb_json")
+    [ -z "$expr" ] && return 0
+    # jq -e: exit 0 iff the last output is neither false nor null.
+    jq -e "$expr" <<<"$subject_json" >/dev/null 2>&1
+}
+
 verb_for_subject() {
     local subject_json=$1
     local subject_type
@@ -99,7 +112,10 @@ verb_for_subject() {
         while IFS= read -r pattern; do
             [ -z "$pattern" ] && continue
             if mime_matches "$pattern" "$subject_type"; then
-                printf '%s\n' "$verb"
+                # Type matches; honour valid_when before offering the verb.
+                if verb_valid_for "$verb" "$subject_json"; then
+                    printf '%s\n' "$verb"
+                fi
                 break
             fi
         done < <(jq -r '.accepts[]?' <<<"$verb")
@@ -195,6 +211,12 @@ verb_apply() {
             echo "verb_apply: subject type '$subject_type' does not match verb accepts" >&2
             return 1
         fi
+    fi
+
+    # 1b. Honour the verb's valid_when predicate against the subject.
+    if ! verb_valid_for "$verb_json" "$subject_json"; then
+        echo "verb_apply: subject does not satisfy this verb's valid_when predicate" >&2
+        return 1
     fi
 
     # 2. Validate object type if verb has object_type.

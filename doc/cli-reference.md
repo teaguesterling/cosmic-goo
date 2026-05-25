@@ -97,6 +97,7 @@ A subject argument can take several forms. They all resolve through one model: e
 | `./x`, `../x`, `/x`, `~/x` | a **file** (read contents; path in `metadata.path`) | `goo summarize ./notes.md` |
 | `https://…`, `claude://…` | a **URL** (`text/x-uri`) | `goo open https://example.com` |
 | `:source:query` | item from a named **source** (by `name` or `prefix`) | `goo activate :app:firefox` |
+| `:source:query?k=v` | …further filtered by field (case-insensitive substring; `*` optional) | `goo activate :app:firefox?title=*Claude*` |
 | `:source` | the source's first/default item | `goo summarize :clip` |
 | `+scheme:value` | explicit scheme handoff | `goo summarize +file:./notes.md` |
 | `^` / `^name` | clipboard (a built-in **custom sigil** → `+clip:`; `^name` reserved) | `goo summarize ^` |

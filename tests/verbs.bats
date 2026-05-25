@@ -45,6 +45,12 @@ object_type = "application/vnd.fixture.thing"
 cmd = "echo move {subject.id} to {object.id}"
 
 [[verbs]]
+name = "only-zip"
+accepts = ["text/*"]
+valid_when = ".text | endswith(\".zip\")"
+cmd = "echo zipping {subject.text}"
+
+[[verbs]]
 name = "critique"
 accepts = ["text/*"]
 uses_adverbs = ["via"]
@@ -258,6 +264,45 @@ EOF
     run verb_apply "$verb" "$subject"
     [ "$status" -ne 0 ]
     [[ "$output" =~ "requires object" ]]
+}
+
+# ---------------- valid_when predicate ----------------
+
+@test "verb_valid_for: true when no predicate" {
+    verb=$(verb_lookup echo-text)   # no valid_when
+    run verb_valid_for "$verb" '{"type":"text/plain","text":"anything"}'
+    [ "$status" -eq 0 ]
+}
+
+@test "verb_valid_for: honours the jq predicate" {
+    verb=$(verb_lookup only-zip)
+    verb_valid_for "$verb" '{"type":"text/plain","text":"a.zip"}'      # true
+    ! verb_valid_for "$verb" '{"type":"text/plain","text":"a.txt"}'   # false
+}
+
+@test "verb_for_subject: filters out verbs whose valid_when is false" {
+    # only-zip should appear for a .zip subject but not a plain one.
+    zip=$(verb_for_subject '{"type":"text/plain","text":"a.zip"}' | jq -r .name | sort | tr '\n' ',')
+    txt=$(verb_for_subject '{"type":"text/plain","text":"a.txt"}' | jq -r .name | sort | tr '\n' ',')
+    [[ "$zip" == *"only-zip"* ]]
+    [[ "$txt" != *"only-zip"* ]]
+    # a non-predicated text verb is offered for both
+    [[ "$zip" == *"echo-text"* ]]
+    [[ "$txt" == *"echo-text"* ]]
+}
+
+@test "verb_apply: rejects a subject failing valid_when" {
+    verb=$(verb_lookup only-zip)
+    run verb_apply "$verb" '{"type":"text/plain","text":"notes.txt"}'
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "valid_when" ]]
+}
+
+@test "verb_apply: runs when valid_when passes" {
+    verb=$(verb_lookup only-zip)
+    run verb_apply "$verb" '{"type":"text/plain","text":"archive.zip"}'
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "zipping archive.zip" ]]
 }
 
 # ---------------- verb_apply: adverb-routed ----------------

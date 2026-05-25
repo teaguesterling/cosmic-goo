@@ -184,8 +184,29 @@ EOF
     [[ "$output" =~ "no source" ]]
 }
 
-@test "resolve: ?params are stripped (reserved, not yet acted on)" {
+@test "resolve: unknown ?param excludes everything (no match)" {
+    # foo isn't a field on any item, so the filter matches nothing.
     run address_resolve ":things:alpha?foo=bar"
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "?params" ]]
+}
+
+@test "resolve: ?params filters items by field (case-insensitive substring)" {
+    # title=beta keeps only "Beta Thing"; with no input, return that first item.
+    run address_resolve ":things?title=beta"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.id == "beta"' >/dev/null
+}
+
+@test "resolve: ?params with * wildcards (stripped to substring)" {
+    run address_resolve ":things?title=*Alpha*"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.id == "alpha"' >/dev/null
+}
+
+@test "resolve: ?params combine with an input match" {
+    # input 'thing' matches both; title=beta narrows to beta.
+    run address_resolve ":things:thing?title=beta"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.id == "beta"' >/dev/null
 }

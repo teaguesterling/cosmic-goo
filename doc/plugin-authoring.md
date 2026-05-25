@@ -147,6 +147,20 @@ If a verb is the obvious default for items of a given type, declare it. `goo` us
 default_for = "application/vnd.cos-cli.app"
 ```
 
+#### `valid_when` — applies only to *some* items of a type
+
+`accepts` gates by MIME type; `valid_when` is an optional finer predicate — a **jq boolean expression** evaluated against the subject JSON. The verb is offered (and accepted by `verb_apply`) only when it's truthy. Absent ⇒ always applies.
+
+```toml
+[[verbs]]
+name = "unzip"
+accepts = ["inode/*"]
+valid_when = '.text | test("[.](zip|tar|gz)$")'   # only archive-looking files
+cmd = "..."
+```
+
+Evaluated in-process (jq is already loaded), so it's cheap to run while listing applicable verbs. It's the same kind of subject-JSON predicate that the `?params` source filter compiles into (see [cli-reference](cli-reference.md#subject-addressing)). For checks needing real I/O (a remote exists, a file's size), prefer keeping the verb broad and failing in the `cmd` itself — a heavier shell-predicate form is future work.
+
 ### Adverbs
 
 Adverbs modify *how* a verb runs. Two flavors:

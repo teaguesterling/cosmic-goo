@@ -223,11 +223,34 @@ _addr_resolve_scheme() {
 # Source handler (cosmic-goo:<source>:<input>[?<params>]).
 # Looks up a source by name OR prefix, runs its list_cmd, and matches `input`
 # against item id/title. Params after `?` are parsed off and ignored for now.
+# Build a JSON object {key:value,...} from a `&`-separated `key=value` param
+# string. `*` wildcards are stripped (params match by case-insensitive
+# substring). Echoes "{}" when empty. This is the ?params analogue of a verb's
+# valid_when: both are predicates over the item/subject JSON.
+_addr_params_to_json() {
+    local raw=$1
+    [ -z "$raw" ] && { printf '{}'; return 0; }
+    local obj='{}' pair k v
+    local IFS='&'
+    for pair in $raw; do
+        [ -z "$pair" ] && continue
+        k=${pair%%=*}
+        v=${pair#*=}
+        [ "$k" = "$pair" ] && continue   # no '=', skip
+        v=${v//\*/}                        # strip glob stars -> substring match
+        obj=$(jq -c --arg k "$k" --arg v "$v" '. + {($k): $v}' <<<"$obj")
+    done
+    printf '%s' "$obj"
+}
+
 _addr_resolve_source() {
     local spec=$1 verb_json=$2
 
-    # Strip reserved ?params (not yet acted on).
-    case "$spec" in *\?*) spec=${spec%%\?*} ;; esac
+    # Split off ?params and compile them to a filter object.
+    local params_json='{}'
+    case "$spec" in
+        *\?*) params_json=$(_addr_params_to_json "${spec#*\?}"); spec=${spec%%\?*} ;;
+    esac
 
     local source_key input
     source_key=${spec%%:*}
@@ -263,6 +286,23 @@ _addr_resolve_source() {
     if [ -z "$items" ]; then
         echo "address: source '$source_key' produced no items" >&2
         return 1
+    fi
+
+    # Apply ?params: keep items where every key=value matches (case-insensitive
+    # substring) against the item's top-level field or its metadata field.
+    if [ "$params_json" != "{}" ]; then
+        items=$(jq -c --argjson p "$params_json" '
+            (try (. // []) catch [])
+            | map(select(. as $it
+                | [ $p | to_entries[] | .key as $k | .value as $v
+                    | (($it[$k] // $it.metadata[$k]) // "" | tostring | ascii_downcase
+                       | contains($v | ascii_downcase)) ]
+                | all))
+        ' <<<"$items" 2>/dev/null)
+        if [ "$(jq 'length' <<<"$items" 2>/dev/null)" = "0" ]; then
+            echo "address: no item in source '$source_key' matches the given ?params" >&2
+            return 1
+        fi
     fi
 
     # No input: return the first item (sources like selection/clipboard have one).
