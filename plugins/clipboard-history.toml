@@ -20,6 +20,7 @@ name = "clipboard-history"
 prefix = "hist"
 icon = "edit-paste"
 emits = "application/vnd.cliphist.entry"
+enumerate = false   # up to 750 entries; reach via :hist: on demand
 # `grep` keeps only well-formed "<id>\t<preview>" rows, so the "please store
 # something first" message (emitted on an empty db) never reaches jq.
 list_cmd = """cliphist list 2>/dev/null \\

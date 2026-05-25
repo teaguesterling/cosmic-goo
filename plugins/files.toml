@@ -17,6 +17,7 @@ name = "files"
 prefix = "file"
 icon = "folder"
 emits = "inode/file"
+enumerate = false   # CWD flood; reach via :file:query or a native ./path
 list_cmd = """find . -maxdepth 2 -type f ! -path '*/.git/*' 2>/dev/null \\
   | head -200 \\
   | jq -Rsc 'split("\\n")[:-1] | map(

@@ -11,6 +11,7 @@ name = "bluetooth"
 prefix = "bt"
 icon = "bluetooth"
 emits = "application/vnd.bluez.device"
+enumerate = false   # timeout-bounded probe; reach via :bt: on demand
 # `timeout` keeps a stalled/absent controller from hanging the compose dialog.
 # `bluetoothctl devices Paired` lines look like: "Device AA:BB:.. Name Here".
 list_cmd = """timeout 2 bluetoothctl devices Paired 2>/dev/null \\

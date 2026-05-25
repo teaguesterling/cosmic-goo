@@ -69,14 +69,17 @@ A source is a place to enumerate typed items. Each source declares one primary `
 ```toml
 [[sources]]
 name = "things"
-prefix = "thing"               # for :thing scoping in the launcher (Phase 2)
+prefix = "thing"               # for :thing addressing (and launcher scoping)
 icon = "applications-other"    # freedesktop icon-theme name
 emits = "application/vnd.my-tool.thing"
 list_cmd = "my-tool list --json"
 preview_cmd = "my-tool show {subject.id}"   # optional
+enumerate = false              # optional; default true
 ```
 
 `list_cmd` must produce JSON on stdout — an array of objects, each at minimum with `id` and `title`. Optional fields: `subtitle`, `metadata` (free-form, opaque to the dispatcher but available to verb templates as `{subject.metadata.field}`).
+
+**`enumerate`** (default `true`) controls whether the source is *bulk-listed*. Contexts that gather candidates from many sources at once — the `goo compose` subject picker, and bare-positional tab completion (`goo VERB <TAB>`) — run every enumerable source's `list_cmd`. Set `enumerate = false` for sources that are slow (a network probe), huge (clipboard history), or noisy (every file in the tree): they're then **reachable on demand** via `:prefix:query` and `:prefix:<TAB>`, but never run in bulk. The built-in `bluetooth`, `files`, `services`, `repos`, and `clipboard-history` sources use this.
 
 ```json
 [

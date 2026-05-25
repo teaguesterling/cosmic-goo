@@ -67,6 +67,24 @@ setup() {
     echo "$output" | jq -e 'type == "array"' >/dev/null
 }
 
+@test "real plugins: enumerate=false sources are skipped in bulk completion" {
+    # `open` accepts inode/*, emitted only by the files source, which is
+    # enumerate=false. So bare-positional completion must NOT bulk-list files.
+    run "$GOO" __complete verb-subject-items open </dev/null
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "real plugins: enumerate=false source still resolves on demand" {
+    # repos is non-enumerable, but :repo: must still resolve. Point the repo
+    # search at this checkout's parent (setup() overrides HOME, so the default
+    # ~/Projects root wouldn't find anything).
+    export GOO_GIT_ROOTS="$(dirname "$REPO_ROOT")"
+    run "$GOO" git-status ":repo:cosmic-goo" </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "##" ]]
+}
+
 @test "real plugins: screenshots/OCR/QR verbs are present" {
     local verbs
     verbs=$("$GOO" __complete verbs </dev/null)

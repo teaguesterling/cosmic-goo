@@ -11,6 +11,7 @@ name = "repos"
 prefix = "repo"
 icon = "folder-git"
 emits = "application/vnd.git.repo"
+enumerate = false   # many repos; reach via :repo: on demand
 # Discover repos under GOO_GIT_ROOTS (default ~/Projects ~/.dotfiles). -L
 # follows the common ~/Projects -> /mnt/... symlink. .path is the worktree.
 list_cmd = """find -L ${GOO_GIT_ROOTS:-$HOME/Projects $HOME/.dotfiles} -maxdepth 2 -type d -name .git 2>/dev/null \\

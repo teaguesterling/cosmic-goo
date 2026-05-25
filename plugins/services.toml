@@ -11,6 +11,7 @@ name = "services"
 prefix = "svc"
 icon = "applications-system"
 emits = "application/vnd.systemd.unit"
+enumerate = false   # many units; reach via :svc: on demand
 list_cmd = """systemctl --user list-units --type=service --no-legend --output=json 2>/dev/null \\
   | jq '[.[] | {id: .unit, title: (.description // .unit), subtitle: .active}]'"""
 

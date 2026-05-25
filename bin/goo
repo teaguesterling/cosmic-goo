@@ -373,7 +373,7 @@ cmd_complete() {
                         [ -z "$list_cmd" ] && continue
                         bash -c "$list_cmd" 2>/dev/null | jq -r '.[]?.id // empty' 2>/dev/null
                     fi
-                done < <(jq -c '.sources[]' <<<"$registry")
+                done < <(jq -c '.sources[] | select(.enumerate != false)' <<<"$registry")
             done <<<"$accepts"
             ;;
         source-items)
@@ -410,19 +410,22 @@ _compose_subject_candidates() {
     [ -n "$sel" ]  && printf ':sel:\tselection: %s\n' "$sel"
     [ -n "$clip" ] && printf ':clip:\tclipboard: %s\n' "$clip"
     # Enumerable sources with a prefix: list their items as :prefix:id.
+    # Sources with `enumerate = false` are skipped here (too slow or too noisy
+    # to bulk-list — e.g. bluetooth's timeout, the files flood, 750 clipboard
+    # entries); they stay reachable on demand via :prefix:query.
     local source prefix name list_cmd
     while IFS= read -r source; do
         prefix=$(jq -r '.prefix // empty' <<<"$source")
         name=$(jq -r '.name' <<<"$source")
         [ -z "$prefix" ] && continue
-        # Skip the text capture sources (covered by :sel:/:clip: above).
-        case "$name" in selection|clipboard) continue ;; esac
         list_cmd=$(jq -r '.list_cmd // empty' <<<"$source")
         [ -z "$list_cmd" ] && continue
         bash -c "$list_cmd" 2>/dev/null | jq -r --arg p "$prefix" --arg s "$name" '
             .[]? | ":\($p):\(.id)\t\(.title // .id) (\($s))"
         ' 2>/dev/null
-    done < <(jq -c '.sources[]' <<<"$registry")
+    done < <(jq -c '.sources[]
+        | select(.enumerate != false)
+        | select(.name != "selection" and .name != "clipboard")' <<<"$registry")
 }
 
 cmd_compose() {
