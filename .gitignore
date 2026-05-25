@@ -31,3 +31,6 @@ Cargo.lock
 
 # Runtime state (XDG_RUNTIME_DIR mirror, just in case)
 /run/
+
+# Session handoff log (local; resume notes for an assistant session)
+SESSION-LOG.md
