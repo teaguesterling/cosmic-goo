@@ -17,7 +17,12 @@ setup() {
     declare -F selection_clipboard >/dev/null
     declare -F selection_clipboard_mimes >/dev/null
     declare -F selection_clipboard_as >/dev/null
-    declare -F focused_app >/dev/null
+}
+
+@test "selection.sh has no cos-cli / COSMIC dependency (portable core)" {
+    # The engine must stay compositor-agnostic; the focused-window capability
+    # lives in the apps plugin (implicit source), not here.
+    ! grep -qi "cos-cli\|COS_CLI\|focused_app" "$REPO_ROOT/lib/selection.sh"
 }
 
 @test "selection_primary returns 0 even with empty PATH" {
@@ -33,24 +38,4 @@ setup() {
 @test "selection_clipboard_mimes returns 0 even with empty PATH" {
     PATH="$BATS_TEST_TMPDIR/empty" run selection_clipboard_mimes
     [ "$status" -eq 0 ]
-}
-
-@test "focused_app errors clearly when COS_CLI cannot be resolved" {
-    COS_CLI="" PATH="$BATS_TEST_TMPDIR/empty" HOME="$BATS_TEST_TMPDIR" \
-        run focused_app
-    [ "$status" -ne 0 ]
-    [[ "$output" =~ "cos-cli not found" ]]
-}
-
-@test "focused_app emits JSON when cos-cli is available" {
-    if [ -z "$COS_CLI" ] && ! command -v cos-cli >/dev/null 2>&1 \
-        && [ ! -x "$HOME/.cargo/bin/cos-cli" ]; then
-        skip "cos-cli not installed in test environment"
-    fi
-    run focused_app
-    [ "$status" -eq 0 ]
-    # Output may be empty (no focused window) or one or more JSON objects.
-    if [ -n "$output" ]; then
-        echo "$output" | jq -e '.app_id' >/dev/null
-    fi
 }

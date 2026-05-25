@@ -158,14 +158,30 @@ resolve_subject() {
             return 0
         fi
     fi
-    # Non-text accepts: try focused app.
-    local app
-    app=$(focused_app 2>/dev/null | head -n 1)
-    if [ -n "$app" ]; then
-        printf '%s\n' "$app" | jq -c '. + {type:"application/vnd.cos-cli.app", id:.app_id, metadata:.}'
-        return 0
-    fi
-    die "no subject provided and no implicit subject available (stdin/selection/clipboard/focused-app all empty)"
+    # Non-text accepts: consult implicit=true sources emitting an accepted type
+    # (e.g. the cosmic 'focused' app source) and take their first item. This is
+    # the pluggable replacement for the old core-lib focused_app — the engine
+    # has no cos-cli reference; the capability lives in a plugin.
+    local registry pattern source emits litem list_cmd
+    registry=$(plugin_load_all)
+    while IFS= read -r pattern; do
+        [ -z "$pattern" ] && continue
+        while IFS= read -r source; do
+            emits=$(jq -r '.emits // empty' <<<"$source")
+            [ -z "$emits" ] && continue
+            if mime_matches "$pattern" "$emits"; then
+                list_cmd=$(jq -r '.list_cmd // empty' <<<"$source")
+                [ -z "$list_cmd" ] && continue
+                litem=$(bash -c "$list_cmd" 2>/dev/null \
+                    | jq -c --arg t "$emits" '.[0] | select(. != null) | . + {type: $t}' 2>/dev/null)
+                if [ -n "$litem" ]; then
+                    printf '%s\n' "$litem"
+                    return 0
+                fi
+            fi
+        done < <(jq -c '.sources[] | select(.implicit == true)' <<<"$registry")
+    done <<<"$accepts"
+    die "no subject provided and no implicit subject available (stdin/selection/clipboard/implicit-source all empty)"
 }
 
 # ---------------- subcommand: plugins ----------------

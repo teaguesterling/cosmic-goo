@@ -16,6 +16,19 @@ emits = "application/vnd.cos-cli.app"
 # cos-cli to /usr/bin or rely on the user's PATH instead.
 list_cmd = "$HOME/.cargo/bin/cos-cli info --json | jq '[.apps[] | {id: .app_id, title: .title, subtitle: .app_id, metadata: .}]'"
 
+# The focused app, as an IMPLICIT subject: when a handle verb is run with no
+# positional (e.g. a hotkey-bound `goo maximize`), the engine consults
+# implicit=true sources emitting an accepted type and takes the first item.
+# This is where the old core-lib `focused_app` moved to — keeping cos-cli out
+# of the portable engine. enumerate=false so it doesn't duplicate the `apps`
+# source in the compose subject list.
+[[sources]]
+name = "focused"
+emits = "application/vnd.cos-cli.app"
+implicit = true
+enumerate = false
+list_cmd = "$HOME/.cargo/bin/cos-cli info --json | jq '[.apps[] | select(.state[]? == \"activated\") | {id: .app_id, title: .title, subtitle: .app_id, metadata: .}] | .[0:1]'"
+
 [[verbs]]
 name = "activate"
 description = "Bring an app to focus"
