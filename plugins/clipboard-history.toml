@@ -1,0 +1,57 @@
+name = "clipboard-history"
+description = "Clipboard history via cliphist — paste back, delete, wipe"
+
+# SETUP (required for any history to exist):
+#   1. cliphist captures via wl-paste --watch, which needs the wlr-data-control
+#      protocol. On COSMIC that requires COSMIC_DATA_CONTROL_ENABLED=1 in the
+#      session environment.
+#   2. A store daemon must run in your session autostart:
+#        wl-paste --watch cliphist store
+#   Until both are in place, `cliphist list` is empty and this source yields
+#   no items (gracefully — no error leaks into the picker).
+
+[[types]]
+name = "application/vnd.cliphist.entry"
+display = "clipboard history entry"
+kind = "handle"
+
+[[sources]]
+name = "clipboard-history"
+prefix = "hist"
+icon = "edit-paste"
+emits = "application/vnd.cliphist.entry"
+# `grep` keeps only well-formed "<id>\t<preview>" rows, so the "please store
+# something first" message (emitted on an empty db) never reaches jq.
+list_cmd = """cliphist list 2>/dev/null \\
+  | grep -P '^[0-9]+\\t' \\
+  | jq -Rsc 'split("\\n")[:-1] | map(
+      (split("\\t")) as $f |
+      {id: $f[0], title: ($f[1:] | join("\\t")), text: ($f[1:] | join("\\t")), metadata: {line: .}}
+    )'"""
+
+[[verbs]]
+name = "clip-paste"
+description = "Copy a history entry back onto the clipboard"
+accepts = ["application/vnd.cliphist.entry"]
+default_for = "application/vnd.cliphist.entry"
+cmd = "cliphist decode {subject.id|q} | wl-copy"
+
+[[verbs]]
+name = "clip-show"
+description = "Print a history entry to stdout"
+accepts = ["application/vnd.cliphist.entry"]
+cmd = "cliphist decode {subject.id|q}"
+
+[[verbs]]
+name = "clip-delete"
+description = "Delete a history entry"
+accepts = ["application/vnd.cliphist.entry"]
+cmd = "printf '%s' {subject.metadata.line|q} | cliphist delete"
+confirm = true
+
+[[verbs]]
+name = "clip-wipe"
+description = "Wipe all clipboard history"
+accepts = []
+cmd = "cliphist wipe"
+confirm = true

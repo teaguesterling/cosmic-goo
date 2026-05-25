@@ -53,9 +53,31 @@ setup() {
     local sources
     sources=$("$GOO" __complete sources </dev/null)
     for s in selection clipboard apps workspaces files tmux \
-             sinks services repos bluetooth connections; do
+             sinks services repos bluetooth connections clipboard-history; do
         echo "$sources" | grep -qx "$s" || { echo "missing source: $s" >&2; return 1; }
     done
+}
+
+@test "real plugins: clipboard-history source is graceful when empty/unset" {
+    # cliphist may have no store daemon (esp. on COSMIC without
+    # COSMIC_DATA_CONTROL_ENABLED); the source must yield valid JSON, never
+    # the 'please store something first' error.
+    run "$GOO" list clipboard-history </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e 'type == "array"' >/dev/null
+}
+
+@test "real plugins: clipboard-history verbs are scoped to the vendor type" {
+    # clip-paste must NOT be offered for a plain-text subject.
+    run "$GOO" __complete verb-accepts-handle clip-paste </dev/null
+    [ "$output" = "yes" ]
+    for v in clip-paste clip-show clip-delete clip-wipe; do
+        "$GOO" __complete verbs </dev/null | grep -qx "$v" \
+            || { echo "missing clip verb: $v" >&2; return 1; }
+    done
+    # clip-delete / clip-wipe are destructive -> confirm.
+    "$GOO" describe clip-delete </dev/null | grep -q "confirm: true"
+    "$GOO" describe clip-wipe </dev/null | grep -q "confirm: true"
 }
 
 @test "real plugins: calc evaluates an expression" {
