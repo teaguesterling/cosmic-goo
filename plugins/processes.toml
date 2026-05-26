@@ -1,0 +1,29 @@
+name = "processes"
+tier = "core"
+description = "Running processes — inspect by pid (ps)"
+
+[[types]]
+name = "application/vnd.process"
+display = "process"
+kind = "handle"
+
+[[sources]]
+name = "processes"
+prefix = "ps"
+emits = "application/vnd.process"
+enumerate = false   # the full process table is noisy; reach via :ps:<query> on demand
+# pid + comm as a JSON array of {id, title}.
+list_cmd = '''ps -eo pid=,comm= | jq -Rsc '[splits("\n")|select(length>0)|capture("\\s*(?<id>[0-9]+)\\s+(?<title>.+)")]' '''
+
+[[verbs]]
+name = "proc-info"
+description = "Show pid/ppid/user/cpu/mem/command for a process"
+accepts = ["application/vnd.process"]
+default_for = "application/vnd.process"
+cmd = "ps -p {subject.id|q} -o pid,ppid,user,%cpu,%mem,comm"
+
+[[verbs]]
+name = "proc-children"
+description = "List a process's direct children"
+accepts = ["application/vnd.process"]
+cmd = "ps --ppid {subject.id|q} -o pid,comm --no-headers || echo '(no children)'"

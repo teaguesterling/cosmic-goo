@@ -44,3 +44,30 @@ name = "gh-pr-list"
 description = "List open GitHub PRs"
 accepts = ["application/vnd.git.repo"]
 cmd = "cd {subject.metadata.path|q} && gh pr list"
+
+# ---- git branches (a second handle type in this plugin) ----
+
+[[types]]
+name = "application/vnd.git.branch"
+display = "git branch"
+kind = "handle"
+
+[[sources]]
+name = "branches"
+prefix = "br"
+emits = "application/vnd.git.branch"
+enumerate = false   # branches of the CWD repo; reach via :br:<name> on demand
+list_cmd = '''git branch --format='%(refname:short)' | jq -Rsc '[splits("\n")|select(length>0)|{id:.,title:.}]' '''
+
+[[verbs]]
+name = "branch-log"
+description = "Recent commits on a branch (CWD repo)"
+accepts = ["application/vnd.git.branch"]
+default_for = "application/vnd.git.branch"
+cmd = "git log --oneline -n 15 {subject.id|q}"
+
+[[verbs]]
+name = "branch-show"
+description = "Show the tip commit of a branch (CWD repo)"
+accepts = ["application/vnd.git.branch"]
+cmd = "git show --stat --oneline {subject.id|q} | head -n 20"
