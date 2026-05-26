@@ -58,6 +58,83 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     true
 }
 
+use serde_json::Value;
+use std::collections::HashSet;
+
+/// True iff `sub` is a **subtype** of `sup` — a *superset* of `mime_matches`
+/// (the type-system lattice). `mime_matches` stays the pure glob primitive; this
+/// adds:
+///   - equality, and glob where `sup` is the accept-pattern (`text/*`, `*/json`);
+///   - **structured-syntax suffix**, same top-level (RFC 6839):
+///     `application/vnd.api+json` <: `application/json`;
+///   - **declared transitive `is_a`** edges from the registry's `[[types]]`
+///     (a DAG — `text/csv is_a = ["text/plain", …]`).
+///
+/// Additive: with no `+suffix` and no declared `is_a`, this is exactly
+/// `mime_matches(sup, sub)` — so wiring it into accept-matching never *removes*
+/// a match.
+pub fn is_subtype(sub: &str, sup: &str, reg: &Value) -> bool {
+    let mut seen = HashSet::new();
+    is_subtype_rec(sub, sup, reg, &mut seen)
+}
+
+fn is_subtype_rec(sub: &str, sup: &str, reg: &Value, seen: &mut HashSet<String>) -> bool {
+    if sub == sup {
+        return true;
+    }
+    // Glob: `sup` is the accept-pattern, `sub` the concrete type.
+    if mime_matches(sup, sub) {
+        return true;
+    }
+    // Guard cycles / re-exploration (is_a is a DAG; the visited set keeps it linear).
+    if !seen.insert(sub.to_string()) {
+        return false;
+    }
+    // Structured-syntax suffix (same top-level): `T/x+suf` <: `T/suf`.
+    if let Some(parent) = suffix_supertype(sub) {
+        if is_subtype_rec(&parent, sup, reg, seen) {
+            return true;
+        }
+    }
+    // Declared `is_a` supertypes.
+    for parent in declared_supertypes(sub, reg) {
+        if is_subtype_rec(&parent, sup, reg, seen) {
+            return true;
+        }
+    }
+    false
+}
+
+/// `T/<name>+<suffix>` → `T/<suffix>` (RFC 6839, **same top-level only**; a
+/// cross-top-level supertype like `application/xml` for `image/svg+xml` must be
+/// declared explicitly via `is_a`). Params after `;` are dropped. `None` if the
+/// subtype carries no `+suffix`.
+fn suffix_supertype(mime: &str) -> Option<String> {
+    let (top, rest) = mime.split_once('/')?;
+    let rest = rest.split(';').next().unwrap_or(rest);
+    let suffix = rest.rsplit_once('+')?.1;
+    if suffix.is_empty() {
+        None
+    } else {
+        Some(format!("{top}/{suffix}"))
+    }
+}
+
+/// The supertypes a type declares via `[[types]] is_a = [...]` in the registry.
+fn declared_supertypes(sub: &str, reg: &Value) -> Vec<String> {
+    reg.get("types")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter(|t| t.get("name").and_then(Value::as_str) == Some(sub))
+                .filter_map(|t| t.get("is_a").and_then(Value::as_array))
+                .flatten()
+                .filter_map(|p| p.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -193,6 +270,56 @@ mod tests {
     #[test]
     fn exact_with_no_wildcard_is_strict() {
         assert!(!mime_matches("text/pla", "text/plain"));
+    }
+
+    // ---- is_subtype (the type lattice; a superset of mime_matches) ----
+    use super::is_subtype;
+    use serde_json::json;
+
+    #[test]
+    fn subtype_exact_and_glob() {
+        let r = json!({});
+        assert!(is_subtype("text/plain", "text/plain", &r));
+        assert!(is_subtype("text/csv", "text/*", &r));
+        assert!(is_subtype("application/json", "*/json", &r));
+        assert!(!is_subtype("application/json", "text/*", &r));
+        assert!(!is_subtype("", "text/plain", &r));
+    }
+
+    #[test]
+    fn subtype_structured_suffix_same_top_level() {
+        let r = json!({});
+        assert!(is_subtype("application/vnd.api+json", "application/json", &r));
+        assert!(is_subtype("application/vnd.git+json;charset=utf-8", "application/json", &r));
+        // cross-top-level is NOT implied — must be declared explicitly.
+        assert!(!is_subtype("image/svg+xml", "application/xml", &r));
+        // the structured supertype is not itself a glob pattern.
+        assert!(!is_subtype("application/json", "application/*+json", &r));
+    }
+
+    #[test]
+    fn subtype_declared_is_a_transitive_dag() {
+        let r = json!({ "types": [
+            { "name": "application/vnd.git.repo", "is_a": ["inode/directory"] },
+            { "name": "text/csv", "is_a": ["text/plain", "application/vnd.tabular"] },
+            { "name": "text/tsv", "is_a": ["text/csv"] }
+        ]});
+        assert!(is_subtype("application/vnd.git.repo", "inode/directory", &r)); // direct edge
+        assert!(is_subtype("application/vnd.git.repo", "inode/*", &r));         // edge then glob
+        assert!(is_subtype("text/csv", "text/plain", &r));
+        assert!(is_subtype("text/csv", "application/vnd.tabular", &r));         // second parent (DAG)
+        assert!(is_subtype("text/tsv", "text/plain", &r));                     // transitive tsv→csv→plain
+        assert!(!is_subtype("text/csv", "application/json", &r));               // no path
+    }
+
+    #[test]
+    fn subtype_cycle_guard_terminates() {
+        let r = json!({ "types": [
+            { "name": "a/x", "is_a": ["a/y"] },
+            { "name": "a/y", "is_a": ["a/x"] }
+        ]});
+        assert!(!is_subtype("a/x", "a/z", &r)); // must terminate, not match
+        assert!(is_subtype("a/x", "a/y", &r));  // the real edge still resolves
     }
 
     // ---- detection (mirror tests/types.bats mime_detect_*) ----
