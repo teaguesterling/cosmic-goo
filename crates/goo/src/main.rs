@@ -562,23 +562,271 @@ fn print_ids(items_json: &str) {
     }
 }
 
-// ---------------- subcommand: compose (minimal) ----------------
+// ---------------- subcommand: compose (picker-driven) ----------------
 
+/// Port of `cmd_compose` in `bin/goo`: pick subject → verb → object → adverbs →
+/// confirm → exec, each step via `dialog_pick`/`dialog_confirm`. An empty pick
+/// (or confirm=no) cancels with 130.
 fn cmd_compose() -> i32 {
-    // Minimal: honour the scripted GOO_COMPOSE_ANSWERS protocol enough for the
-    // cancel path (an empty first pick = cancel). The full picker-driven dialog
-    // stays in bash / a future goo-compose bin.
-    let answers = std::env::var("GOO_COMPOSE_ANSWERS").ok();
-    let first_pick = answers
-        .as_deref()
-        .and_then(|f| std::fs::read_to_string(f).ok())
-        .and_then(|s| s.lines().next().map(str::to_string))
-        .unwrap_or_default();
-    if first_pick.trim().is_empty() {
-        eprintln!("compose: cancelled");
-        return 130;
+    let reg = registry::load_all();
+
+    // 1. Subject.
+    let subj_cands = compose_subject_candidates(&reg);
+    let subj_addr = match dialog_pick("Subject", &subj_cands) {
+        Some(line) => line.split('\t').next().unwrap_or("").to_string(),
+        None => return cancel(),
+    };
+    let subject = match address::resolve(&subj_addr, &reg, None) {
+        Ok(s) => s,
+        Err(_) => return die(format!("compose: could not resolve subject '{subj_addr}'")),
+    };
+    let subject_type = subject.get("type").and_then(|t| t.as_str()).unwrap_or("text/plain").to_string();
+
+    // 2. Verb (filtered to those accepting the subject's type).
+    let mut verb_names: Vec<String> = verbs::for_subject(&reg, &subject)
+        .iter()
+        .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
+        .collect();
+    verb_names.sort();
+    verb_names.dedup();
+    if verb_names.is_empty() {
+        return die(format!("compose: no verbs accept type {subject_type}"));
     }
-    die("compose: interactive picker not supported in the Rust bin yet (use bin/goo)")
+    let verb_name = match dialog_pick(&format!("Verb [{subject_type}]"), &verb_names.join("\n")) {
+        Some(v) => v,
+        None => return cancel(),
+    };
+    let verb = match verbs::lookup(&reg, &verb_name, None) {
+        Some(v) => v,
+        None => return die(format!("compose: unknown verb '{verb_name}'")),
+    };
+
+    // 3. Object, if the verb takes one (drawn from the addressable candidates).
+    let mut object = Value::Null;
+    if let Some(object_type) = verb.get("object_type").and_then(|t| t.as_str()).filter(|s| !s.is_empty()) {
+        let obj_cands: String = subj_cands
+            .lines()
+            .filter(|l| l.contains(':'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let obj_addr = match dialog_pick(&format!("Object [{object_type}]"), &obj_cands) {
+            Some(line) => line.split('\t').next().unwrap_or("").to_string(),
+            None => return cancel(),
+        };
+        object = match address::resolve(&obj_addr, &reg, None) {
+            Ok(o) => o,
+            Err(_) => return die("compose: could not resolve object"),
+        };
+    }
+
+    // 4. Adverbs the verb opts into.
+    let mut adverbs = Map::new();
+    if let Some(uses) = verb.get("uses_adverbs").and_then(|u| u.as_array()) {
+        for aname_v in uses {
+            let aname = match aname_v.as_str() {
+                Some(a) => a,
+                None => continue,
+            };
+            let adverb = reg
+                .get("adverbs")
+                .and_then(|a| a.as_array())
+                .and_then(|arr| arr.iter().find(|a| a.get("name").and_then(|n| n.as_str()) == Some(aname)));
+            let adverb = match adverb {
+                Some(a) => a,
+                None => continue,
+            };
+            let kind = adverb.get("kind").and_then(|k| k.as_str()).unwrap_or("selector");
+            let avalue = if kind == "selector" {
+                let vals: Vec<String> = adverb
+                    .get("values")
+                    .and_then(|v| v.as_object())
+                    .map(|o| o.keys().cloned().collect())
+                    .unwrap_or_default();
+                match dialog_pick(&format!("--{aname}"), &vals.join("\n")) {
+                    Some(v) => v,
+                    None => continue,
+                }
+            } else {
+                match dialog_pick(&format!("--{aname} (type a value)"), "") {
+                    Some(v) => v,
+                    None => continue,
+                }
+            };
+            if !avalue.is_empty() {
+                adverbs.insert(aname.to_string(), json!(avalue));
+            }
+        }
+    }
+    let adverbs = Value::Object(adverbs);
+
+    // 5. Preview + confirm.
+    let mut preview = format!("goo {verb_name} {subj_addr}");
+    if !object.is_null() {
+        preview += " <object>";
+    }
+    let pairs: Vec<String> = adverbs
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| format!("--{k}={}", v.as_str().unwrap_or("")))
+        .collect();
+    if !pairs.is_empty() {
+        preview += &format!(" {}", pairs.join(" "));
+    }
+    if !dialog_confirm(&format!("Run: {preview} ?")) {
+        return cancel();
+    }
+
+    // 6. Execute through the same path the CLI uses.
+    exec_verb(&reg, &verb, &subject, &object, &adverbs)
+}
+
+fn cancel() -> i32 {
+    eprintln!("compose: cancelled");
+    130
+}
+
+/// Emit subject candidates as `address<TAB>label` lines (implicit text first,
+/// then enumerable prefixed sources). Port of `_compose_subject_candidates`.
+fn compose_subject_candidates(reg: &Value) -> String {
+    let mut out = String::new();
+    let trunc = |s: String| s.chars().take(60).collect::<String>();
+    let sel = trunc(selection::primary());
+    let clip = trunc(selection::clipboard());
+    if !sel.is_empty() {
+        out += &format!(":sel:\tselection: {sel}\n");
+    }
+    if !clip.is_empty() {
+        out += &format!(":clip:\tclipboard: {clip}\n");
+    }
+    if let Some(sources) = reg.get("sources").and_then(|s| s.as_array()) {
+        for source in sources {
+            if source.get("enumerate") == Some(&json!(false)) {
+                continue;
+            }
+            let name = source.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if name == "selection" || name == "clipboard" {
+                continue;
+            }
+            let prefix = match source.get("prefix").and_then(|p| p.as_str()).filter(|s| !s.is_empty()) {
+                Some(p) => p,
+                None => continue,
+            };
+            let lc = match source.get("list_cmd").and_then(|c| c.as_str()).filter(|s| !s.is_empty()) {
+                Some(l) => l,
+                None => continue,
+            };
+            let items: Vec<Value> = serde_json::from_str(bash_capture(lc).trim()).unwrap_or_default();
+            for it in items {
+                let id = it.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                let title = it.get("title").and_then(|t| t.as_str()).unwrap_or(id);
+                out += &format!(":{prefix}:{id}\t{title} ({name})\n");
+            }
+        }
+    }
+    out
+}
+
+/// Pick one of `candidates` (newline-separated) with `prompt`. Returns `None` on
+/// cancel/empty. Port of `dialog_pick`: in scripted mode (`GOO_COMPOSE_ANSWERS`
+/// names a file) it consumes and pops that file's first line; otherwise it shells
+/// to a dmenu-protocol picker (GOO_PICKER or first available).
+fn dialog_pick(prompt: &str, candidates: &str) -> Option<String> {
+    if let Ok(file) = std::env::var("GOO_COMPOSE_ANSWERS") {
+        if std::path::Path::new(&file).is_file() {
+            let content = std::fs::read_to_string(&file).unwrap_or_default();
+            let mut lines: Vec<&str> = content.lines().collect();
+            let ans = if lines.is_empty() { "" } else { lines.remove(0) };
+            let rest = lines.join("\n");
+            let rest = if rest.is_empty() { String::new() } else { format!("{rest}\n") };
+            let _ = std::fs::write(&file, rest);
+            return if ans.is_empty() { None } else { Some(ans.to_string()) };
+        }
+    }
+    dialog_pick_backend(prompt, candidates)
+}
+
+/// yes/no via the picker. Port of `dialog_confirm`.
+fn dialog_confirm(prompt: &str) -> bool {
+    matches!(dialog_pick(prompt, "yes\nno").as_deref(), Some("yes"))
+}
+
+fn is_on_path(cmd: &str) -> bool {
+    std::env::var("PATH")
+        .map(|path| path.split(':').any(|dir| std::path::Path::new(dir).join(cmd).is_file()))
+        .unwrap_or(false)
+}
+
+/// Run the chosen dmenu-protocol picker, writing `candidates` to its stdin and
+/// returning the selected line (trimmed of its trailing newline). `zenity` takes
+/// rows as argv instead of stdin.
+fn dialog_pick_backend(prompt: &str, candidates: &str) -> Option<String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let backend = std::env::var("GOO_PICKER").ok().filter(|s| !s.is_empty()).or_else(|| {
+        ["fuzzel", "rofi", "wofi", "fzf", "zenity"]
+            .iter()
+            .find(|c| is_on_path(c))
+            .map(|s| s.to_string())
+    });
+    let backend = match backend {
+        Some(b) => b,
+        None => {
+            eprintln!("goo compose: no picker found (install fuzzel/rofi/wofi/fzf/zenity or set GOO_PICKER)");
+            return None;
+        }
+    };
+
+    let mut cmd = Command::new(&backend);
+    match backend.as_str() {
+        "fuzzel" => {
+            cmd.args(["--dmenu", "--prompt", &format!("{prompt} ❯ ")]);
+        }
+        "rofi" => {
+            cmd.args(["-dmenu", "-i", "-p", prompt]);
+        }
+        "wofi" => {
+            cmd.args(["--dmenu", "--insensitive", "--prompt", prompt]);
+        }
+        "fzf" => {
+            cmd.args([&format!("--prompt={prompt} ❯ "), "--height=40%", "--reverse"]);
+        }
+        "zenity" => {
+            // Rows are argv, not stdin; the whole line is one column.
+            let rows: Vec<&str> = candidates.lines().filter(|l| !l.is_empty()).collect();
+            if rows.is_empty() {
+                return None;
+            }
+            cmd.args(["--list", "--title=goo", &format!("--text={prompt}"), &format!("--column={prompt}"), "--hide-header"]);
+            cmd.args(&rows);
+            let out = cmd.stderr(Stdio::null()).output().ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            let sel = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
+            return if sel.is_empty() { None } else { Some(sel) };
+        }
+        other => {
+            eprintln!("goo compose: unknown picker '{other}'");
+            return None;
+        }
+    }
+
+    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(candidates.as_bytes());
+    }
+    let out = child.wait_with_output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sel = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
+    if sel.is_empty() {
+        None
+    } else {
+        Some(sel)
+    }
 }
 
 // ---------------- aliases ----------------
