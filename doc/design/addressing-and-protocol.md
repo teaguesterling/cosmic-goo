@@ -58,13 +58,18 @@ append `?…`.
 A **domain** is a named resolver = *name · type(s) it yields · capabilities*.
 Capabilities, not kinds — a domain may have either or both:
 
-- **value**: `<rest>` *is* the identity/locator (`url`, `text`, `clip`; `file`
-  by path; `app` by exact id). Deterministic.
-- **search**: `<rest>` is a query over `list_cmd` output (`app`, `ws`, `repo`;
-  `file` fuzzy). May match 0/1/many.
+- **value**: `<path>` *is* the identity/locator — an **exact** id match (`url`,
+  `text`, `clip`; `file` by path; `app` by exact executable id). Deterministic
+  given state; may still yield **several** entities that share that exact id
+  (e.g. two `firefox` windows) — exact-vs-fuzzy, not one-vs-many.
+- **search**: `<path>` is a **fuzzy** query over `list_cmd` output, written
+  **explicitly** as the `;q=` matrix param (`goo://app/;q=firefox`). May match
+  0/1/many ("Firefox", "firefox-config-editor", …).
 
-Resolution is **value-first, search-fallback**: an exact id wins, else fuzzy.
-(`+` sigil forces value-only; `:` allows search.)
+Resolution is **strict** — the syntax says which you mean, no implicit fuzzy
+fallback: a bare path (`goo://app/firefox`) is the **exact value**; search is
+**only** the explicit `;q=` form. (The human sigils mirror this: `:app/firefox` →
+value, `:app:firefox` → `;q=` search — see Sigils.)
 
 Domains are ordinary registry entities — `[[domains]]` with `emits`, optional
 `list_cmd` (⇒ search) and value-construction rule (⇒ value). **No reserved
@@ -85,20 +90,28 @@ Sigils are a **terminal convenience** — shorthands a person types instead of a
 full `goo://` URI. Machines (`goo-compose`, the launcher, any IPC) emit the
 canonical `goo://` form directly; they don't go through sigils.
 
-> **NOTE — under review (TBD).** The built-in sigil *selection* below predates the
-> domain model and is being rethought. Direction: sigils are primarily a
-> **user-defined alias tool** (`[[sigils]]`); the built-in set should be minimal.
-> Value-first/search-fallback collapses value-vs-query in most cases, so the only
-> distinction that genuinely needs a marker is *forcing* search; `^` is just a
-> clipboard convenience; un-domained input routes through `infer`. A separate
-> design pass will settle the final set — see the sigil-model discussion.
+**Design rule:** every sigil's separators come from the **shell-unquoted set**
+(`/ : + ^` …) — never `; ? & | < > * ~`-at-start — so addresses are typed raw,
+no quoting, on the CLI and in the launcher.
+
+The built-in set is deliberately tiny (three marks); everything else is a
+**user-defined `[[sigils]]` alias** — e.g. `@` is conventionally left for the
+user (`@mine` → `goo://my-long-domain/favorite-thing`).
 
 | you type | means | canonical |
 |---|---|---|
-| `:domain:query` | search a domain | `goo://domain/;q=query` |
-| `+domain:id` | a determined member | `goo://domain/id` |
-| `^` | clipboard (built-in) | `goo://clip/` |
-| `./x`, `https://x` | native shapes → `infer` | `goo://file/…`, `goo://url/https://x` |
+| `foo` · `./x` · `~/x` · `https://x` | **infer** — bare; shape-dispatch (`./ ~/ /`→file, `scheme://`→url, else text); weighted choices on ambiguity | `goo://text/foo` · `goo://file/…` · `goo://url/https://x` |
+| `+foo` | **literal text**, no inference | `goo://text/foo` |
+| `:dom/path` | **domained value** — exact id (first segment is the domain; `/`=value) | `goo://dom/path` |
+| `:dom:query` | **domained search** — fuzzy (`:` after the domain = the `;q=` query) | `goo://dom/;q=query` |
+| `^` · `^name` | **clipboard** / named buffer (built-in; user-overridable alias) | `goo://clip/` · `goo://clip/name` |
+| *your chars* | **user alias** (`[[sigils]]`), e.g. `@` | their `expands` |
+
+The first separator after the domain decides: `:dom/a:b` → value `goo://dom/a:b`
+(later `:` are path); `:dom:a/b` → search `goo://dom/;q=a/b`. `:dom:query` keeps
+today's "look it up" muscle memory unchanged; the `/` value form is the new
+capability. `goo+<scheme>:<value>` is **gone** — its schemes are now value
+domains (`+foo` = `goo://text/foo`, `^` = `goo://clip/`, `./x` = `goo://file/…`).
 
 ## The request layer → goo-protocol.md
 
