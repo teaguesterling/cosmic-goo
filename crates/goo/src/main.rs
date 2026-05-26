@@ -74,9 +74,77 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
                 new_args.extend_from_slice(&args[1..]);
                 return dispatch(&new_args, depth);
             }
+            // `GOO` (the doc's default verb): a leading explicit address — a
+            // goo:// URL, a sigil/native shape — with no verb means "resolve
+            // this subject and run its type's default_for verb". A bare word
+            // that isn't an address stays a verb lookup (→ "unknown verb").
+            // Rust-only extension beyond the bash reference; see goo-protocol.md.
+            if address::is_explicit(first, &reg) {
+                return cmd_goo(&reg, first, &args[1..]);
+            }
             cmd_verb(&reg, args)
         }
     }
+}
+
+/// The `GOO` default verb: resolve `addr` to a subject, look up its type's
+/// `default_for` verb, and run it (with any trailing `--adverbs` / object).
+/// No applicable default → a clean error (the CLI analog of the protocol's
+/// 415/300). Never guesses; only `default_for` verbs run this way.
+fn cmd_goo(reg: &Value, addr: &str, rest: &[String]) -> i32 {
+    let subject = match address::resolve(addr, reg, None) {
+        Ok(s) => s,
+        Err(e) => return die(e.replace("address: ", "")),
+    };
+    let type_ = subject.get("type").and_then(|t| t.as_str()).unwrap_or("text/plain");
+    let verb = match verbs::default_for(reg, type_) {
+        Some(v) => v,
+        None => return die(format!("no default verb for type '{type_}'")),
+    };
+    let (positionals, adverbs) = parse_args(rest);
+    let object_arg = positionals.first().cloned().unwrap_or_default();
+    let has_object_type = verb.get("object_type").and_then(|t| t.as_str()).filter(|s| !s.is_empty()).is_some();
+    let object = if !object_arg.is_empty() || has_object_type {
+        match verbs::resolve_object(reg, &verb, &object_arg, &subject) {
+            Ok(o) => o,
+            Err(e) => return die(e),
+        }
+    } else {
+        Value::Null
+    };
+    exec_verb(reg, &verb, &subject, &object, &adverbs)
+}
+
+/// Split a verb/GOO argument tail into positionals and an adverbs object:
+/// `--flag=val` / `--flag val` / `--flag` (=true) / bare positionals.
+fn parse_args(rest: &[String]) -> (Vec<String>, Value) {
+    let mut positionals: Vec<String> = Vec::new();
+    let mut adverbs = Map::new();
+    let mut i = 0;
+    while i < rest.len() {
+        let a = &rest[i];
+        if let Some(kv) = a.strip_prefix("--") {
+            if let Some((name, value)) = kv.split_once('=') {
+                adverbs.insert(name.to_string(), json!(value));
+                i += 1;
+            } else {
+                match rest.get(i + 1) {
+                    Some(v) if !v.starts_with("--") => {
+                        adverbs.insert(kv.to_string(), json!(v));
+                        i += 2;
+                    }
+                    _ => {
+                        adverbs.insert(kv.to_string(), json!(true));
+                        i += 1;
+                    }
+                }
+            }
+        } else {
+            positionals.push(a.clone());
+            i += 1;
+        }
+    }
+    (positionals, Value::Object(adverbs))
 }
 
 fn print_usage() {
@@ -877,36 +945,7 @@ fn cmd_verb(reg: &Value, args: &[String]) -> i32 {
     };
 
     // Parse remaining args: positionals + --flag[=val].
-    let mut positionals: Vec<String> = Vec::new();
-    let mut adverbs = Map::new();
-    let rest = &args[1..];
-    let mut i = 0;
-    while i < rest.len() {
-        let a = &rest[i];
-        if let Some(kv) = a.strip_prefix("--") {
-            if let Some((name, value)) = kv.split_once('=') {
-                adverbs.insert(name.to_string(), json!(value));
-                i += 1;
-            } else {
-                // --flag [value] : value unless missing or the next --flag.
-                let next = rest.get(i + 1);
-                match next {
-                    Some(v) if !v.starts_with("--") => {
-                        adverbs.insert(kv.to_string(), json!(v));
-                        i += 2;
-                    }
-                    _ => {
-                        adverbs.insert(kv.to_string(), json!(true));
-                        i += 1;
-                    }
-                }
-            }
-        } else {
-            positionals.push(a.clone());
-            i += 1;
-        }
-    }
-    let adverbs = Value::Object(adverbs);
+    let (positionals, adverbs) = parse_args(&args[1..]);
     let subject_arg = positionals.first().cloned().unwrap_or_default();
     let object_arg = positionals.get(1).cloned().unwrap_or_default();
 
