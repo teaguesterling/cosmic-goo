@@ -164,7 +164,7 @@ setup() {
     done
 }
 
-@test "real plugins: ^ sigil ships and maps to +clip:" {
+@test "real plugins: ^ clipboard sigil ships (discoverable in completion)" {
     run "$GOO" __complete sigils </dev/null
     [ "$status" -eq 0 ]
     echo "$output" | grep -qx '\^'

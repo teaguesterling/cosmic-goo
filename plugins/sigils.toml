@@ -2,20 +2,24 @@ name = "sigils"
 tier = "core"
 description = "Default addressing sigils. Override or add your own in ~/.config/cosmic-goo/plugins/."
 
-# A sigil is a single leading character that expands into a canonical-ish
-# address prefix. Resolution applies the expansion, then the core canonicalizer
-# (`:` -> cosmic-goo:, `+` -> cosmic-goo+) finishes the job.
+# A sigil is a single leading character that expands into a canonical goo://
+# address. Built-in structural sigils (handled by the engine, not declared here):
+#   :dom/path   -> goo://dom/path        (value, exact)
+#   :dom:query  -> goo://dom/;q=query     (search, fuzzy)
+#   +text       -> goo://text/text        (force literal text)
+#   ^ / ^name   -> goo://clip/ , goo://clip/name   (clipboard)
 #
-# The core sigils `:` (source path) and `+` (scheme handoff) are structural —
-# they are the URI forms themselves and are not declared here. Everything else
-# is customizable. `@` ships intentionally undefined; claim it for whatever you
-# reach for most, e.g.:
+# Everything else is yours. `@` ships intentionally undefined; claim it for
+# whatever you reach for most, e.g.:
 #
 #   [[sigils]]
 #   char = "@"
-#   expands = ":app:"      # then @firefox -> :app:firefox -> cosmic-goo:app:firefox
+#   expands = "goo://app/"     # then @firefox -> goo://app/firefox
+#
+# `^` is also listed below (matching its built-in expansion) so it shows up in
+# tab-completion / discovery.
 
 [[sigils]]
 char = "^"
-expands = "+clip:"
+expands = "goo://clip/"
 description = "clipboard (^ = current, ^name reserved for named buffers)"

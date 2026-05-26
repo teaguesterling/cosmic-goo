@@ -98,23 +98,25 @@ _addr_abspath() {
 # Expand a `:`-sigil tail into canonical: the first `/` (value path) or `:`
 # (`;q=` search) after the domain decides. `:dom` alone -> the domain default.
 _addr_colon_sigil() {
-    local rest=$1
+    local rest=$1 refine=""
+    # Split off ?refine first so it isn't swallowed by the domain/path split.
+    case "$rest" in *\?*) refine="?${rest#*\?}"; rest="${rest%%\?*}" ;; esac
     local before_slash="${rest%%/*}" before_colon="${rest%%:*}"
     local has_slash=0 has_colon=0
     [ "$before_slash" != "$rest" ] && has_slash=1
     [ "$before_colon" != "$rest" ] && has_colon=1
     if [ "$has_slash" = 1 ] && [ "$has_colon" = 1 ]; then
         if [ ${#before_slash} -lt ${#before_colon} ]; then
-            printf 'goo://%s/%s' "$before_slash" "${rest#*/}"
+            printf 'goo://%s/%s%s' "$before_slash" "${rest#*/}" "$refine"
         else
-            printf 'goo://%s/;q=%s' "$before_colon" "${rest#*:}"
+            printf 'goo://%s/;q=%s%s' "$before_colon" "${rest#*:}" "$refine"
         fi
     elif [ "$has_slash" = 1 ]; then
-        printf 'goo://%s/%s' "$before_slash" "${rest#*/}"
+        printf 'goo://%s/%s%s' "$before_slash" "${rest#*/}" "$refine"
     elif [ "$has_colon" = 1 ]; then
-        printf 'goo://%s/;q=%s' "$before_colon" "${rest#*:}"
+        printf 'goo://%s/;q=%s%s' "$before_colon" "${rest#*:}" "$refine"
     else
-        printf 'goo://%s/' "$rest"
+        printf 'goo://%s/%s' "$rest" "$refine"
     fi
 }
 

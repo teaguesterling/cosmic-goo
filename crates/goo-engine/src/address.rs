@@ -92,14 +92,19 @@ fn normalize(p: &str) -> String {
 /// Expand a `:`-sigil tail into canonical: the first `/` (→ value path) or `:`
 /// (→ `;q=` search) after the domain decides. `:dom` alone → the domain default.
 fn colon_sigil(rest: &str) -> String {
+    // Split off `?refine` first so it isn't swallowed by the domain/path split.
+    let (rest, refine) = match rest.split_once('?') {
+        Some((r, q)) => (r, format!("?{q}")),
+        None => (rest, String::new()),
+    };
     let slash = rest.find('/');
     let colon = rest.find(':');
     match (slash, colon) {
-        (Some(s), Some(c)) if s < c => format!("goo://{}/{}", &rest[..s], &rest[s + 1..]),
-        (Some(_), Some(c)) => format!("goo://{}/;q={}", &rest[..c], &rest[c + 1..]),
-        (Some(s), None) => format!("goo://{}/{}", &rest[..s], &rest[s + 1..]),
-        (None, Some(c)) => format!("goo://{}/;q={}", &rest[..c], &rest[c + 1..]),
-        (None, None) => format!("goo://{rest}/"),
+        (Some(s), Some(c)) if s < c => format!("goo://{}/{}{refine}", &rest[..s], &rest[s + 1..]),
+        (Some(_), Some(c)) => format!("goo://{}/;q={}{refine}", &rest[..c], &rest[c + 1..]),
+        (Some(s), None) => format!("goo://{}/{}{refine}", &rest[..s], &rest[s + 1..]),
+        (None, Some(c)) => format!("goo://{}/;q={}{refine}", &rest[..c], &rest[c + 1..]),
+        (None, None) => format!("goo://{rest}/{refine}"),
     }
 }
 
@@ -409,9 +414,11 @@ mod tests {
     #[test]
     fn resolve_refine_filters() {
         let r = things_reg();
-        // search with ?refine
+        // refine with no query (domain default + filter)
+        assert_eq!(resolve(":things?title=beta", &r, None).unwrap()["id"], "beta");
+        // refine on an explicit (empty) search
         assert_eq!(resolve(":things:?title=beta", &r, None).unwrap()["id"], "beta");
-        assert_eq!(resolve(":things:?title=*Alpha*", &r, None).unwrap()["id"], "alpha"); // * stripped
+        assert_eq!(resolve(":things?title=*Alpha*", &r, None).unwrap()["id"], "alpha"); // * stripped
         // unknown field excludes
         assert!(resolve(":things/alpha?foo=bar", &r, None).is_err());
     }
