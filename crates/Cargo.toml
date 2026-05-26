@@ -5,9 +5,9 @@
 # one slice at a time, each staying green against the same tests.
 #
 #   goo-engine  — registry / mime / address / template / verbs / dispatch (lib)
-#   goo         — thin CLI (bin)            [later slice]
+#   goo         — thin CLI (bin)            [slice 4 — the parity milestone]
 #   good        — warm daemon (bin)         [later slice]
 #   goo-compose — libcosmic dialog (bin)    [later slice]
 [workspace]
 resolver = "2"
-members = ["goo-engine"]
+members = ["goo-engine", "goo"]

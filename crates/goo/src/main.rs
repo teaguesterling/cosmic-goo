@@ -1,0 +1,782 @@
+//! `goo` — the cosmic-goo CLI. A thin orchestration layer over `goo-engine`,
+//! ported from `bin/goo` (which stays canonical until this passes the bats
+//! conformance suite). Subcommands and verb invocation assemble a subject /
+//! object / adverbs, hand them to the engine to render a command, and exec it
+//! via `bash -c` — exactly as the shell does.
+//!
+//! Plugins are found via env only (`COSMIC_GOO_BUILTIN_PLUGINS_DIR` and the
+//! XDG dirs `registry::dirs()` reads); no path magic. Exit codes: 0 / 1
+//! (catch-all) / 130 (cancel).
+
+use goo_engine::{address, dispatch as disp, mime, registry, selection, verbs};
+use serde_json::{json, Map, Value};
+use std::io::IsTerminal;
+use std::process::Command;
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    std::process::exit(dispatch(&args, 0));
+}
+
+/// `goo: <msg>` to stderr; returns exit code 1.
+fn die(msg: impl AsRef<str>) -> i32 {
+    eprintln!("goo: {}", msg.as_ref());
+    1
+}
+
+// ---------------- top-level dispatch ----------------
+
+fn dispatch(args: &[String], alias_depth: u32) -> i32 {
+    match args.first().map(String::as_str) {
+        None | Some("compose") => cmd_compose(),
+        Some("list") => cmd_list(args.get(1).map(String::as_str)),
+        Some("describe") => cmd_describe(args.get(1).map(String::as_str)),
+        Some("plugins") => cmd_plugins(),
+        Some("validate") => cmd_validate(),
+        Some("dispatch") => cmd_dispatch(args.get(1).map(String::as_str)),
+        Some("__complete") => cmd_complete(args.get(1).map(String::as_str), args.get(2).map(String::as_str)),
+        Some("-h") | Some("--help") | Some("help") => {
+            print_usage();
+            0
+        }
+        Some(first) => {
+            // A command alias rewrites the leading word into its `expands`
+            // tokens, then we re-dispatch (the expansion may itself be a
+            // subcommand or another alias). A depth guard breaks cycles.
+            let reg = registry::load_all();
+            if let Some(exp) = alias_expansion(&reg, first) {
+                let depth = alias_depth + 1;
+                if depth > 16 {
+                    return die(format!("alias expansion too deep (cycle?): {first}"));
+                }
+                // TODO: shell-quote-aware tokenization; whitespace-split covers
+                // all current alias fixtures.
+                let mut new_args: Vec<String> = exp.split_whitespace().map(str::to_string).collect();
+                new_args.extend_from_slice(&args[1..]);
+                return dispatch(&new_args, depth);
+            }
+            cmd_verb(&reg, args)
+        }
+    }
+}
+
+fn print_usage() {
+    print!(
+        "goo — Grammar Of Operations CLI
+
+USAGE
+    goo                                  Open the compose dialog (picker-driven)
+    goo <verb> [POSITIONAL...] [--FLAG=VALUE]
+    goo list <source>                    Emit source items as JSON
+    goo describe <verb>                  Show verb details
+    goo compose                          Pick subject → verb → object → adverbs
+    goo dispatch <input>                 Classify content and route to a verb
+    goo plugins                          List loaded plugins
+    goo validate                         Validate all loaded plugins
+
+SUBJECT INFERENCE
+    If no positional is given, the subject falls back in order:
+      1. PRIMARY selection (wl-paste --primary)
+      2. Clipboard (wl-paste)
+      3. Focused app (cos-cli) when the verb accepts an app type
+
+EXAMPLES
+    goo critique \"some text to review\"
+    goo critique --via=clipboard          # operate on the current selection
+    goo plugins
+    goo describe critique
+"
+    );
+}
+
+// ---------------- helpers ----------------
+
+/// Run `bash -c <cmd>` inheriting stdio (so the verb's output flows through us,
+/// which is what `bats run` captures). Returns the child's exit code.
+fn bash_exec(cmd: &str) -> i32 {
+    match Command::new("bash").arg("-c").arg(cmd).status() {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(_) => 1,
+    }
+}
+
+/// `bash -c <cmd>`, capturing stdout (for `list` / handle search).
+fn bash_capture(cmd: &str) -> String {
+    Command::new("bash")
+        .arg("-c")
+        .arg(cmd)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// Render a verb and execute it, honouring `confirm`.
+fn exec_verb(
+    reg: &Value,
+    verb: &Value,
+    subject: &Value,
+    object: &Value,
+    adverbs: &Value,
+) -> i32 {
+    let rendered = match verbs::render(reg, verb, subject, object, adverbs) {
+        Ok(r) => r,
+        Err(e) => return die(format!("verb_apply: {e}")),
+    };
+    if rendered.confirm {
+        eprintln!("About to run: {}", rendered.cmd);
+        let mut ans = String::new();
+        std::io::stdin().read_line(&mut ans).ok();
+        match ans.trim() {
+            "y" | "Y" | "yes" | "YES" => {}
+            _ => {
+                eprintln!("goo: verb_apply: cancelled");
+                return 130;
+            }
+        }
+    }
+    bash_exec(&rendered.cmd)
+}
+
+/// True if any of `verb.accepts` matches `text/plain`.
+fn accepts_text(verb: &Value) -> bool {
+    verb.get("accepts")
+        .and_then(|a| a.as_array())
+        .map(|arr| arr.iter().filter_map(|p| p.as_str()).any(|p| mime::mime_matches(p, "text/plain")))
+        .unwrap_or(false)
+}
+
+// ---------------- subcommand: plugins ----------------
+
+fn cmd_plugins() -> i32 {
+    let reg = registry::load_all();
+    let plugins = reg.get("plugins").and_then(|p| p.as_array());
+    let plugins = match plugins {
+        Some(p) if !p.is_empty() => p,
+        _ => {
+            let dir = std::env::var("COSMIC_GOO_BUILTIN_PLUGINS_DIR").unwrap_or_default();
+            eprintln!("(no plugins loaded — check COSMIC_GOO_BUILTIN_PLUGINS_DIR={dir})");
+            return 0;
+        }
+    };
+    for p in plugins {
+        let name = p.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let file = p.get("file").and_then(|f| f.as_str()).unwrap_or("");
+        match p.get("description").and_then(|d| d.as_str()) {
+            Some(d) => println!("{name} — {d}"),
+            None => println!("{name}"),
+        }
+        println!("  {file}");
+    }
+    0
+}
+
+// ---------------- subcommand: list ----------------
+
+fn cmd_list(source_name: Option<&str>) -> i32 {
+    let name = match source_name {
+        Some(n) if !n.is_empty() => n,
+        _ => return die("list: expected a source name"),
+    };
+    let reg = registry::load_all();
+    let source = reg
+        .get("sources")
+        .and_then(|s| s.as_array())
+        .and_then(|arr| arr.iter().find(|s| s.get("name").and_then(|n| n.as_str()) == Some(name)));
+    let source = match source {
+        Some(s) => s,
+        None => return die(format!("list: no source named '{name}'")),
+    };
+    match source.get("list_cmd").and_then(|c| c.as_str()).filter(|s| !s.is_empty()) {
+        Some(lc) => {
+            print!("{}", bash_capture(lc));
+            0
+        }
+        None => die(format!("list: source '{name}' has no list_cmd")),
+    }
+}
+
+// ---------------- subcommand: describe ----------------
+
+fn cmd_describe(verb_name: Option<&str>) -> i32 {
+    let name = match verb_name {
+        Some(n) if !n.is_empty() => n,
+        _ => return die("describe: expected a verb name"),
+    };
+    let reg = registry::load_all();
+    let verb = match verbs::lookup(&reg, name, None) {
+        Some(v) => v,
+        None => return die(format!("describe: no verb named '{name}'")),
+    };
+    let s = |k: &str| verb.get(k).and_then(|v| v.as_str());
+    let mut out = format!("verb: {}", s("name").unwrap_or(""));
+    if let Some(d) = s("description") {
+        out += &format!("\ndescription: {d}");
+    }
+    let accepts = verb
+        .get("accepts")
+        .and_then(|a| a.as_array())
+        .map(|arr| arr.iter().filter_map(|p| p.as_str()).collect::<Vec<_>>().join(", "))
+        .unwrap_or_default();
+    out += &format!("\naccepts: {accepts}");
+    if let Some(ot) = s("object_type") {
+        out += &format!("\nobject_type: {ot}");
+    }
+    match verb.get("default_for") {
+        Some(Value::Array(a)) => {
+            let joined = a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ");
+            out += &format!("\ndefault_for: {joined}");
+        }
+        Some(Value::String(d)) => out += &format!("\ndefault_for: {d}"),
+        _ => {}
+    }
+    if let Some(ua) = verb.get("uses_adverbs").and_then(|u| u.as_array()) {
+        let joined = ua.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ");
+        out += &format!("\nuses_adverbs: {joined}");
+    }
+    if let Some(cmd) = s("cmd") {
+        out += &format!("\ncmd: {cmd}");
+    }
+    if let Some(prompt) = s("prompt") {
+        out += &format!("\nprompt:\n  {}", prompt.replace('\n', "\n  "));
+    }
+    if verb.get("confirm").and_then(|c| c.as_bool()) == Some(true) {
+        out += "\nconfirm: true";
+    }
+    out += &format!("\nprovided by plugin: {}", s("_plugin").unwrap_or(""));
+    println!("{out}");
+    0
+}
+
+// ---------------- subcommand: validate ----------------
+
+fn cmd_validate() -> i32 {
+    let reg = registry::load_all();
+    let arr = |k: &str| reg.get(k).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let mut errors = 0u32;
+    let err = |msg: String| {
+        eprintln!("{msg}");
+    };
+
+    // Reserved subcommands an alias can never shadow.
+    const RESERVED: &[&str] = &[
+        "compose", "list", "describe", "plugins", "validate", "dispatch", "__complete", "help",
+        "-h", "--help",
+    ];
+
+    // 1. Verbs: a declared accept pattern list can't contain empty strings.
+    for v in arr("verbs") {
+        let has_empty = v
+            .get("accepts")
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().any(|p| p.as_str() == Some("")))
+            .unwrap_or(false);
+        if has_empty {
+            err(format!("verb \"{}\" has an empty accept pattern", v.get("name").and_then(|n| n.as_str()).unwrap_or("")));
+            errors += 1;
+        }
+    }
+
+    // 2. Adverbs declare scope (applies_to or applies_to_verbs).
+    for a in arr("adverbs") {
+        let scoped = a.get("applies_to").is_some() || a.get("applies_to_verbs").is_some();
+        if !scoped {
+            err(format!("adverb \"{}\" has neither applies_to nor applies_to_verbs", a.get("name").and_then(|n| n.as_str()).unwrap_or("")));
+            errors += 1;
+        }
+        // 3. Selector adverbs should have a values object.
+        let kind = a.get("kind").and_then(|k| k.as_str()).unwrap_or("selector");
+        let nvalues = a.get("values").and_then(|v| v.as_object()).map(|o| o.len()).unwrap_or(0);
+        if kind == "selector" && nvalues == 0 {
+            err(format!("selector adverb \"{}\" has no values", a.get("name").and_then(|n| n.as_str()).unwrap_or("")));
+            errors += 1;
+        }
+    }
+
+    // 4. Sigils: single char, not a reserved/native prefix, must have expansion.
+    for sg in arr("sigils") {
+        let ch = sg.get("char").and_then(|c| c.as_str()).unwrap_or("");
+        let expands = sg.get("expands").and_then(|e| e.as_str()).unwrap_or("");
+        if ch.chars().count() != 1 {
+            err(format!("sigil \"{ch}\" must be exactly one character"));
+            errors += 1;
+        }
+        if let Some(c) = ch.chars().next() {
+            if c.is_ascii_alphanumeric() || matches!(c, ':' | '+' | '.' | '/' | '~') {
+                err(format!("sigil \"{ch}\" collides with a reserved/native prefix (: + . / ~ alnum)"));
+                errors += 1;
+            }
+        }
+        if expands.is_empty() {
+            err(format!("sigil \"{ch}\" has no expansion"));
+            errors += 1;
+        }
+    }
+
+    // 5. Plugin tier (optional) must be core|desktop|cosmic.
+    for p in arr("plugins") {
+        if let Some(tier) = p.get("tier").and_then(|t| t.as_str()) {
+            if !matches!(tier, "core" | "desktop" | "cosmic") {
+                err(format!("plugin \"{}\" has invalid tier \"{tier}\" (want core|desktop|cosmic)", p.get("name").and_then(|n| n.as_str()).unwrap_or("")));
+                errors += 1;
+            }
+        }
+    }
+
+    // 6. Command aliases: name + expands, must not shadow a subcommand.
+    let verb_names: Vec<String> = arr("verbs")
+        .iter()
+        .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
+        .collect();
+    for a in arr("aliases") {
+        let aname = a.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if aname.is_empty() {
+            continue;
+        }
+        let aexp = a.get("expands").and_then(|e| e.as_str()).unwrap_or("");
+        if aexp.is_empty() {
+            err(format!("alias \"{aname}\" has no expansion"));
+            errors += 1;
+        }
+        if RESERVED.contains(&aname) {
+            err(format!("alias \"{aname}\" shadows a reserved subcommand and will never fire"));
+            errors += 1;
+        }
+        if verb_names.iter().any(|v| v == aname) {
+            eprintln!("warning: alias \"{aname}\" shadows a verb of the same name (alias wins)");
+        }
+    }
+
+    // 7. Dispatch rules: need a `matches` and a `verb` that exists.
+    for (i, rule) in arr("dispatch").iter().enumerate() {
+        let rmatch = rule.get("matches").and_then(|m| m.as_str()).unwrap_or("");
+        let rverb = rule.get("verb").and_then(|v| v.as_str()).unwrap_or("");
+        if rmatch.is_empty() {
+            err(format!("dispatch rule #{} has no \"matches\" pattern", i + 1));
+            errors += 1;
+        }
+        if rverb.is_empty() {
+            err(format!("dispatch rule #{} has no \"verb\"", i + 1));
+            errors += 1;
+        } else if !verb_names.iter().any(|v| v == rverb) {
+            err(format!("dispatch rule #{} routes to unknown verb \"{rverb}\"", i + 1));
+            errors += 1;
+        }
+    }
+
+    if errors == 0 {
+        let n = |k: &str| arr(k).len();
+        println!(
+            "goo validate: OK ({} plugins, {} types, {} sources, {} verbs, {} adverbs, {} sigils, {} aliases, {} dispatch)",
+            n("plugins"), n("types"), n("sources"), n("verbs"), n("adverbs"), n("sigils"), n("aliases"), n("dispatch")
+        );
+        0
+    } else {
+        eprintln!("goo validate: {errors} error(s)");
+        1
+    }
+}
+
+// ---------------- subcommand: dispatch (content classification) ----------------
+
+fn cmd_dispatch(input_arg: Option<&str>) -> i32 {
+    let mut input = input_arg.unwrap_or("").to_string();
+    if input.is_empty() && !std::io::stdin().is_terminal() {
+        input = read_stdin();
+    }
+    if input.is_empty() {
+        return die("dispatch: no input (give a positional or pipe stdin)");
+    }
+    let reg = registry::load_all();
+
+    if let Some(m) = disp::dispatch_match(&reg, &input) {
+        let verb_name = match m.get("verb").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+            Some(v) => v,
+            None => return die("dispatch: matched rule has no verb"),
+        };
+        let type_ = m.get("type").and_then(|t| t.as_str()).unwrap_or("text/plain");
+        let adverbs = m.get("adverbs").cloned().unwrap_or_else(|| json!({}));
+        // subject = {type, text:input} overlaid with the rule's `fields`, then
+        // .id defaults to .text.
+        let mut subject = json!({ "type": type_, "text": input });
+        if let Some(fields) = m.get("fields").and_then(|f| f.as_object()) {
+            let obj = subject.as_object_mut().unwrap();
+            for (k, v) in fields {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        let text = subject.get("text").cloned().unwrap_or(Value::Null);
+        let need_id = subject.get("id").map(|v| v.is_null()).unwrap_or(true);
+        if need_id {
+            subject.as_object_mut().unwrap().insert("id".into(), text);
+        }
+        let verb = match verbs::lookup(&reg, verb_name, None) {
+            Some(v) => v,
+            None => return die(format!("dispatch: rule routes to unknown verb '{verb_name}'")),
+        };
+        exec_verb(&reg, &verb, &subject, &Value::Null, &adverbs)
+    } else {
+        let subject = match address::resolve(&input, &reg, None) {
+            Ok(s) => s,
+            Err(_) => return die(format!("dispatch: cannot resolve '{input}'")),
+        };
+        let type_ = subject.get("type").and_then(|t| t.as_str()).unwrap_or("text/plain");
+        match verbs::default_for(&reg, type_) {
+            Some(verb) => exec_verb(&reg, &verb, &subject, &Value::Null, &json!({})),
+            None => die(format!("dispatch: no rule matched and no default verb for type '{type_}'")),
+        }
+    }
+}
+
+// ---------------- subcommand: __complete ----------------
+
+fn cmd_complete(stage: Option<&str>, arg: Option<&str>) -> i32 {
+    let reg = registry::load_all();
+    let arr = |k: &str| reg.get(k).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let arg = arg.unwrap_or("");
+    match stage.unwrap_or("") {
+        "subcommands" => {
+            println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nhelp");
+            for v in arr("verbs") {
+                if let Some(n) = v.get("name").and_then(|n| n.as_str()) {
+                    println!("{n}");
+                }
+            }
+            for a in arr("aliases") {
+                if let Some(n) = a.get("name").and_then(|n| n.as_str()) {
+                    println!("{n}");
+                }
+            }
+        }
+        "verbs" => print_names(&arr("verbs"), "name"),
+        "sources" => print_names(&arr("sources"), "name"),
+        "adverbs" => {
+            if arg.is_empty() {
+                return 0;
+            }
+            if let Some(v) = arr("verbs").iter().find(|v| v.get("name").and_then(|n| n.as_str()) == Some(arg)) {
+                if let Some(ua) = v.get("uses_adverbs").and_then(|u| u.as_array()) {
+                    for a in ua {
+                        if let Some(s) = a.as_str() {
+                            println!("{s}");
+                        }
+                    }
+                }
+            }
+        }
+        "adverb-values" => {
+            if arg.is_empty() {
+                return 0;
+            }
+            if let Some(a) = arr("adverbs").iter().find(|a| a.get("name").and_then(|n| n.as_str()) == Some(arg)) {
+                if let Some(vals) = a.get("values").and_then(|v| v.as_object()) {
+                    for k in vals.keys() {
+                        println!("{k}");
+                    }
+                }
+            }
+        }
+        "source-prefixes" => {
+            for s in arr("sources") {
+                if let Some(p) = s.get("prefix").and_then(|p| p.as_str()) {
+                    println!(":{p}:");
+                }
+            }
+        }
+        "sigils" => print_names(&arr("sigils"), "char"),
+        "verb-accepts-handle" => {
+            if arg.is_empty() {
+                return 0;
+            }
+            if let Some(v) = arr("verbs").iter().find(|v| v.get("name").and_then(|n| n.as_str()) == Some(arg)) {
+                let has_handle = v
+                    .get("accepts")
+                    .and_then(|a| a.as_array())
+                    .map(|arr| arr.iter().filter_map(|p| p.as_str()).any(|p| !p.starts_with("text/")))
+                    .unwrap_or(false);
+                println!("{}", if has_handle { "yes" } else { "no" });
+            }
+        }
+        "verb-subject-items" => {
+            if arg.is_empty() {
+                return 0;
+            }
+            let verb = arr("verbs").into_iter().find(|v| v.get("name").and_then(|n| n.as_str()) == Some(arg));
+            if let Some(verb) = verb {
+                let accepts: Vec<String> = verb
+                    .get("accepts")
+                    .and_then(|a| a.as_array())
+                    .map(|arr| arr.iter().filter_map(|p| p.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+                for pattern in &accepts {
+                    for source in arr("sources").iter().filter(|s| s.get("enumerate") != Some(&json!(false))) {
+                        let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
+                        if emits.is_empty() || !mime::mime_matches(pattern, emits) {
+                            continue;
+                        }
+                        if let Some(lc) = source.get("list_cmd").and_then(|c| c.as_str()) {
+                            print_ids(&bash_capture(lc));
+                        }
+                    }
+                }
+            }
+        }
+        "source-items" => {
+            if arg.is_empty() {
+                return 0;
+            }
+            let lc = arr("sources").iter().find_map(|s| {
+                let by_name = s.get("name").and_then(|n| n.as_str()) == Some(arg);
+                let by_prefix = s.get("prefix").and_then(|p| p.as_str()) == Some(arg);
+                if by_name || by_prefix {
+                    s.get("list_cmd").and_then(|c| c.as_str()).map(str::to_string)
+                } else {
+                    None
+                }
+            });
+            if let Some(lc) = lc {
+                print_ids(&bash_capture(&lc));
+            }
+        }
+        _ => {}
+    }
+    0
+}
+
+fn print_names(items: &[Value], key: &str) {
+    for it in items {
+        if let Some(n) = it.get(key).and_then(|n| n.as_str()) {
+            println!("{n}");
+        }
+    }
+}
+
+/// Print `.id` of each item in a JSON-array string, one per line.
+fn print_ids(items_json: &str) {
+    if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(items_json.trim()) {
+        for it in items {
+            if let Some(id) = it.get("id").and_then(|i| i.as_str()) {
+                println!("{id}");
+            }
+        }
+    }
+}
+
+// ---------------- subcommand: compose (minimal) ----------------
+
+fn cmd_compose() -> i32 {
+    // Minimal: honour the scripted GOO_COMPOSE_ANSWERS protocol enough for the
+    // cancel path (an empty first pick = cancel). The full picker-driven dialog
+    // stays in bash / a future goo-compose bin.
+    let answers = std::env::var("GOO_COMPOSE_ANSWERS").ok();
+    let first_pick = answers
+        .as_deref()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|s| s.lines().next().map(str::to_string))
+        .unwrap_or_default();
+    if first_pick.trim().is_empty() {
+        eprintln!("compose: cancelled");
+        return 130;
+    }
+    die("compose: interactive picker not supported in the Rust bin yet (use bin/goo)")
+}
+
+// ---------------- aliases ----------------
+
+fn alias_expansion(reg: &Value, name: &str) -> Option<String> {
+    reg.get("aliases")?.as_array()?.iter().find_map(|a| {
+        if a.get("name").and_then(|n| n.as_str()) == Some(name) {
+            a.get("expands").and_then(|e| e.as_str()).filter(|s| !s.is_empty()).map(str::to_string)
+        } else {
+            None
+        }
+    })
+}
+
+// ---------------- verb invocation ----------------
+
+fn cmd_verb(reg: &Value, args: &[String]) -> i32 {
+    let verb_name = &args[0];
+    let verb = match verbs::lookup(reg, verb_name, None) {
+        Some(v) => v,
+        None => return die(format!("unknown verb or subcommand: {verb_name} (try 'goo plugins')")),
+    };
+
+    // Capture piped stdin once (a TTY means interactive use — no piped subject).
+    let stdin_text = if std::io::stdin().is_terminal() {
+        String::new()
+    } else {
+        read_stdin()
+    };
+
+    // Parse remaining args: positionals + --flag[=val].
+    let mut positionals: Vec<String> = Vec::new();
+    let mut adverbs = Map::new();
+    let rest = &args[1..];
+    let mut i = 0;
+    while i < rest.len() {
+        let a = &rest[i];
+        if let Some(kv) = a.strip_prefix("--") {
+            if let Some((name, value)) = kv.split_once('=') {
+                adverbs.insert(name.to_string(), json!(value));
+                i += 1;
+            } else {
+                // --flag [value] : value unless missing or the next --flag.
+                let next = rest.get(i + 1);
+                match next {
+                    Some(v) if !v.starts_with("--") => {
+                        adverbs.insert(kv.to_string(), json!(v));
+                        i += 2;
+                    }
+                    _ => {
+                        adverbs.insert(kv.to_string(), json!(true));
+                        i += 1;
+                    }
+                }
+            }
+        } else {
+            positionals.push(a.clone());
+            i += 1;
+        }
+    }
+    let adverbs = Value::Object(adverbs);
+    let subject_arg = positionals.first().cloned().unwrap_or_default();
+    let object_arg = positionals.get(1).cloned().unwrap_or_default();
+
+    let accepts_count = verb.get("accepts").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0);
+    let subject = if accepts_count > 0 {
+        match resolve_subject(reg, &verb, &subject_arg, &stdin_text) {
+            Ok(s) => s,
+            Err(e) => return die(e),
+        }
+    } else if !subject_arg.is_empty() {
+        // No accepts but a positional was given — treat as text content.
+        json!({ "type": "text/plain", "text": subject_arg })
+    } else {
+        Value::Null
+    };
+
+    let has_object_type = verb.get("object_type").and_then(|t| t.as_str()).filter(|s| !s.is_empty()).is_some();
+    let object = if !object_arg.is_empty() || has_object_type {
+        match verbs::resolve_object(reg, &verb, &object_arg, &subject) {
+            Ok(o) => o,
+            Err(e) => return die(e),
+        }
+    } else {
+        Value::Null
+    };
+
+    exec_verb(reg, &verb, &subject, &object, &adverbs)
+}
+
+/// Read all of stdin, stripping trailing newlines (parity with bash `$(cat)`).
+fn read_stdin() -> String {
+    use std::io::Read;
+    let mut s = String::new();
+    std::io::stdin().read_to_string(&mut s).ok();
+    s.trim_end_matches('\n').to_string()
+}
+
+/// Turn a positional (or the implicit subject chain) into a subject JSON.
+/// Port of `resolve_subject` in `bin/goo`.
+fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str) -> Result<Value, String> {
+    // 1. Explicit positional → the addressing resolver.
+    if !positional.is_empty() && address::is_explicit(positional, reg) {
+        return address::resolve(positional, reg, Some(verb)).map_err(|e| e.replace("address: ", ""));
+    }
+
+    // 2. Bare positional.
+    if !positional.is_empty() {
+        if accepts_text(verb) {
+            let mt = mime::detect_content(positional);
+            return Ok(json!({ "type": mt, "text": positional }));
+        }
+        // Handle resolution: a source emitting an accepted type, item by id/title.
+        if let Some(item) = handle_search(reg, verb, positional) {
+            return Ok(item);
+        }
+        return Err(format!(
+            "could not resolve '{positional}' against any source for verb's accepted types"
+        ));
+    }
+
+    // 3. No positional: implicit chain — stdin → selection → clipboard.
+    if accepts_text(verb) {
+        let mut text = stdin_text.to_string();
+        if text.is_empty() {
+            text = selection::primary();
+        }
+        if text.is_empty() {
+            text = selection::clipboard();
+        }
+        if !text.is_empty() {
+            let mt = mime::detect_content(&text);
+            return Ok(json!({ "type": mt, "text": text }));
+        }
+    }
+    // Non-text accepts: implicit=true sources emitting an accepted type, first item.
+    if let Some(item) = implicit_source_item(reg, verb) {
+        return Ok(item);
+    }
+    Err("no subject provided and no implicit subject available (stdin/selection/clipboard/implicit-source all empty)".into())
+}
+
+/// Walk sources whose `emits` matches an accepted (handle) type; return the
+/// first item whose id/title contains `query` (case-insensitive), tagged.
+fn handle_search(reg: &Value, verb: &Value, query: &str) -> Option<Value> {
+    let accepts = verb.get("accepts").and_then(|a| a.as_array())?;
+    let sources = reg.get("sources").and_then(|s| s.as_array())?;
+    let q = query.to_lowercase();
+    for pat in accepts.iter().filter_map(|p| p.as_str()) {
+        for source in sources {
+            let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
+            if emits.is_empty() || !mime::mime_matches(pat, emits) {
+                continue;
+            }
+            let lc = match source.get("list_cmd").and_then(|c| c.as_str()) {
+                Some(lc) => lc,
+                None => continue,
+            };
+            let items: Vec<Value> = serde_json::from_str(bash_capture(lc).trim()).unwrap_or_default();
+            let found = items.iter().find(|it| {
+                let f = |k: &str| it.get(k).and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                f("id").contains(&q) || f("title").contains(&q)
+            });
+            if let Some(it) = found {
+                let mut o = it.clone();
+                if let Some(m) = o.as_object_mut() {
+                    m.insert("type".into(), json!(emits));
+                }
+                return Some(o);
+            }
+        }
+    }
+    None
+}
+
+/// First item of the first implicit=true source emitting an accepted type.
+fn implicit_source_item(reg: &Value, verb: &Value) -> Option<Value> {
+    let accepts = verb.get("accepts").and_then(|a| a.as_array())?;
+    let sources = reg.get("sources").and_then(|s| s.as_array())?;
+    for pat in accepts.iter().filter_map(|p| p.as_str()) {
+        for source in sources.iter().filter(|s| s.get("implicit") == Some(&json!(true))) {
+            let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
+            if emits.is_empty() || !mime::mime_matches(pat, emits) {
+                continue;
+            }
+            let lc = match source.get("list_cmd").and_then(|c| c.as_str()) {
+                Some(lc) => lc,
+                None => continue,
+            };
+            let items: Vec<Value> = serde_json::from_str(bash_capture(lc).trim()).unwrap_or_default();
+            if let Some(it) = items.into_iter().find(|i| !i.is_null()) {
+                let mut o = it;
+                if let Some(m) = o.as_object_mut() {
+                    m.insert("type".into(), json!(emits));
+                }
+                return Some(o);
+            }
+        }
+    }
+    None
+}
