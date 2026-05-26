@@ -12,7 +12,7 @@ Plugins are TOML files declaring any combination of **types**, **sources**, **ve
 
 ## Status
 
-**The `goo` CLI is fully usable.** 21 built-in plugins (~74 verbs, 12 sources), subject addressing with sigils + native file/URL detection, `{var|q|uri}` template filters, bash tab completion, a registry cache, and a picker-driven compose dialog — covered by ~190 tests. E.g. `goo critique "text" --via=clipboard` renders a prompt onto the clipboard; `goo activate Alacritty` focuses the app; `goo calc "2+2*10"` → `22`; `goo qr-encode https://…` draws a QR in the terminal.
+**The `goo` CLI is fully usable.** 22 built-in plugins (~77 verbs, 15 sources), subject addressing with sigils + native file/URL detection, `{var|q|uri}` template filters, bash tab completion, a registry cache, and a picker-driven compose dialog — covered by ~190 tests. E.g. `goo critique "text" --via=clipboard` renders a prompt onto the clipboard; `goo activate Alacritty` focuses the app; `goo calc "2+2*10"` → `22`; `goo qr-encode https://…` draws a QR in the terminal.
 
 Not yet shipped: the pop-launcher meta-plugin for *inline* composition in `cosmic-launcher` (Phase 2), the scenes plugin (Phase 3), and the native libcosmic compose GUI (the current dialog is a shell-driven picker). See [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md) for the full plan and [`tutorial.md`](tutorial.md) to learn the CLI by example.
 
@@ -40,13 +40,13 @@ this paragraph could be tighter
 
 ## Getting it running
 
-cosmic-goo is shell-only today (Rust arrives with the native compose dialog later). Clone the repo and you're done:
+cosmic-goo's engine is now the Rust `goo` binary (the original bash engine stays alongside as the reference, installable via `make install-bash`). The Rust bin still shells out to `bash` + `jq` at runtime. Clone the repo and you're done:
 
 ```bash
 git clone <repo>
 cd cosmic-goo
-make test         # verify (~190 tests)
-bin/goo --help
+make test         # verify the bats suite
+make build        # build the release binary (crates/target/release/goo)
 ```
 
 Dependencies — apt-installable on Pop!_OS / Ubuntu:
@@ -56,10 +56,11 @@ sudo apt install -y jq yq wl-clipboard wev shellcheck bats
 cargo install --git https://github.com/estin/cos-cli   # for the apps plugin
 ```
 
-To use `goo` from anywhere, symlink `bin/goo` into your `$PATH`:
+To install `goo` onto your `$PATH`:
 
 ```bash
-ln -s "$PWD/bin/goo" ~/.local/bin/goo
+make install            # builds + installs the Rust binary + plugins under ~/.local
+make install-bash       # or install the bash engine instead (the reference)
 ```
 
-There is no system install yet (`make install` and `make install-user` are stubs — TBD in Phase 6).
+`make install` puts the real binary at `$PREFIX/share/cosmic-goo/bin/goo-bin` behind a thin launcher that points it at the installed plugins, and links `$PREFIX/bin/goo`. Use `PREFIX=…` to relocate; `make uninstall` removes it.

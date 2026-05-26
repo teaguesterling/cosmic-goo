@@ -5,6 +5,7 @@
 ```
 goo                                      # opens the compose dialog (picker-driven)
 goo <verb> [POSITIONAL ...] [--FLAG=VALUE ...]
+goo <address>                            # no verb: resolve the address, run its type's default verb
 goo list <source>
 goo describe <verb>
 goo plugins
@@ -146,7 +147,21 @@ Resolution rules:
 
 A second positional becomes the **object** (for two-step verbs like `move-to`), resolved the same way.
 
-> The canonical `goo://<source>/<input>` (source lookup) and `goo+<scheme>:<value>` (scheme handoff) URIs are what the launcher meta-plugin and any IPC will pass between processes. The `goo://` form is registrable as `x-scheme-handler/goo` (so `xdg-open goo://app/firefox` could route here). The sigils (`@`, `^`, `+`) and native shapes are terminal-friendly shorthands that rewrite into them. A broader REST/WebDAV-shaped evolution (domains, matrix params, one unified scheme) is [a considered design](design/addressing-and-protocol.md), not yet built.
+### The `GOO` default verb (running an address directly)
+
+If the first argument is an **explicit address** (a `goo://` URL, a sigil/native shape — anything `is_explicit`) and **not** a verb, `goo` resolves it and runs the **`default_for` verb** of the resolved subject's type. This is the CLI form of the protocol's `GOO` verb — "do the sensible default with this thing":
+
+```bash
+goo goo://br/main      # → branch-log  (git-branch type's default_for)
+goo :ps:1              # → proc-info    (process type's default_for)
+goo ~/notes.md         # → the inode/* default verb (e.g. open)
+```
+
+If the resolved type has **no `default_for` verb**, `goo` errors (`no default verb for type '<type>'`) rather than guessing — it never picks among non-default verbs. A bare word that isn't an address stays a verb lookup (so `goo nope` is still "unknown verb", not a subject).
+
+> This is only the **loose CLI surface** of [the goo request protocol](design/goo-protocol.md) — the `GOO` default verb over a `goo://` subject. The full wire form (HTTP-shaped methods, `Using:`/`To:`/`With:` headers, status codes, a unix-socket daemon) is designed there but **daemon-gated** — not built. `GOO` is the only protocol verb the CLI implements today.
+
+> The canonical `goo://<source>/<input>` (source lookup) and `goo+<scheme>:<value>` (scheme handoff) URIs are what the launcher meta-plugin and any IPC will pass between processes. You can already run one directly — `goo goo://app/firefox` resolves it and runs the type's default verb (see [the `GOO` default verb](#the-goo-default-verb-running-an-address-directly)). The sigils (`@`, `^`, `+`) and native shapes are terminal-friendly shorthands that rewrite into the same URIs. Still **unbuilt**: registering `goo://` as `x-scheme-handler/goo` so `xdg-open goo://app/firefox` (or a browser click) routes to `goo`. The fuller [request protocol](design/goo-protocol.md) and the [REST/WebDAV-shaped addressing model](design/addressing-and-protocol.md) are considered designs, daemon-gated.
 
 ### Command aliases
 

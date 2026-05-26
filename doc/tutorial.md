@@ -26,7 +26,7 @@ $ goo sha256 "hello"
 See what's available:
 
 ```
-$ goo plugins          # the 21 loaded plugins
+$ goo plugins          # the 22 loaded plugins
 $ goo describe upper    # one verb's details
 verb: upper
 description: Convert to UPPERCASE
@@ -80,6 +80,15 @@ $ goo list workspaces | jq -c '.[] | {id, title}'
 {"id":"0:0","title":"ws-1 on DP-3"}
 {"id":"0:1","title":"ws-2 on DP-3"}
 ```
+
+**Skip the verb entirely.** If you give just an address and no verb, `goo` runs that type's *default* action — the CLI form of the protocol's `GOO` verb:
+
+```
+$ goo goo://br/main      # no verb → branch-log (the git-branch default)
+$ goo ~/notes.md         # → the file default verb (open)
+```
+
+(If a type has no default verb, `goo` says so rather than guessing.)
 
 ---
 
@@ -221,7 +230,7 @@ MAKE IT LOUD
 
 ```
 $ goo validate
-goo validate: OK (21 plugins, ...)
+goo validate: OK (22 plugins, ...)
 ```
 
 ---
