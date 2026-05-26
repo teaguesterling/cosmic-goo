@@ -1,18 +1,25 @@
-//! Subject addressing — the Rust port of `lib/address.sh`.
+//! Subject addressing — the goo:// domain model (Rust port of `lib/address.sh`).
 //!
-//! Turns a user-typed argument (or a programmatic URI) into a resolved subject
-//! (`serde_json::Value` of shape `{type,text,id?,title?,metadata?}`).
+//! One canonical form: `goo://<domain>/<path>[;q=<query>][?<refine>]`.
+//!   - a **value** is `goo://<domain>/<path>` — `<path>` is an **exact** locator
+//!     (a source item's exact `id`, a file path, a literal text, a URL).
+//!   - a **search** is `goo://<domain>/;q=<query>` — a **fuzzy** query over a
+//!     source's `list_cmd` output (id/title substring).
+//! Resolution is **strict**: the syntax says which you mean, no fuzzy fallback.
 //!
-//! Canonical forms (post the goo:// rename):
-//!   `goo://<source>/<input>[?params]`  — source lookup (search list_cmd output)
-//!   `goo+<scheme>:<value>`             — scheme handoff (direct construction)
+//! Built-in **value domains** resolved here: `text` / `file` / `clip` / `sel` /
+//! `stdin` / `url`. Every other domain is a registry **source** (`[[sources]]`,
+//! matched by `name` *or* `prefix`) — value = exact id, search = fuzzy.
 //!
-//! Sigils (`:` source, `+` handoff, custom single-char) and native shapes
-//! (`./ ~/ /` → file, `scheme://` → url, else text) rewrite into those.
+//! Human **sigils** (terminal shorthand; machines emit canonical `goo://`):
+//!   bare / `./ ~/ / scheme://` → infer (text/file/url) · `+x` → text ·
+//!   `:dom/path` → value · `:dom:query` → search · `^`/`^name` → clip ·
+//!   any other first char → user `[[sigils]]` alias.
 
 use crate::{mime, selection};
 use serde_json::{json, Value};
 use std::io::Read;
+use std::path::Path;
 
 /// Look up a custom sigil's expansion (`.sigils[].char` → `.expands`).
 fn sigil_expand(ch: char, reg: &Value) -> Option<String> {
@@ -26,66 +33,32 @@ fn sigil_expand(ch: char, reg: &Value) -> Option<String> {
     })
 }
 
-/// `[A-Za-z]…://…` — the loose native-URL shape the shell `case` uses.
+/// `[A-Za-z]…://…` — the loose native-URL shape.
 fn has_scheme_sep(s: &str) -> bool {
     s.contains("://") && s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
 }
 
-fn starts_core_or_native(s: &str) -> bool {
-    s.starts_with(':')
-        || s.starts_with('+')
-        || s.starts_with("./")
-        || s.starts_with("../")
-        || s.starts_with('/')
-        || s.starts_with("~/")
+/// Native file/url shapes that infer without a sigil.
+fn starts_native(s: &str) -> bool {
+    s.starts_with("./") || s.starts_with("../") || s.starts_with('/') || s.starts_with("~/")
 }
 
-/// True if RAW carries an explicit sigil / native shape / canonical URI that
-/// `resolve` should handle (vs a bare word treated as text or a handle search).
+/// A built-in sigil prefix (`: + ^`) or `goo://`.
+fn starts_builtin(s: &str) -> bool {
+    s.starts_with("goo://") || s.starts_with(':') || s.starts_with('+') || s.starts_with('^')
+}
+
+/// True if RAW carries an explicit sigil / native shape / canonical URI (vs a
+/// bare word, which routes through the bin's subject inference). `+foo` (force
+/// text) and `^` (clip) are explicit; a bare `foo` is not.
 pub fn is_explicit(raw: &str, reg: &Value) -> bool {
-    if starts_core_or_native(raw)
-        || raw.starts_with("goo://")
-        || raw.starts_with("goo+")
+    starts_builtin(raw)
+        || starts_native(raw)
         || has_scheme_sep(raw)
-    {
-        return true;
-    }
-    raw.chars().next().is_some_and(|c| sigil_expand(c, reg).is_some())
+        || raw.chars().next().is_some_and(|c| sigil_expand(c, reg).is_some())
 }
 
-/// `<source>[:<input>][?<params>]` → `goo://<source>/<input>[?<params>]`.
-fn source_uri(s: &str) -> String {
-    let (body, params) = match s.split_once('?') {
-        Some((b, p)) => (b, format!("?{p}")),
-        None => (s, String::new()),
-    };
-    let (src, inp) = match body.split_once(':') {
-        Some((a, b)) => (a, b),
-        None => (body, ""),
-    };
-    format!("goo://{src}/{inp}{params}")
-}
-
-/// Reverse of `source_uri`: `source/input?params` → the legacy
-/// `source:input?params` blob `resolve_source` parses.
-fn source_args(r: &str) -> String {
-    let (body, q) = match r.split_once('?') {
-        Some((b, p)) => (b, format!("?{p}")),
-        None => (r, String::new()),
-    };
-    let (a, p) = match body.split_once('/') {
-        Some((a, p)) => (a, p),
-        None => (body, ""),
-    };
-    if p.is_empty() {
-        format!("{a}{q}")
-    } else {
-        format!("{a}:{p}{q}")
-    }
-}
-
-/// Absolutize a path without resolving symlinks (logical, like bash's
-/// `pwd`-based handling); expand a leading `~`.
+/// Absolutize a path without resolving symlinks; expand a leading `~`.
 fn abspath(p: &str) -> String {
     let expanded = if let Some(rest) = p.strip_prefix("~/") {
         format!("{}/{}", std::env::var("HOME").unwrap_or_default(), rest)
@@ -116,59 +89,77 @@ fn normalize(p: &str) -> String {
     format!("/{}", out.join("/"))
 }
 
-/// Rewrite a user-typed argument into a canonical goo URI.
-pub fn canonicalize(raw: &str, reg: &Value) -> String {
-    if raw.starts_with("goo://") || raw.starts_with("goo+") {
-        return raw.to_string();
+/// Expand a `:`-sigil tail into canonical: the first `/` (→ value path) or `:`
+/// (→ `;q=` search) after the domain decides. `:dom` alone → the domain default.
+fn colon_sigil(rest: &str) -> String {
+    let slash = rest.find('/');
+    let colon = rest.find(':');
+    match (slash, colon) {
+        (Some(s), Some(c)) if s < c => format!("goo://{}/{}", &rest[..s], &rest[s + 1..]),
+        (Some(_), Some(c)) => format!("goo://{}/;q={}", &rest[..c], &rest[c + 1..]),
+        (Some(s), None) => format!("goo://{}/{}", &rest[..s], &rest[s + 1..]),
+        (None, Some(c)) => format!("goo://{}/;q={}", &rest[..c], &rest[c + 1..]),
+        (None, None) => format!("goo://{rest}/"),
     }
-    // Custom sigil expansion, unless a core/native/url shape we handle below.
-    let mut raw = raw.to_string();
-    if !(starts_core_or_native(&raw) || has_scheme_sep(&raw)) {
+}
+
+/// Rewrite a user-typed argument into a canonical `goo://` URI.
+pub fn canonicalize(raw: &str, reg: &Value) -> String {
+    if let Some(rest) = raw.strip_prefix("goo://") {
+        return format!("goo://{rest}");
+    }
+    // Custom sigil expansion (unless already a built-in/native shape), then
+    // re-canonicalize the expansion (it may itself be `:dom:…` / `+…` / goo://).
+    if !(starts_builtin(raw) || starts_native(raw) || has_scheme_sep(raw)) {
         if let Some(first) = raw.chars().next() {
             if let Some(exp) = sigil_expand(first, reg) {
-                raw = format!("{exp}{}", &raw[first.len_utf8()..]);
+                return canonicalize(&format!("{exp}{}", &raw[first.len_utf8()..]), reg);
             }
         }
     }
 
-    if raw.starts_with("goo://") || raw.starts_with("goo+") {
-        raw
+    if raw == "^" {
+        "goo://clip/".to_string()
+    } else if let Some(name) = raw.strip_prefix('^') {
+        format!("goo://clip/{name}")
+    } else if let Some(text) = raw.strip_prefix('+') {
+        format!("goo://text/{text}")
     } else if let Some(rest) = raw.strip_prefix(':') {
-        source_uri(rest)
-    } else if let Some(rest) = raw.strip_prefix('+') {
-        format!("goo+{rest}")
-    } else if raw.starts_with("./") || raw.starts_with("../") || raw.starts_with('/') || raw.starts_with("~/") {
-        format!("goo+file://{}", abspath(&raw))
-    } else if has_scheme_sep(&raw) {
-        format!("goo+{raw}")
+        colon_sigil(rest)
+    } else if starts_native(raw) {
+        format!("goo://file/{raw}")
+    } else if has_scheme_sep(raw) {
+        format!("goo://url/{raw}")
     } else {
-        format!("goo+text:{raw}")
+        format!("goo://text/{raw}")
     }
 }
 
-/// Resolve a canonical/sigil/native address to a subject. `verb` is currently
-/// unused (reserved, like the shell) but kept for signature parity.
+/// Resolve a canonical/sigil/native address to a subject. `verb` is reserved.
 pub fn resolve(raw: &str, reg: &Value, _verb: Option<&Value>) -> Result<Value, String> {
     let uri = canonicalize(raw, reg);
-    if let Some(rest) = uri.strip_prefix("goo://") {
-        resolve_source(&source_args(rest), reg)
-    } else if let Some(rest) = uri.strip_prefix("goo+") {
-        let (scheme, value) = rest.split_once(':').unwrap_or((rest, ""));
-        resolve_scheme(scheme, value)
-    } else {
-        Err(format!("address_resolve: cannot canonicalize '{raw}'"))
+    let rest = uri
+        .strip_prefix("goo://")
+        .ok_or_else(|| format!("cannot canonicalize '{raw}'"))?;
+    let (domain, after) = rest.split_once('/').unwrap_or((rest, ""));
+    if domain.is_empty() {
+        return Err(format!("empty domain in '{uri}'"));
     }
-}
+    let (locator, refine) = match after.split_once('?') {
+        Some((l, r)) => (l, params_to_pairs(r)),
+        None => (after, Vec::new()),
+    };
+    let (is_search, q) = match locator.strip_prefix(";q=") {
+        Some(query) => (true, query),
+        None => (false, locator),
+    };
 
-fn resolve_scheme(scheme: &str, value: &str) -> Result<Value, String> {
-    match scheme {
-        "text" => {
-            let mt = mime::detect_content(value);
-            Ok(json!({ "type": mt, "text": value }))
-        }
+    match domain {
+        "text" => Ok(json!({ "type": mime::detect_content(q), "text": q })),
+        "file" => resolve_file(q),
         "clip" => {
-            if !value.is_empty() {
-                return Err(format!("address: named clipboard buffers ('^{value}') not yet supported"));
+            if !q.is_empty() {
+                return Err(format!("named clipboard buffers ('^{q}') not yet supported"));
             }
             Ok(json!({ "type": "text/plain", "text": selection::clipboard() }))
         }
@@ -178,88 +169,70 @@ fn resolve_scheme(scheme: &str, value: &str) -> Result<Value, String> {
             std::io::stdin().read_to_string(&mut s).ok();
             Ok(json!({ "type": "text/plain", "text": s }))
         }
-        "file" => {
-            let path = value.strip_prefix("//").unwrap_or(value);
-            if !std::path::Path::new(path).exists() {
-                return Err(format!("address: no such file: {path}"));
-            }
-            let mt = mime::detect_path(path)?;
-            let title = path.rsplit('/').next().unwrap_or(path);
-            let text = if mt.starts_with("text/") || mt == "application/json" || mt == "application/xml" {
-                std::fs::read_to_string(path).unwrap_or_default()
-            } else {
-                String::new()
-            };
-            Ok(json!({
-                "type": mt, "text": text, "id": path, "title": title,
-                "metadata": { "path": path }
-            }))
-        }
-        // URL schemes (http/https/ftp/claude/…) and any unknown scheme: a URI
-        // reference. .id carries the locator (the addressable-entity convention).
-        _ => {
-            let url = format!("{scheme}:{value}");
-            Ok(json!({ "type": "text/x-uri", "text": url, "id": url }))
-        }
+        "url" => Ok(json!({ "type": "text/x-uri", "text": q, "id": q })),
+        _ => resolve_source(domain, q, is_search, &refine, reg),
     }
 }
 
-fn resolve_source(spec: &str, reg: &Value) -> Result<Value, String> {
-    // Split off ?params.
-    let (spec, params) = match spec.split_once('?') {
-        Some((s, p)) => (s, params_to_pairs(p)),
-        None => (spec, Vec::new()),
-    };
-    let (source_key, input) = match spec.split_once(':') {
-        Some((a, b)) => (a, b),
-        None => (spec, ""),
-    };
-    if source_key.is_empty() {
-        return Err(format!("address: empty source in '{spec}'"));
+fn resolve_file(path: &str) -> Result<Value, String> {
+    let abs = abspath(path);
+    if !Path::new(&abs).exists() {
+        return Err(format!("no such file: {abs}"));
     }
+    let mt = mime::detect_path(&abs)?;
+    let title = abs.rsplit('/').next().unwrap_or(&abs);
+    let text = if mt.starts_with("text/") || mt == "application/json" || mt == "application/xml" {
+        std::fs::read_to_string(&abs).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    Ok(json!({
+        "type": mt, "text": text, "id": abs, "title": title,
+        "metadata": { "path": abs }
+    }))
+}
 
+/// A source domain (`[[sources]]`, matched by `name` or `prefix`). Value = exact
+/// `id`; search = fuzzy id/title substring. Empty locator = the domain's first
+/// item. `refine` (`?k=v`) filters by field-or-`.metadata` substring.
+fn resolve_source(domain: &str, q: &str, is_search: bool, refine: &[(String, String)], reg: &Value) -> Result<Value, String> {
     let source = reg
         .get("sources")
         .and_then(Value::as_array)
         .and_then(|arr| {
             arr.iter().find(|s| {
-                s.get("name").and_then(Value::as_str) == Some(source_key)
-                    || s.get("prefix").and_then(Value::as_str) == Some(source_key)
+                s.get("name").and_then(Value::as_str) == Some(domain)
+                    || s.get("prefix").and_then(Value::as_str) == Some(domain)
             })
         })
-        .ok_or_else(|| format!("address: no source named or prefixed '{source_key}'"))?;
+        .ok_or_else(|| format!("no domain or source named '{domain}'"))?;
 
     let emits = source.get("emits").and_then(Value::as_str).unwrap_or("text/plain");
     let list_cmd = source
         .get("list_cmd")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("address: source '{source_key}' has no list_cmd"))?;
+        .ok_or_else(|| format!("domain '{domain}' has no list_cmd"))?;
 
     let out = std::process::Command::new("bash")
         .arg("-c")
         .arg(list_cmd)
         .output()
-        .map_err(|e| format!("address: source '{source_key}' failed: {e}"))?;
-    let raw_items = String::from_utf8_lossy(&out.stdout);
-    let mut items: Vec<Value> = serde_json::from_str(raw_items.trim()).unwrap_or_default();
+        .map_err(|e| format!("domain '{domain}' failed: {e}"))?;
+    let mut items: Vec<Value> = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap_or_default();
     if items.is_empty() {
-        return Err(format!("address: source '{source_key}' produced no items"));
+        return Err(format!("domain '{domain}' produced no items"));
     }
 
-    // ?params: keep items where every key=value matches (case-insensitive
-    // substring) against the item's top-level field or its metadata field.
-    if !params.is_empty() {
+    if !refine.is_empty() {
         items.retain(|it| {
-            params.iter().all(|(k, v)| {
-                let field = it
-                    .get(k)
-                    .or_else(|| it.get("metadata").and_then(|m| m.get(k)));
+            refine.iter().all(|(k, v)| {
+                let field = it.get(k).or_else(|| it.get("metadata").and_then(|m| m.get(k)));
                 field_to_string(field).to_lowercase().contains(&v.to_lowercase())
             })
         });
         if items.is_empty() {
-            return Err(format!("address: no item in source '{source_key}' matches the given ?params"));
+            return Err(format!("no item in '{domain}' matches the given ?refine"));
         }
     }
 
@@ -271,24 +244,31 @@ fn resolve_source(spec: &str, reg: &Value) -> Result<Value, String> {
         o
     };
 
-    if input.is_empty() {
+    if q.is_empty() {
         return Ok(tagged(&items[0]));
     }
-    let q = input.to_lowercase();
-    items
-        .iter()
-        .find(|it| {
-            let id = it.get("id").and_then(Value::as_str).unwrap_or("").to_lowercase();
-            let title = it.get("title").and_then(Value::as_str).unwrap_or("").to_lowercase();
-            id.contains(&q) || title.contains(&q)
-        })
-        .map(tagged)
-        .ok_or_else(|| format!("address: no item matching '{input}' in source '{source_key}'"))
+    if is_search {
+        // Fuzzy: id or title contains the query (case-insensitive).
+        let needle = q.to_lowercase();
+        items
+            .iter()
+            .find(|it| {
+                let f = |k: &str| it.get(k).and_then(Value::as_str).unwrap_or("").to_lowercase();
+                f("id").contains(&needle) || f("title").contains(&needle)
+            })
+            .map(tagged)
+            .ok_or_else(|| format!("no item matching '{q}' in '{domain}'"))
+    } else {
+        // Value: exact id.
+        items
+            .iter()
+            .find(|it| it.get("id").and_then(Value::as_str) == Some(q))
+            .map(tagged)
+            .ok_or_else(|| format!("no item with id '{q}' in '{domain}'"))
+    }
 }
 
-/// Parse `k=v&k2=v2` into pairs; strip `*` wildcards (substring match). Skips
-/// fragments without `=`. Matches bash `_addr_params_to_json` (last wins is
-/// irrelevant here since we keep all pairs and `all()` them).
+/// Parse `k=v&k2=v2` into pairs; strip `*` wildcards (substring match).
 fn params_to_pairs(raw: &str) -> Vec<(String, String)> {
     raw.split('&')
         .filter_map(|pair| {
@@ -325,79 +305,63 @@ mod tests {
         })
     }
 
-    // ---- canonicalize (mirror tests/address.bats) ----
+    // ---- canonicalize ----
     #[test]
-    fn canon_source_to_goo_url() {
-        assert_eq!(canonicalize(":app:firefox", &json!({})), "goo://app/firefox");
+    fn canon_value_and_search_sigils() {
+        let r = json!({});
+        assert_eq!(canonicalize(":app/firefox", &r), "goo://app/firefox"); // value (/)
+        assert_eq!(canonicalize(":app:firefox", &r), "goo://app/;q=firefox"); // search (:)
+        assert_eq!(canonicalize(":things", &r), "goo://things/"); // domain default
+        assert_eq!(canonicalize(":ws/0:1", &r), "goo://ws/0:1"); // value path keeps later ':'
     }
     #[test]
-    fn canon_source_no_input() {
-        assert_eq!(canonicalize(":things", &json!({})), "goo://things/");
+    fn canon_text_clip_native_url() {
+        let r = json!({});
+        assert_eq!(canonicalize("+FOO==", &r), "goo://text/FOO=="); // force literal text
+        assert_eq!(canonicalize("hello world", &r), "goo://text/hello world"); // bare → text
+        assert_eq!(canonicalize("^", &r), "goo://clip/");
+        assert_eq!(canonicalize("^buf", &r), "goo://clip/buf");
+        assert_eq!(canonicalize("/tmp/foo", &r), "goo://file//tmp/foo"); // native abs
+        assert_eq!(canonicalize("~/x", &r), "goo://file/~/x");
+        assert_eq!(canonicalize("https://example.com/x", &r), "goo://url/https://example.com/x");
     }
     #[test]
-    fn canon_embedded_colons() {
-        assert_eq!(canonicalize(":ws:0:1", &json!({})), "goo://ws/0:1");
-    }
-    #[test]
-    fn canon_params_ride_along() {
-        assert_eq!(canonicalize(":things:thing?title=beta", &json!({})), "goo://things/thing?title=beta");
-    }
-    #[test]
-    fn canon_custom_sigil() {
-        assert_eq!(canonicalize("%alpha", &reg_with_sigil("%", ":thing:")), "goo://thing/alpha");
-    }
-    #[test]
-    fn canon_undefined_at_is_text() {
-        assert_eq!(canonicalize("@app:firefox", &json!({})), "goo+text:@app:firefox");
-    }
-    #[test]
-    fn canon_plus_handoff() {
-        assert_eq!(canonicalize("+file:a.md", &json!({})), "goo+file:a.md");
-    }
-    #[test]
-    fn canon_native_url() {
-        assert_eq!(canonicalize("https://example.com/x", &json!({})), "goo+https://example.com/x");
-    }
-    #[test]
-    fn canon_absolute_path() {
-        assert_eq!(canonicalize("/tmp/foo", &json!({})), "goo+file:///tmp/foo");
-    }
-    #[test]
-    fn canon_bare_text() {
-        assert_eq!(canonicalize("hello world", &json!({})), "goo+text:hello world");
-    }
-    #[test]
-    fn canon_already_canonical() {
+    fn canon_custom_sigil_and_passthrough() {
+        assert_eq!(canonicalize("%alpha", &reg_with_sigil("%", ":thing:")), "goo://thing/;q=alpha");
         assert_eq!(canonicalize("goo://app/firefox", &json!({})), "goo://app/firefox");
+        // undefined first char with no sigil → text
+        assert_eq!(canonicalize("@app", &json!({})), "goo://text/@app");
     }
 
     // ---- is_explicit ----
     #[test]
     fn explicit_recognizes_shapes() {
         let r = things_reg();
-        for s in [":app:firefox", "+file:x", "./foo", "../foo", "/abs/foo", "~/foo",
-                  "https://example.com", "goo://app/x", "goo+file:x", "%alpha"] {
+        for s in [":app/x", ":app:x", "+x", "^", "^buf", "./f", "../f", "/abs", "~/f",
+                  "https://x", "goo://app/x", "%alpha"] {
             assert!(is_explicit(s, &r), "should be explicit: {s}");
         }
-        for s in ["hello world", "docs/foo.md", "firefox", "@app:firefox"] {
+        for s in ["hello world", "firefox", "docs/foo.md", "@app"] {
             assert!(!is_explicit(s, &r), "should NOT be explicit: {s}");
         }
     }
 
-    // ---- resolve: scheme handlers ----
+    // ---- resolve: value domains ----
     #[test]
     fn resolve_text_and_url() {
         let r = json!({});
-        let t = resolve("just some words", &r, None).unwrap();
+        let t = resolve("just words", &r, None).unwrap();
         assert_eq!(t["type"], "text/plain");
-        assert_eq!(t["text"], "just some words");
+        assert_eq!(t["text"], "just words");
         let u = resolve("https://example.com", &r, None).unwrap();
         assert_eq!(u["type"], "text/x-uri");
-        assert_eq!(u["text"], "https://example.com");
-        assert_eq!(u["id"], "https://example.com"); // .id = the locator
+        assert_eq!(u["id"], "https://example.com");
+        let plus = resolve("+./not-a-path", &r, None).unwrap(); // forced text, not a file
+        assert_eq!(plus["type"], "text/plain");
+        assert_eq!(plus["text"], "./not-a-path");
     }
     #[test]
-    fn resolve_file_reads_contents_and_path() {
+    fn resolve_file_reads_contents_and_errors() {
         let dir = std::env::temp_dir().join(format!("goo-addr-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("sample.txt");
@@ -407,40 +371,43 @@ mod tests {
         assert_eq!(s["text"], "file body here\n");
         assert_eq!(s["metadata"]["path"], p);
         assert!(s["type"].as_str().unwrap().starts_with("text/"));
-        // missing file errors
-        assert!(resolve(&format!("{p}.nope"), &json!({}), None).is_err());
+        assert!(resolve(&format!("{p}.nope"), &json!({}), None).unwrap_err().contains("no such file"));
+        // :file/<path> value form too
+        assert_eq!(resolve(&format!(":file/{p}"), &json!({}), None).unwrap()["text"], "file body here\n");
         std::fs::remove_dir_all(&dir).ok();
     }
     #[test]
     fn resolve_named_clip_unsupported() {
-        let e = resolve("^somebuffer", &things_reg(), None).unwrap_err();
-        assert!(e.contains("not yet supported"));
+        assert!(resolve("^somebuffer", &things_reg(), None).unwrap_err().contains("not yet supported"));
     }
 
-    // ---- resolve: source handler ----
+    // ---- resolve: source domains (value=exact, search=fuzzy) ----
     #[test]
-    fn resolve_source_by_id_title_prefix_first() {
+    fn resolve_source_value_is_exact() {
         let r = things_reg();
-        assert_eq!(resolve(":things:alpha", &r, None).unwrap()["id"], "alpha");
-        assert_eq!(resolve(":things:beta thing", &r, None).unwrap()["id"], "beta");
-        assert_eq!(resolve(":thing:alpha", &r, None).unwrap()["id"], "alpha"); // prefix
-        assert_eq!(resolve(":things", &r, None).unwrap()["id"], "alpha"); // first
-        assert_eq!(resolve(":things:alpha", &r, None).unwrap()["type"], "application/vnd.test.thing");
+        assert_eq!(resolve(":things/alpha", &r, None).unwrap()["id"], "alpha"); // exact
+        assert_eq!(resolve(":thing/beta", &r, None).unwrap()["id"], "beta"); // prefix as domain
+        assert_eq!(resolve(":things", &r, None).unwrap()["id"], "alpha"); // default = first
+        assert_eq!(resolve(":things/alpha", &r, None).unwrap()["type"], "application/vnd.test.thing");
+        assert!(resolve(":things/alph", &r, None).is_err()); // not an exact id → no value
+        assert!(resolve(":things/Alpha", &r, None).is_err()); // case-sensitive exact
     }
     #[test]
-    fn resolve_source_errors() {
+    fn resolve_source_search_is_fuzzy() {
         let r = things_reg();
+        assert_eq!(resolve(":things:alph", &r, None).unwrap()["id"], "alpha"); // substring id
+        assert_eq!(resolve(":things:beta thing", &r, None).unwrap()["id"], "beta"); // title (ci)
+        assert_eq!(resolve("%alpha", &r, None).unwrap()["id"], "alpha"); // custom sigil → search
         assert!(resolve(":things:zeta", &r, None).is_err());
-        assert!(resolve(":nosuchsource:x", &r, None).unwrap_err().contains("no source"));
+        assert!(resolve(":nosuch:x", &r, None).unwrap_err().contains("no domain or source"));
     }
-
-    // ---- resolve: ?params ----
     #[test]
-    fn resolve_params_filter() {
+    fn resolve_refine_filters() {
         let r = things_reg();
-        assert!(resolve(":things:alpha?foo=bar", &r, None).is_err()); // unknown field excludes
-        assert_eq!(resolve(":things?title=beta", &r, None).unwrap()["id"], "beta");
-        assert_eq!(resolve(":things?title=*Alpha*", &r, None).unwrap()["id"], "alpha"); // * stripped
-        assert_eq!(resolve(":things:thing?title=beta", &r, None).unwrap()["id"], "beta"); // combine
+        // search with ?refine
+        assert_eq!(resolve(":things:?title=beta", &r, None).unwrap()["id"], "beta");
+        assert_eq!(resolve(":things:?title=*Alpha*", &r, None).unwrap()["id"], "alpha"); // * stripped
+        // unknown field excludes
+        assert!(resolve(":things/alpha?foo=bar", &r, None).is_err());
     }
 }
