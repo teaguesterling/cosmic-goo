@@ -6,8 +6,8 @@
 #
 #   goo-engine  — registry / mime / address / template / verbs / dispatch (lib)
 #   goo         — thin CLI (bin)            [slice 4 — the parity milestone]
-#   good        — warm daemon (bin)         [later slice]
-#   goo-compose — libcosmic dialog (bin)    [later slice]
+#   goo-compose — picker-driven sentence builder over goo (bin) [v0 dmenu; v1 libcosmic]
+#   good        — warm daemon (bin)         [later slice — gated on a launcher consumer]
 [workspace]
 resolver = "2"
-members = ["goo-engine", "goo"]
+members = ["goo-engine", "goo", "goo-compose"]
