@@ -26,25 +26,27 @@ The smoke test (R4 in `recon/findings.md`) found that `xdg-open "claude://claude
 
 ### Inline launcher composition isn't built yet
 
-The spec's `cosmic-launcher` inline grammar (typing a sentence with type-aware autocomplete) is the pop-launcher meta-plugin — not yet implemented. Today you compose via the CLI or the `goo compose` picker dialog. Note the CLI *does* understand the addressing sigils (`:source:`, `+scheme:`, `^`, customizable) — see [cli-reference](cli-reference.md#subject-addressing).
+The spec's `cosmic-launcher` inline grammar (typing a sentence with type-aware autocomplete) is the pop-launcher meta-plugin — not yet implemented. Today you compose via the CLI, the `bin/goo compose` picker dialog, or the early `goo-compose-gui` (iced). Note the CLI *does* understand `goo://` addressing — `:dom/id` (value), `:dom:query` (search), `+text`, `^`, native `./ ~/ https://`, and customizable sigils — see [cli-reference](cli-reference.md#subject-addressing).
 
 ## Resolved since the original plan
 
 These were limitations in earlier drafts and are now fixed:
 
 - **Raw template substitution** → solved by `{var|q}` / `{var|uri}` filters ([plugin-authoring](plugin-authoring.md#filters-making-substitutions-safe)).
-- **`goo compose` was a stub** → now a working picker-driven dialog (fuzzel/rofi/wofi/fzf). The *native libcosmic GUI* is still future polish.
+- **`goo compose` was a stub** → a working picker-driven dialog in `bin/goo`; the Rust CLI is non-interactive (scripted), and the GUI is the new `goo-compose-gui` (iced v1 scaffold; libcosmic swap planned).
 - **~370ms cold load** → a registry mtime cache (`$XDG_RUNTIME_DIR/cosmic-goo/registry.json`) makes warm loads ~10ms; cold load only recurs after a plugin edit.
-- **Source scoping unimplemented** → `:source:query` addressing works in the CLI now (Phase 2 reuses it for the launcher).
+- **Source scoping unimplemented** → goo:// addressing works in the CLI now (value/search/`?refine`).
+- **Shell-only / no install** → the engine is now the **Rust `goo` binary** (bash stays the reference; `make install` / `make install-bash`); 235+-test bats suite passes on both engines.
+- **Content-dispatch & canonical scheme** → `[[dispatch]]` + `goo dispatch` shipped; the **`goo://` scheme** is canonical (`goo://domain/path`, strict value/search), with **GOO default-verb dispatch** (`goo goo://…` runs the type's `default_for` verb).
 
 ## Roadmap
 
-The CLI, 21 plugins, addressing, completion, filters, command aliases, and the compose dialog are done. Remaining, roughly in spec-phase order:
+Done: the **Rust engine + CLI** (the default `goo`; bash is the reference), **24 plugins** (~82 verbs, 17 sources, incl. non-text handle domains), goo:// addressing + **GOO default-verb dispatch**, content-dispatch, completion, filters, command aliases, the compose dialog, and `goo-compose-gui` v1 (iced) scaffolding. Remaining:
 
-- **pop-launcher meta-plugin** — inline `cosmic-launcher` composition with type-aware autocomplete, emitting the canonical `cosmic-goo:` URIs the CLI already understands.
-- **scenes plugin** — workspace/app/tmux/cwd "scenes": anchors (browser, mail, Claude Desktop) and favorite slots.
-- **native compose dialog** — a libcosmic/iced three-panel GUI replacing the shell picker; sub-100ms wake, possibly a `goo-composed` daemon.
-- **content-dispatch rule table** — plumber-style "this content → that verb" routing.
-- **broadening & polish** — `fabric` patterns as verbs, packaging, more bindings examples.
+- **`goo-compose-gui` build-out** — grow the iced dialog (verb pane → exec), then **swap to libcosmic** for the native COSMIC look (the bones port mostly mechanically).
+- **pop-launcher meta-plugin** — inline `cosmic-launcher` composition with type-aware autocomplete, emitting canonical `goo://` URIs.
+- **`good` daemon (#31)** — warm registry + the HTTP-shaped request protocol over a unix socket (`GET`/`OPTIONS`, `Using:`/`To:`/`With:`/`Log:`, channels). Gated on a consumer (the launcher).
+- **type system, inference & coercion** — the next major arc: richer MIME modeling, shape+content inference, and `emits`≠`accepts` coercion (auto-route through a `{process}` channel) — what unlocks data-sink channels (SQL/S3/server). Designed-not-built.
+- **scenes plugin**, fabric patterns as verbs, packaging, more bindings examples.
 
-Full task-level breakdown: [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md).
+The addressing + request-protocol design is captured in [`doc/design/addressing-and-protocol.md`](design/addressing-and-protocol.md) (the goo:// URI layer — domains, capabilities, sigils) and [`doc/design/goo-protocol.md`](design/goo-protocol.md) (the request/wire layer — verbs, slots, params, OPTIONS); the daemon-era pieces are gated there. Full original plan: [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md).
