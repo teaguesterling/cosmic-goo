@@ -62,6 +62,22 @@ kind = "handle"     # "handle" = something to find; "content" = bytes (rarely de
 
 Naming convention: `application/vnd.<tool-name>.<subtype>`. Vendor namespaces are first-come-first-served by convention — don't squat on names you don't maintain.
 
+#### `is_a` — declaring a supertype
+
+`accepts` matching is **subtype-aware**. A verb's `accepts` patterns match not only by MIME glob but up a subtype lattice. Three things make `X` a subtype of an `accepts` pattern `P`:
+
+1. the glob (`P = "text/*"` matches `text/markdown` — as always);
+2. the structured-suffix rule (`application/vnd.foo+json` is a subtype of `application/json`, same top-level type);
+3. **declared `is_a`** — list one or more supertypes on a `[[types]]` entry and the lattice walks them transitively:
+
+```toml
+[[types]]
+name = "application/vnd.my-tool.note"
+is_a = ["text/markdown"]   # any verb accepting text/markdown (or text/*) now applies
+```
+
+`is_a` is a DAG (cycles are guarded). Use it to plug a vendor handle/content type into existing verb vocabularies without re-declaring `accepts` everywhere. (Lattice resolution is in the Rust engine; the bash reference matches by glob + suffix only.)
+
 ### Sources
 
 A source is a place to enumerate typed items. Each source declares one primary `emits` type and a `list_cmd` that produces JSON:

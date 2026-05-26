@@ -230,11 +230,11 @@ fn exec_verb(
     bash_exec(&rendered.cmd)
 }
 
-/// True if any of `verb.accepts` matches `text/plain`.
-fn accepts_text(verb: &Value) -> bool {
+/// True if any of `verb.accepts` accepts `text/plain` (subtype-aware).
+fn accepts_text(verb: &Value, reg: &Value) -> bool {
     verb.get("accepts")
         .and_then(|a| a.as_array())
-        .map(|arr| arr.iter().filter_map(|p| p.as_str()).any(|p| mime::mime_matches(p, "text/plain")))
+        .map(|arr| arr.iter().filter_map(|p| p.as_str()).any(|p| mime::is_subtype("text/plain", p, reg)))
         .unwrap_or(false)
 }
 
@@ -603,7 +603,7 @@ fn cmd_complete(stage: Option<&str>, arg: Option<&str>) -> i32 {
                 for pattern in &accepts {
                     for source in arr("sources").iter().filter(|s| s.get("enumerate") != Some(&json!(false))) {
                         let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
-                        if emits.is_empty() || !mime::mime_matches(pattern, emits) {
+                        if emits.is_empty() || !mime::is_subtype(emits, pattern, &reg) {
                             continue;
                         }
                         if let Some(lc) = source.get("list_cmd").and_then(|c| c.as_str()) {
@@ -864,7 +864,7 @@ fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str
 
     // 2. Bare positional.
     if !positional.is_empty() {
-        if accepts_text(verb) {
+        if accepts_text(verb, reg) {
             let mt = mime::detect_content(positional);
             return Ok(json!({ "type": mt, "text": positional }));
         }
@@ -878,7 +878,7 @@ fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str
     }
 
     // 3. No positional: implicit chain — stdin → selection → clipboard.
-    if accepts_text(verb) {
+    if accepts_text(verb, reg) {
         let mut text = stdin_text.to_string();
         if text.is_empty() {
             text = selection::primary();
@@ -907,7 +907,7 @@ fn handle_search(reg: &Value, verb: &Value, query: &str) -> Option<Value> {
     for pat in accepts.iter().filter_map(|p| p.as_str()) {
         for source in sources {
             let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
-            if emits.is_empty() || !mime::mime_matches(pat, emits) {
+            if emits.is_empty() || !mime::is_subtype(emits, pat, reg) {
                 continue;
             }
             let lc = match source.get("list_cmd").and_then(|c| c.as_str()) {
@@ -935,7 +935,7 @@ fn implicit_source_item(reg: &Value, verb: &Value) -> Option<Value> {
     for pat in accepts.iter().filter_map(|p| p.as_str()) {
         for source in sources.iter().filter(|s| s.get("implicit") == Some(&json!(true))) {
             let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
-            if emits.is_empty() || !mime::mime_matches(pat, emits) {
+            if emits.is_empty() || !mime::is_subtype(emits, pat, reg) {
                 continue;
             }
             let lc = match source.get("list_cmd").and_then(|c| c.as_str()) {

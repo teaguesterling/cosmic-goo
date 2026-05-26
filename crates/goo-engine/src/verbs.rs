@@ -33,13 +33,13 @@ fn valid_for(verb: &Value, subject: &Value) -> bool {
 /// True if any of `verb.accepts` glob-matches `mime`. A verb with no `accepts`
 /// never matches a (non-empty) type — mirrors `jq -r '.accepts[]?'` yielding
 /// nothing in the shell.
-fn accepts_type(verb: &Value, mime: &str) -> bool {
+fn accepts_type(verb: &Value, mime: &str, reg: &Value) -> bool {
     verb.get("accepts")
         .and_then(|a| a.as_array())
         .map(|arr| {
             arr.iter()
                 .filter_map(|p| p.as_str())
-                .any(|pat| mime::mime_matches(pat, mime))
+                .any(|pat| mime::is_subtype(mime, pat, reg))
         })
         .unwrap_or(false)
 }
@@ -53,7 +53,7 @@ pub fn lookup(reg: &Value, name: &str, type_filter: Option<&str>) -> Option<Valu
         .iter()
         .find(|v| v.get("name").and_then(|n| n.as_str()) == Some(name))?;
     if let Some(t) = type_filter {
-        if !accepts_type(verb, t) {
+        if !accepts_type(verb, t, reg) {
             return None;
         }
     }
@@ -88,7 +88,7 @@ pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
     };
     verbs
         .iter()
-        .filter(|v| accepts_type(v, stype) && valid_for(v, subject))
+        .filter(|v| accepts_type(v, stype, reg) && valid_for(v, subject))
         .cloned()
         .collect()
 }
@@ -117,7 +117,7 @@ pub fn render(
 ) -> Result<Rendered, String> {
     // 1. Subject type must match accepts (when the subject is typed).
     let stype = subject.get("type").and_then(|t| t.as_str()).unwrap_or("");
-    if !stype.is_empty() && !accepts_type(verb, stype) {
+    if !stype.is_empty() && !accepts_type(verb, stype, reg) {
         return Err(format!(
             "subject type '{stype}' does not match verb accepts"
         ));
@@ -135,7 +135,7 @@ pub fn render(
         if got.is_empty() {
             return Err(format!("verb requires object of type '{expected_obj}'"));
         }
-        if !mime::mime_matches(expected_obj, got) {
+        if !mime::is_subtype(got, expected_obj, reg) {
             return Err(format!(
                 "object type '{got}' does not match '{expected_obj}'"
             ));
@@ -314,7 +314,7 @@ fn gather_object_items(
     if let Some(arr) = sources {
         for source in arr {
             let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
-            if emits.is_empty() || !mime::mime_matches(otype, emits) {
+            if emits.is_empty() || !mime::is_subtype(emits, otype, reg) {
                 continue;
             }
             if let Some(lc) = source.get("list_cmd").and_then(|c| c.as_str()) {
