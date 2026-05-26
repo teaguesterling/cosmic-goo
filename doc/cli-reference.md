@@ -3,14 +3,14 @@
 ## Synopsis
 
 ```
-goo                                      # opens the compose dialog (picker-driven)
+goo                                      # no args: prints this usage (a true CLI — never launches a GUI)
 goo <verb> [POSITIONAL ...] [--FLAG=VALUE ...]
 goo <address>                            # no verb: resolve the address, run its type's default verb
 goo list <source>
 goo describe <verb>
 goo plugins
 goo validate
-goo compose                              # picker-driven subject→verb→object dialog
+goo compose                              # build a sentence (scripted via GOO_COMPOSE_ANSWERS)
 goo --help | -h | help
 ```
 
@@ -69,16 +69,16 @@ $ goo list apps | jq '.[].id'
 
 ### `goo compose`
 
-Opens a picker-driven dialog that walks you through building a sentence: pick a **subject** (current selection/clipboard, or an item from any source), then a **verb** (filtered to those that accept the subject's type), then an **object** if the verb takes one, then any **adverb** values, then confirm a preview and execute.
+Builds a sentence step by step — **subject** → **verb** (filtered to those that accept the subject's type) → **object** (if the verb takes one) → **adverb** values → confirm → execute — and runs it through the same path as a plain `goo <verb> <subject> …`.
 
-It drives a dmenu-protocol picker — `fuzzel`, `rofi`, `wofi`, or `fzf`, with `zenity` as a GTK fallback for systems without a wlroots picker — auto-detected (override with `GOO_PICKER`). Each step reuses the same backend as the CLI (`address_resolve`, `verb_for_subject`, `verb_apply`), so a compose run executes identically to typing the equivalent `goo <verb> <subject> …`.
+The `goo` CLI itself is **non-interactive**: it drives compose only from the scripted `GOO_COMPOSE_ANSWERS` queue (a file with one choice per line — used by tests and automation). It deliberately **never launches a GUI**; with no answers file it just prints a hint.
 
 ```bash
-goo compose                 # auto-detected picker
-GOO_PICKER=rofi goo compose # force a specific picker
+printf '%s\n' :clip: wrap dump yes > answers
+GOO_COMPOSE_ANSWERS=answers goo compose
 ```
 
-> This is the v0 shell dialog — a sequential picker, not yet the spec's side-by-side three-panel GUI. The native libcosmic/iced version is later polish on the same flow. Scripted/test invocations can pre-seed selections via `GOO_COMPOSE_ANSWERS` (a file with one choice per line).
+> **Interactive** picker-driven compose (auto-detecting `fuzzel`/`rofi`/`wofi`/`fzf`, `zenity` fallback; override with `GOO_PICKER`) lives in the bash engine — `bin/goo compose` — and, ahead, in the native libcosmic `goo-compose` dialog ([#39](https://github.com/teaguesterling/cosmic-goo/issues/39)). The Rust CLI stays a pure command-line tool; spawning a launcher is a GUI front-end's job, not the CLI's.
 
 ### `goo dispatch <input>`
 

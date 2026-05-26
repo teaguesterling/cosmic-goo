@@ -192,18 +192,9 @@ goo switch :ws:<TAB>       # → :ws:0:0  :ws:0:1  :ws:1:0  :ws:1:1
 
 ## 8. The compose dialog
 
-`goo compose` walks the whole sentence with a picker (fuzzel/rofi/wofi/fzf):
+`goo compose` builds the whole sentence step by step — Subject → Verb (type-filtered) → Object (if any) → Adverbs → confirm → run.
 
-```
-$ goo compose
-# 1. pick a Subject  (selection/clipboard + items from enumerable sources)
-# 2. pick a Verb     (filtered to those that accept the subject's type)
-# 3. pick an Object  (only if the verb takes one)
-# 4. pick Adverbs    (selector values)
-# 5. confirm → it runs, identically to typing the equivalent goo command
-```
-
-Bind it to a key for a "summon a launcher" feel.
+The `goo` CLI itself is **non-interactive** — it never opens a window; it drives compose only from a scripted answer queue (`GOO_COMPOSE_ANSWERS`, one choice per line — for automation and tests). The **interactive**, picker-driven version (fuzzel/rofi/wofi/fzf) lives in the bash engine, `bin/goo compose`, and ahead in the native libcosmic `goo-compose` dialog. Bind *that* to a key for a "summon a launcher" feel.
 
 ---
 
