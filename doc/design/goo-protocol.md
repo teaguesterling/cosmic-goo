@@ -42,7 +42,8 @@ A full invocation is one HTTP request. The slots are grammatical **cases**
 | **verb** (method) | the action | a method token | `SUMMARIZE`, `MOVE`, `GOO` |
 | **subject** (request-target URI) | Theme / Patient | what is acted on | `goo://file/~/article.md` |
 | **`Using:`** | Agent / Instrument | what performs / through what channel | `goo://channel/fabric` |
-| **`To:`** | Recipient / Goal (terminative) | what receives / where it lands / a target value | `goo://chat/new`, `spanish` |
+| **`To:`** | Recipient / Goal (terminative) | what receives / where the *result* lands / a target value | `goo://chat/new`, `spanish` |
+| **`Log:`** | (secondary Goal) | where *diagnostic / secondary* output lands | `goo://file/~/goo.log`, `^scratch` |
 | **`With:`** | Manner | opaque `key=value` config | `depth=brief model=iq4xs` |
 | **body** | inline Theme | data, when there's no addressable referent | piped text |
 
@@ -156,6 +157,18 @@ per verb in OPTIONS:
   /new/path` (doesn't exist yet) stays the literal path for the handler to create.
   A verb may set `resolve = "require"` (unresolved → `424`) or `"literal"` (never
   resolve) instead of the default `"try"`.
+- **`Log:` — a second `{write}` destination**, resolved exactly like `To:`
+  (try-resolve; fall through to a literal path). Same machinery, different
+  *stream*: `To:` lands the **result**, `Log:` lands **diagnostic / secondary**
+  output ("if you have logs, put them here"). The destination's own `{write}`
+  capability does the landing — a file appends, a buffer accumulates, an `s3` /
+  log-service channel ingests — so `Log:` needs **no separate instrument** for
+  plain landing. CLI: `--log`. (A `Log-Using:` — a `{process}` channel that
+  *transforms* the log stream before it lands, e.g. json-format or level-filter —
+  is plausible by symmetry with `Using:`/`To:`, but **deferred**: logs are mostly
+  produced as a byproduct of the verb's own execution and just need a sink; the
+  transform case is rare and is the same `Using:` pattern applied to the log
+  stream when it's actually needed.)
 - **`With:` — NEVER resolved by the protocol.** Opaque `key=value`. A value MAY
   be a `goo://` URI; resolving it is the **handler's** discretion. This is the
   definition of `With:`: the catch-all manner/config slot.
@@ -394,9 +407,20 @@ ROT13     goo://text/Hello   To: goo://contact/x  # lenient: 'to' ignored | stri
   bag-of-related-entities need emerges; no dedicated header for now.
 - **OPTIONS narrowing beyond `Goo-Verb:`** — e.g. partial `With:` validation.
 - **`Via:`-style multi-hop `Using:` chain** (SIP stacks `Via:`) — not needed yet.
-- **`Log:` — a second output sink.** Primary result lands at `To:`; diagnostic /
-  secondary output would land at `Log:` (just another typed `{write}`
-  destination, same machinery as `To:`). CLI `--log`. Future.
+- **`Log:`** — now a first-class slot (§2/§4): a second `{write}` destination for
+  diagnostic/secondary output. `Log-Using:` (a transform channel for the log
+  stream) remains deferred — see §4.
+- **Type system, inference & coercion (the next major arc).** The slot model
+  already *accommodates* data-sink/transform endpoints — `To: goo://s3/bucket/key`,
+  `Using: goo://channel/sql-import`, a custom server channel — because they're
+  just `{write}`/`{process}` domains. What's *missing* is the **type machinery**:
+  richer MIME/type modeling, **inference** (shape + content → type, with weighted
+  choices), and **coercion** — when `emits`(instrument) ≠ `accepts`(destination),
+  do we hard-fail (`415`, v1) or insert an **implicit coercion channel** (json→sql
+  rows, csv→json, text→bytes)? Coercion channels would be ordinary `{process}`
+  domains the engine can *auto-route through* on a type gap. This is what unlocks
+  "send this JSON to a SQL table / an S3 bucket / a custom server" cleanly. Big;
+  designed-not-built; the slot model is ready for it, the type system isn't yet.
 - **Named buffers (`^name`).** `^` is the unnamed clipboard; `^scratch` /
   `goo://buffer/scratch` is a named `{read, write}` buffer (a read cmd + a write
   cmd; `?mode=append` vs replace). The clipboard is the degenerate one-buffer
