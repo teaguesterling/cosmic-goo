@@ -11,7 +11,7 @@ kind = "handle"
 name = "processes"
 prefix = "ps"
 emits = "application/vnd.process"
-enumerate = false   # the full process table is noisy; reach via :ps:<query> on demand
+enumerate = false   # the full process table is noisy; reach on demand: :ps/<pid> (value)
 # pid + comm as a JSON array of {id, title}.
 list_cmd = '''ps -eo pid=,comm= | jq -Rsc '[splits("\n")|select(length>0)|capture("\\s*(?<id>[0-9]+)\\s+(?<title>.+)")]' '''
 

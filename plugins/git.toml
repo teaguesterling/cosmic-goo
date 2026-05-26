@@ -12,7 +12,7 @@ name = "repos"
 prefix = "repo"
 icon = "folder-git"
 emits = "application/vnd.git.repo"
-enumerate = false   # many repos; reach via :repo: on demand
+enumerate = false   # many repos; reach on demand: :repo/<name> (value) or :repo:<query>
 # Discover repos under GOO_GIT_ROOTS (default ~/Projects ~/.dotfiles). -L
 # follows the common ~/Projects -> /mnt/... symlink. .path is the worktree.
 list_cmd = """find -L ${GOO_GIT_ROOTS:-$HOME/Projects $HOME/.dotfiles} -maxdepth 2 -type d -name .git 2>/dev/null \\
@@ -56,7 +56,7 @@ kind = "handle"
 name = "branches"
 prefix = "br"
 emits = "application/vnd.git.branch"
-enumerate = false   # branches of the CWD repo; reach via :br:<name> on demand
+enumerate = false   # branches of the CWD repo; reach on demand: :br/<name> (value)
 list_cmd = '''git branch --format='%(refname:short)' | jq -Rsc '[splits("\n")|select(length>0)|{id:.,title:.}]' '''
 
 [[verbs]]

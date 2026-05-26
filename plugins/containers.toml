@@ -11,7 +11,7 @@ kind = "handle"
 name = "containers"
 prefix = "ctr"
 emits = "application/vnd.container"
-enumerate = false   # dynamic; reach via :ctr:<query> on demand
+enumerate = false   # dynamic; reach on demand: :ctr/<name> (value) — goo://ctr/<name>
 # Running container names (docker, else podman). `{{.Names}}` is Go-template
 # syntax for the runtime, not a goo substitution — list_cmd is run raw.
 list_cmd = '''{ docker ps --format '{{.Names}}' 2>/dev/null || podman ps --format '{{.Names}}' 2>/dev/null; } | jq -Rsc '[splits("\n")|select(length>0)|{id:.,title:.}]' '''
