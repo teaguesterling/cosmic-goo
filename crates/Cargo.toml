@@ -4,10 +4,16 @@
 # is the conformance contract — see doc/design/rust-port-scoping.md). Crates land
 # one slice at a time, each staying green against the same tests.
 #
-#   goo-engine  — registry / mime / address / template / verbs / dispatch (lib)
-#   goo         — thin CLI (bin)            [slice 4 — the parity milestone]
-#   goo-compose — picker-driven sentence builder over goo (bin) [v0 dmenu; v1 libcosmic]
-#   good        — warm daemon (bin)         [later slice — gated on a launcher consumer]
+#   goo-engine      — registry / mime / address / template / verbs / dispatch (lib)
+#   goo             — thin CLI (bin)        [slice 4 — the parity milestone]
+#   goo-compose     — dmenu/scripted sentence builder over goo (bin) [v0; the test surface]
+#   goo-compose-gui — native (iced) compose dialog (bin) [v1; libcosmic swap later]
+#   good            — warm daemon (bin)     [later slice — gated on a launcher consumer]
+#
+# goo-compose-gui is a workspace member but NOT a default-member: it pulls a GUI
+# toolkit (heavy first compile), so bare `cargo build`/`cargo test` and the
+# `make` targets skip it. Build it explicitly: `cargo build -p goo-compose-gui`.
 [workspace]
 resolver = "2"
-members = ["goo-engine", "goo", "goo-compose"]
+members = ["goo-engine", "goo", "goo-compose", "goo-compose-gui"]
+default-members = ["goo-engine", "goo", "goo-compose"]

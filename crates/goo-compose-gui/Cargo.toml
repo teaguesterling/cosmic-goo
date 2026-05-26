@@ -1,0 +1,15 @@
+[package]
+name = "goo-compose-gui"
+version = "0.1.0"
+edition = "2021"
+description = "Native compose dialog for goo (iced) — v1 GUI front-end; libcosmic swap is a follow-up"
+license = "MIT"
+
+[[bin]]
+name = "goo-compose-gui"
+path = "src/main.rs"
+
+[dependencies]
+goo-engine = { path = "../goo-engine" }
+serde_json = "1"
+iced = "0.14"
