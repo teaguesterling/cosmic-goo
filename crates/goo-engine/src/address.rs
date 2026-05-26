@@ -252,10 +252,7 @@ fn resolve_source(domain: &str, q: &str, is_search: bool, refine: &[(String, Str
         let needle = q.to_lowercase();
         items
             .iter()
-            .find(|it| {
-                let f = |k: &str| it.get(k).and_then(Value::as_str).unwrap_or("").to_lowercase();
-                f("id").contains(&needle) || f("title").contains(&needle)
-            })
+            .find(|it| fuzzy_matches(it, &needle))
             .map(tagged)
             .ok_or_else(|| format!("no item matching '{q}' in '{domain}'"))
     } else {
@@ -266,6 +263,14 @@ fn resolve_source(domain: &str, q: &str, is_search: bool, refine: &[(String, Str
             .map(tagged)
             .ok_or_else(|| format!("no item with id '{q}' in '{domain}'"))
     }
+}
+
+/// The shared fuzzy-search predicate: `item`'s `id` or `title` contains
+/// `needle` (which must already be lowercased). Used by domain search here and
+/// by the bin's bare-positional handle search, so the two can't drift.
+pub fn fuzzy_matches(item: &Value, needle: &str) -> bool {
+    let f = |k: &str| item.get(k).and_then(Value::as_str).unwrap_or("").to_lowercase();
+    f("id").contains(needle) || f("title").contains(needle)
 }
 
 /// Parse `k=v&k2=v2` into pairs; strip `*` wildcards (substring match).

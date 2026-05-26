@@ -859,7 +859,7 @@ fn read_stdin() -> String {
 fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str) -> Result<Value, String> {
     // 1. Explicit positional → the addressing resolver.
     if !positional.is_empty() && address::is_explicit(positional, reg) {
-        return address::resolve(positional, reg, Some(verb)).map_err(|e| e.replace("address: ", ""));
+        return address::resolve(positional, reg, Some(verb));
     }
 
     // 2. Bare positional.
@@ -915,10 +915,7 @@ fn handle_search(reg: &Value, verb: &Value, query: &str) -> Option<Value> {
                 None => continue,
             };
             let items: Vec<Value> = serde_json::from_str(bash_capture(lc).trim()).unwrap_or_default();
-            let found = items.iter().find(|it| {
-                let f = |k: &str| it.get(k).and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-                f("id").contains(&q) || f("title").contains(&q)
-            });
+            let found = items.iter().find(|it| address::fuzzy_matches(it, &q));
             if let Some(it) = found {
                 let mut o = it.clone();
                 if let Some(m) = o.as_object_mut() {

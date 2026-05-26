@@ -166,10 +166,10 @@ fn compose_subject_candidates(reg: &Value) -> String {
     let sel = trunc(selection::primary());
     let clip = trunc(selection::clipboard());
     if !sel.is_empty() {
-        out += &format!(":sel:\tselection: {sel}\n");
+        out += &format!("goo://sel/\tselection: {sel}\n");
     }
     if !clip.is_empty() {
-        out += &format!(":clip:\tclipboard: {clip}\n");
+        out += &format!("goo://clip/\tclipboard: {clip}\n");
     }
     if let Some(sources) = reg.get("sources").and_then(|s| s.as_array()) {
         for source in sources {
@@ -192,7 +192,7 @@ fn compose_subject_candidates(reg: &Value) -> String {
             for it in items {
                 let id = it.get("id").and_then(|i| i.as_str()).unwrap_or("");
                 let title = it.get("title").and_then(|t| t.as_str()).unwrap_or(id);
-                out += &format!(":{prefix}:{id}\t{title} ({name})\n");
+                out += &format!("goo://{prefix}/{id}\t{title} ({name})\n");
             }
         }
     }
