@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Declares the goo:// URL scheme as a MIME type so the desktop can name it and
+  route it to the handler in data/applications/goo.desktop. URL schemes are
+  matched by their synthetic `x-scheme-handler/<scheme>` type (not a file glob),
+  so there is intentionally no <glob> here.
+
+  Registration (deferred — not done by `make install` yet):
+    install -Dm644 data/mime/packages/goo.xml \
+        ~/.local/share/mime/packages/goo.xml
+    update-mime-database ~/.local/share/mime
+    install -Dm644 data/applications/goo.desktop \
+        ~/.local/share/applications/goo.desktop
+    update-desktop-database ~/.local/share/applications
+    xdg-mime default goo.desktop x-scheme-handler/goo
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="x-scheme-handler/goo">
+    <comment>goo address</comment>
+  </mime-type>
+</mime-info>

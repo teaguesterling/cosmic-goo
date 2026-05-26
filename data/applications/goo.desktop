@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=goo
+GenericName=Grammar Of Operations
+Comment=Resolve a goo:// address and run its default action
+# %u is the opened goo:// URL. `goo <goo://…>` with no verb resolves the
+# subject and runs its type's default_for verb — the GOO default verb. Relies
+# on `goo` being on PATH (the launcher `make install` links into ~/.local/bin).
+Exec=goo %u
+Terminal=false
+# A protocol handler, not a launchable app — keep it out of the app menu.
+NoDisplay=true
+Icon=application-x-executable
+MimeType=x-scheme-handler/goo;
+Categories=Utility;
+Keywords=goo;grammar;compose;launcher;
