@@ -248,30 +248,24 @@ Every adverb declares scope via exactly one of:
 
 ## Sigils
 
-A sigil is a single leading character that expands into a canonical address when you type a subject. The two **core** sigils are fixed:
+A sigil is a single leading character that expands into a canonical `goo://<domain>/<path>` address when you type a subject. The **built-in** sigils are fixed (and use only shell-unquoted characters):
 
-- `:source:input` → `goo://source/input` (source lookup — search `input` in a source; the registrable `//` form)
-- `+scheme:value` → `goo+scheme:value` (scheme handoff — hand `value` to a scheme handler)
+- `:dom/path` → `goo://dom/path` — a **value** (the exact id in a domain)
+- `:dom:query` → `goo://dom/;q=query` — a **search** (fuzzy id/title in a domain)
+- `+text` → `goo://text/text` — force literal text (no inference)
+- `^` / `^name` → `goo://clip/` — clipboard (built-in)
 
-Everything else is a **customizable sigil**, declared with `[[sigils]]` in any plugin:
-
-```toml
-[[sigils]]
-char = "^"
-expands = "+clip:"
-description = "clipboard"
-```
-
-When a subject argument begins with `^`, the leading char is replaced by the expansion (`^alt` → `+clip:alt`) and then run through the core canonicalizer. Expansions usually target a core sigil (`:…` or `+…`), so everything funnels through one resolver.
-
-The built-in `sigils.toml` ships only `^` → `+clip:`. `@` is intentionally undefined — claim it for whatever source you reach for most:
+Bare input and native shapes (`./ ~/ /` → file, `scheme://` → url, else text) infer without a sigil. **Everything else is a customizable sigil**, declared with `[[sigils]]` in any plugin — the leading char is replaced by the expansion and re-canonicalized:
 
 ```toml
 # ~/.config/cosmic-goo/plugins/my-sigils.toml
 [[sigils]]
 char = "@"
-expands = ":app:"     # @firefox -> :app:firefox -> cosmic-goo:app:firefox
+expands = "goo://app/"     # @firefox -> goo://app/firefox (a value)
+description = "my apps"     # use ":app:" to expand to a search instead
 ```
+
+`@` ships intentionally undefined — claim it for whatever domain you reach for most. User config wins over built-ins (later-loaded plugins override by `char`).
 
 User config wins over built-ins (later-loaded plugins override by `char`). `goo validate` rejects sigils whose `char` is multi-character, missing an expansion, or collides with a reserved/native prefix (`:`, `+`, `.`, `/`, `~`, or any alphanumeric — those would break URL/path/text detection).
 

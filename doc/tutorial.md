@@ -60,15 +60,15 @@ A subject can be more than literal text. The shapes:
 ```
 $ goo wc ./README.md            # a FILE (./ ~/ / are read as files — contents, not the path)
 $ goo open https://x.com        # a URL (scheme:// is recognized; `open` handles files AND links)
-$ goo upper ^                    # ^ = the clipboard (a built-in sigil for +clip:)
-$ goo activate :app:firefox      # :source:query — look "firefox" up in the apps source
-$ goo switch :ws:0:1             # workspace 0:1, via the workspaces source
+$ goo upper ^                    # ^ = the clipboard (built-in → goo://clip/)
+$ goo activate :app:firefox      # :dom:query — SEARCH the apps domain for "firefox" (fuzzy)
+$ goo switch :ws/0:1             # :dom/path — the EXACT workspace value 0:1
 ```
 
-The `:source:` form and `^`/`+`/`@` sigils all rewrite to a canonical `goo://` URI under the hood — see [cli-reference](cli-reference.md#subject-addressing). Two everyday rules:
+Everything rewrites to one canonical `goo://<domain>/<path>` URI — see [cli-reference](cli-reference.md#subject-addressing). The two everyday rules:
 
-- **Files and URLs need no sigil** — `./notes.md` and `https://…` are recognized by shape.
-- **`:source:query`** reaches anything a source lists. Discover sources with `goo list`:
+- **Files and URLs need no sigil** — `./notes.md` and `https://…` are recognized by shape. `+x` forces literal text.
+- **`:dom:query` searches (fuzzy), `:dom/id` is the exact value.** Either reaches anything a domain lists — discover them with `goo list`:
 
 ```
 $ goo list apps | jq -r '.[].id'

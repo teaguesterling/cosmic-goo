@@ -104,7 +104,7 @@ user (`@mine` → `goo://my-long-domain/favorite-thing`).
 | `+foo` | **literal text**, no inference | `goo://text/foo` |
 | `:dom/path` | **domained value** — exact id (first segment is the domain; `/`=value) | `goo://dom/path` |
 | `:dom:query` | **domained search** — fuzzy (`:` after the domain = the `;q=` query) | `goo://dom/;q=query` |
-| `^` · `^name` | **clipboard** / named buffer (built-in; user-overridable alias) | `goo://clip/` · `goo://clip/name` |
+| `^` · `^name` | **clipboard** / named buffer (built-in) | `goo://clip/` · `goo://clip/name` |
 | *your chars* | **user alias** (`[[sigils]]`), e.g. `@` | their `expands` |
 
 The first separator after the domain decides: `:dom/a:b` → value `goo://dom/a:b`

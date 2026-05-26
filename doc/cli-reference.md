@@ -114,22 +114,26 @@ A subject argument can take several forms. They all resolve through one model: e
 
 | You type | Means | Example |
 |---|---|---|
-| bare text | literal text content | `goo upper "hello"` |
+| bare text | literal text content (shape-inferred) | `goo upper "hello"` |
 | `./x`, `../x`, `/x`, `~/x` | a **file** (read contents; path in `metadata.path`) | `goo summarize ./notes.md` |
 | `https://…`, `claude://…` | a **URL** (`text/x-uri`) | `goo open https://example.com` |
-| `:source:query` | item from a named **source** (by `name` or `prefix`) | `goo activate :app:firefox` |
-| `:source:query?k=v` | …further filtered by field (case-insensitive substring; `*` optional) | `goo activate :app:firefox?title=*Claude*` |
-| `:source` | the source's first/default item | `goo summarize :clip` |
-| `+scheme:value` | explicit scheme handoff | `goo summarize +file:./notes.md` |
-| `^` / `^name` | clipboard (a built-in **custom sigil** → `+clip:`; `^name` reserved) | `goo summarize ^` |
-| `goo://…` / `goo+…` | the canonical URI directly (for scripts/IPC) | `goo summarize 'goo+file:///abs/x.md'` |
+| `+text` | **literal text**, no inference | `goo upper +./not-a-path` |
+| `:dom/path` | a **value** in a domain — the **exact** id | `goo activate :app/firefox` |
+| `:dom:query` | a **search** in a domain — **fuzzy** id/title | `goo activate :app:firefox` |
+| `:dom:query?k=v` | …refined by field (case-insensitive substring; `*` optional) | `goo activate :app:firefox?title=*Claude*` |
+| `:dom` | the domain's first/default item | `goo summarize :clip` |
+| `^` / `^name` | clipboard / named buffer (built-in) | `goo summarize ^` |
+| `goo://dom/path` | the canonical URI directly (machines/IPC) | `goo summarize 'goo://file//abs/x.md'` |
 
-`:` and `+` are the two **core** sigils. `:source:input` rewrites to the canonical, registrable URL form **`goo://source/input`** (`?params` ride along); `+scheme:value` rewrites to **`goo+scheme:value`** (a direct handoff). Everything else is a **customizable sigil**: a single character that expands into one of those forms. `^` → `+clip:` ships as a default; `@` ships intentionally undefined (claim it in your own config). Define your own in any plugin TOML:
+**One canonical form:** everything rewrites to `goo://<domain>/<path>[;q=<query>][?refine]`. A **value** (`goo://app/firefox`, sigil `:app/firefox`) is the **exact** id; a **search** (`goo://app/;q=firefox`, sigil `:app:firefox`) is **fuzzy** over the domain's items. Resolution is strict — the form says which you mean. The built-in **value domains** `text` / `file` / `clip` / `sel` / `stdin` / `url` cover the non-source subjects; every other domain is a `[[sources]]` entry (by `name` or `prefix`).
+
+Sigils are terminal shorthand (machines emit `goo://` directly). The built-ins — `:` (domained: `/`=value, `:`=search), `+` (text), `^` (clip) — use only shell-unquoted characters, so you never quote an address. Everything else is a **user alias**: a single char that expands into a goo:// form. `@` ships undefined — claim it:
 
 ```toml
 [[sigils]]
 char = "@"
-expands = ":app:"     # then @firefox -> :app:firefox -> goo://app/firefox
+expands = "goo://app/"     # then @firefox -> goo://app/firefox (a value);
+                           # use ":app:" to expand to a search instead
 ```
 
 When **no** positional is given, the subject falls back in order: **stdin** (if piped) → PRIMARY selection → clipboard → focused app (for handle verbs).
@@ -141,7 +145,7 @@ goo summarize                                # no pipe → PRIMARY selection
 
 Resolution rules:
 
-- A **file** address (`./x`, `+file:`) must exist — the handler errors otherwise. An explicit path is an unambiguous "I mean a file" signal.
+- A **file** address (`./x`, `~/x`, `:file/x`) must exist — the handler errors otherwise. An explicit path is an unambiguous "I mean a file" signal.
 - The verb's `accepts` type-checks the resolved subject. A file verb fed bare text fails the type check; a text verb fed bare text works. There's no separate "mode" — enforcement is the handler (existence) plus `accepts` (type).
 - **The subject convention:** `.text` is the **content/value** (what it *is*); `.id` is the **address/locator** (how to *refer to* it — a path for a file, the URL for a link, the handle for an app). An entity is *addressable* iff it has an `.id`; pure text values have only `.text`. So `summarize ./x.md` reads the file's contents (`.text`), while `open ./x.md` (or `open https://…`) acts on its locator (`.id`) — one polymorphic `open` covers files and URLs because both carry an `.id`.
 
@@ -161,7 +165,7 @@ If the resolved type has **no `default_for` verb**, `goo` errors (`no default ve
 
 > This is only the **loose CLI surface** of [the goo request protocol](design/goo-protocol.md) — the `GOO` default verb over a `goo://` subject. The full wire form (HTTP-shaped methods, `Using:`/`To:`/`With:` headers, status codes, a unix-socket daemon) is designed there but **daemon-gated** — not built. `GOO` is the only protocol verb the CLI implements today.
 
-> The canonical `goo://<source>/<input>` (source lookup) and `goo+<scheme>:<value>` (scheme handoff) URIs are what the launcher meta-plugin and any IPC will pass between processes. You can already run one directly — `goo goo://app/firefox` resolves it and runs the type's default verb (see [the `GOO` default verb](#the-goo-default-verb-running-an-address-directly)). The sigils (`@`, `^`, `+`) and native shapes are terminal-friendly shorthands that rewrite into the same URIs. Still **unbuilt**: registering `goo://` as `x-scheme-handler/goo` so `xdg-open goo://app/firefox` (or a browser click) routes to `goo`. The fuller [request protocol](design/goo-protocol.md) and the [REST/WebDAV-shaped addressing model](design/addressing-and-protocol.md) are considered designs, daemon-gated.
+> The single canonical `goo://<domain>/<path>` URI is what the launcher meta-plugin and any IPC pass between processes. You can already run one directly — `goo goo://app/firefox` resolves it and runs the type's default verb (see [the `GOO` default verb](#the-goo-default-verb-running-an-address-directly)). The sigils (`:`, `+`, `^`, `@`) and native shapes are terminal-friendly shorthands that rewrite into the same URI. Still **unbuilt**: registering `goo://` as `x-scheme-handler/goo` so `xdg-open goo://app/firefox` (or a browser click) routes to `goo`. The fuller [request protocol](design/goo-protocol.md) (the wire/daemon layer) and the [domain model](design/addressing-and-protocol.md) (the URI layer) are the design docs behind this.
 
 ### Command aliases
 
