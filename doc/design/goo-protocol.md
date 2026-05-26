@@ -397,7 +397,85 @@ TRANSLATE goo://text/Hello   To: spanish          # "to" fails entity resolution
 ROT13     goo://text/Hello   To: goo://contact/x  # lenient: 'to' ignored | strict: 422 Goo-Unexpected: To
 ```
 
-## 11. Deferred / open
+## 11. The engine/handler boundary — marshalling & buffers
+
+The engine speaks `goo://` to itself; it speaks **bytes and paths** to the world.
+The edge between is a **marshalling boundary** (an FFI/serialization seam): goo's
+internal representation — references, the subject JSON, and **buffers** — is
+translated into a handler's native form before it crosses, and **handlers never
+bleed goo internals**.
+
+### Buffers — the materialization primitive
+
+A **buffer** is goo's `mktemp`: it turns *data* into a *reference*
+(`goo://buffer/<id>`). It closes the references-not-data thesis — inline/produced
+data (a coercion output, an LLM result, a blob) is the exception, and
+materializing it to a buffer makes it a reference again, so the system stays
+reference-based **end-to-end, even through data-producing stages.** Buffers are:
+
+- **an address for the unaddressable** — give produced data a `goo://` handle;
+- **the by-reference path for too-big/binary data** — pass `goo://buffer/abc`, never bytes-in-a-URL;
+- **the file-path lingua franca** — tools that exchange via *file paths* (ffmpeg, duckdb, image tools) read/write a buffer's backing file;
+- **coercion wires** — the intermediate stages of a `csv→json→sql` chain land in buffers.
+
+Buffers are **typed** (`{read, write}` of a held MIME — writing tags, reading
+yields a typed subject), with two lifecycles, like temp vs named files:
+
+- **ephemeral** (engine-owned): auto-named, request-scoped, GC'd after the route; backed by a temp file (CLI) or memory (the `good` daemon).
+- **named/persistent** (user-owned): `^scratch`, `goo://buffer/notes`; survives; `?mode=append` accumulates. `^` is the degenerate *unnamed* clipboard buffer.
+
+The engine may **auto-insert** a buffer into a route (between a producer of data
+and a consumer needing a reference/file) — the same way it auto-inserts a
+coercion on a type gap — preferring streaming/by-reference, materializing only
+when *forced* (size / a file-only consumer / no address), GC'd after, and
+**visible in the planned route** (like a query plan), not silent.
+
+### The no-leak rule
+
+**`goo://buffer/<id>` is internal. It never crosses to a non-goo-native handler —
+only its *materialized content* does.** At a foreign handler the engine:
+
+1. **derefs in** — a buffer-valued param becomes the tool's native form: a real **temp file path**, **bytes on stdin**, or an **env var**;
+2. runs the tool;
+3. **re-buffers out** — the tool's stdout / the file it wrote is re-internalized into a fresh buffer with a new `goo://` ref.
+
+So the engine *wraps* foreign tools (deref in, re-buffer out); the `goo://` string
+never reaches them. The temp file handed across is **request-scoped** (reaped
+after the run); the internal buffer lives on its own clock. Named buffers don't
+change this — `^scratch` is *user-addressable* but still *goo-only-meaningful*; a
+foreign tool reading it gets a materialized snapshot, not the handle. (Same
+hygiene as never handing a raw fd or internal pointer across an FFI seam: foreign
+tools can't forge/probe ids or couple to goo internals, and goo owns cleanup.)
+
+### Param-passing conventions
+
+*How* the engine presents params to a handler's command — and therefore how a
+buffer is materialized — is a per-verb/channel **convention**, so handlers stay
+goo-agnostic:
+
+- **template** (today): the `cmd`/`prompt` `{var|filter}` form — the author references goo's shape; least goo-agnostic, fine for goo-aware plugins.
+- **env**: goo sets `GOO_SUBJECT_PATH` / `GOO_WITH_MODEL` / …; the tool reads env like anything else.
+- **argv**: params as flags/positionals.
+- **stdin-JSON**: pipe the param map; the handler `jq`s it.
+
+The convention *also* picks the buffer-materialization form (file-consumer → temp
+path; stdin-consumer → bytes; …). **env/stdin keep the tool most goo-agnostic.**
+This is the loose pass-through map (§4) flattened to the handler's surface.
+
+### goo-native handlers opt out
+
+A handler that **speaks `goo://`** (another `goo` process, the `good` daemon, a
+plugin sharing the buffer service) declares itself **goo-native** and receives
+**references** — no materialization, buffers passed by handle:
+
+> **Default = foreign → marshal (deref buffers, flatten params). Opt-in
+> `goo-native` → pass `goo://` refs as-is.**
+
+Open: *how* goo-native is declared — per-verb, per-channel, or a property of the
+wrapped tool (a plugin wrapping `fabric` is foreign; one wrapping a `good`-speaking
+peer is native). Likely a flag (`speaks = "goo"`).
+
+## 12. Deferred / open
 
 - **Multi-subject ("comma trick")** — multiple *direct objects*, `EMAIL a.pdf, b.pdf`
   (distinct from multi-`To:`, which is repeated *indirect* objects and is already
@@ -421,18 +499,5 @@ ROT13     goo://text/Hello   To: goo://contact/x  # lenient: 'to' ignored | stri
   domains the engine can *auto-route through* on a type gap. This is what unlocks
   "send this JSON to a SQL table / an S3 bucket / a custom server" cleanly. Big;
   designed-not-built; the slot model is ready for it, the type system isn't yet.
-- **Named buffers (`^name`).** `^` is the unnamed clipboard; `^scratch` /
-  `goo://buffer/scratch` is a named `{read, write}` buffer (a read cmd + a write
-  cmd; `?mode=append` vs replace). The clipboard is the degenerate one-buffer
-  case. Lets `To: ^scratch` accumulate output and `summarize ^scratch` read it.
-- **Handler param-passing conventions** — *how* the engine hands params to a
-  handler's command, so **handlers don't bleed goo internals**. Today the `cmd`
-  template references goo's JSON shape (`{subject.id}`, `{adverbs.via}`); a
-  generic tool (fabric, duckdb) shouldn't need to know that. Candidate
-  mechanisms, declared per-verb/channel: **template** (today), **env** (goo sets
-  `GOO_SUBJECT_ID`/`GOO_WITH_MODEL`/… and the cmd reads them like any tool),
-  **argv** (params as flags/positionals), **stdin-JSON** (pipe the param map,
-  handler `jq`s it). The handler-manages-params principle (loose pass-through,
-  peel/forward) makes env/stdin attractive — the tool stays goo-agnostic. The
-  current TOML `cmd`/`prompt` + `{var|filter}` template is the `template`
-  convention; the others are additive. **Design this before the daemon.**
+  (Buffers — the materialization primitive that carries coercion intermediates
+  and data-with-no-address — are now in §11.)
