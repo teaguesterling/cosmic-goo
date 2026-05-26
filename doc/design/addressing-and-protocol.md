@@ -136,6 +136,58 @@ empty authority route through `infer`; searching is always an explicit act.
 `file` path encoding: absolute by default, `~` = home, `.`/`..` = cwd-relative
 (context-dependent, may not exist).
 
+## Two axes: domain (role) vs MIME (content) — and where categories live
+
+Two type-ish axes run through goo; keeping them distinct keeps the namespace clean.
+
+**The addressing domain (first URI segment) = the resolver / role** — `app`,
+`file`, `channel`, `repo`. It is deliberately **kind-first, not provider-first**:
+
+- goo's core is **type-driven matching** ("what can act on this `text/csv`?" →
+  verbs/channels that `accept` it), which enumerates **by kind** — "all channels,"
+  "all verbs for this type" — never by provider. Kind-first makes "all channels"
+  one domain enumeration; provider-first (`goo://fabric/channel/…`,
+  `goo://os/app/…`) buries the kind and fights the matching. So the first segment
+  is a **resolver you type-match against**; the **provider is the next segment**
+  (`channel/fabric`).
+- **Plugin ≠ domain.** A plugin is a *provider-bundle* (registry/discovery axis —
+  fabric contributes channels, patterns, `scribe-*` verbs); a domain is a
+  *kind/role* (addressing axis). Orthogonal: a provider's offerings scatter across
+  kind-domains by role, and the registry re-unifies them as "from plugin X."
+  Discovery may group-by-plugin; **addresses group-by-kind.**
+- **Meta-domains** (`goo://verb/`, `goo://type/`, `goo://domain/` — reflection over
+  goo's own vocabulary) are **discovery-only and deferred**: verbs are methods,
+  not invokable addresses (introspect via `OPTIONS` + `Goo-Verb:`), and `OPTIONS`
+  already covers most reflection.
+- Provider-grouping ("everything fabric offers") is a **query/discovery facet**
+  (`OPTIONS goo://channel/?provider=fabric`, a registry filter), **not a parallel
+  address** — don't mint `goo://fabric/channel/assemble` beside
+  `goo://channel/fabric/assemble` (two ids per thing → id instability).
+
+**The MIME type = the content/data type of a resolved entity** — `text/csv`,
+`application/vnd.git.repo`, `text/x-uri`. It rides on `subject.type`, a source's
+`emits`, a verb/channel's `accepts`/`emits`, and it is **the matching axis**:
+applicability is decided by MIME glob (`mime_matches`), never by the domain. (A
+`file` domain spans many MIMEs — `text/csv`, `image/png` — so **domain ≠ content
+type**: the domain *resolves*, the MIME *classifies*.)
+
+**So where does MIME → category happen?** A "category" isn't a third first-class
+thing; it emerges from the MIME axis in two places:
+
+1. **Matching — the MIME glob hierarchy *is* the category tree.** `text/*` is the
+   text category, `image/*` images, `application/vnd.git.*` git things. `accepts =
+   ["text/*"]` selects a category; an exact MIME selects one type. No mapping
+   table — globbing over the MIME hierarchy does it.
+2. **Presentation — `[[types]]` metadata, keyed by MIME.** `display`, icon, `kind`
+   (`handle` vs content) attach to a MIME in the type registry; that's the GUI's
+   label/icon. (Display *grouping* may also use the originating **domain** — "from
+   `repo`" — but that's the domain axis, *where it's from*, distinct from the
+   MIME's *what it is*.)
+
+Net: **domain = how to resolve + role (kind-first, the address spine); MIME = what
+the thing is (the matching axis); category = MIME globs (matching) + `[[types]]`
+metadata (display).** Provider is data + a discovery facet on top.
+
 ## Sigils (shorthand for humans typing; machines emit canonical `goo://`)
 
 Sigils are a **terminal convenience** — shorthands a person types instead of a
@@ -201,8 +253,8 @@ is **one** canonical form, superseding today's split between `[[sources]]` and t
 built-in scheme-handlers. Adopting it is a multi-commit arc:
 
 1. rewrite the addressing layer — the Rust engine `address` module (canonical)
-   **and** `lib/address.sh` (the reference) — to the domain model (value-first /
-   search-fallback);
+   **and** `lib/address.sh` (the reference) — to the domain model (strict
+   value/search, kind-first domains);
 2. migrate plugins' `[[sources]]` → `[[domains]]`, shipping the built-in value
    domains (`url`/`file`/`text`/`clip`/`sel`/`stdin`) in a core plugin;
 3. re-green the Rust `address` tests + `tests/address.bats` + `cli.bats`;
