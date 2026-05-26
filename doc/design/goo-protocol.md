@@ -1,18 +1,19 @@
 # The goo request protocol — design exploration
 
-> **Status: considered, NOT implemented.** Captures the 2026-05-25 design
-> conversation that turned goo's canonical URI ([addressing-and-protocol.md])
-> into a full request protocol: a verb + a typed subject + grammatical-case
-> headers, spoken as **literal HTTP/1.1**. Companion to [addressing-and-protocol.md]
-> (which defines the `goo://` URI itself); where the two differ this file is the
-> later thinking — notably it refines that file's `Destination:`/`Depth:`
-> WebDAV-header sketch toward `To:`/`Using:`/`With:`, and its `301`-for-resolve toward
-> the status table below. **That file is left as-is on purpose; the two coexist, and
-> this is the later thinking on its "request analogy" section — not a unilateral replacement.**
+> **Status: design — the request/wire layer.** A goo invocation as a verb + a
+> typed subject + grammatical-case headers, spoken as **literal HTTP/1.1**.
+> Companion to [addressing-and-protocol.md] (the **URI layer** — what a `goo://`
+> address *is*); this file is the **request layer** — how a verb + that URI +
+> headers *travel*. It refined that doc's earlier `Destination:`/`Depth:`
+> WebDAV-header sketch toward `To:`/`Using:`/`With:`, and its `301`-for-resolve /
+> `CONTINUE` sketch toward the status table below — and that doc's "request
+> analogy" section has now been **removed and handed off here**, so the two no
+> longer overlap: addressing defines the address, this defines the request.
 >
 > Build gate unchanged: revisit when a real consumer exists (launcher meta-plugin
-> #38, daemon #31, xdg scheme registration) — **not before.** v1 ships the
-> `cosmic-goo:<source>:<input>` CLI addressing; this is deliberately ahead of its build.
+> #38, daemon #31, xdg scheme registration) — **not before.** The shipped CLI
+> addressing is the `goo://` URI layer; this request/wire layer is deliberately
+> ahead of its build.
 
 [addressing-and-protocol.md]: ./addressing-and-protocol.md
 

@@ -1,13 +1,17 @@
-# Addressing & protocol — design exploration
+# Addressing — the goo:// URI layer (design)
 
-> **Status: considered, NOT implemented in v1.** This captures a design
-> conversation (2026-05-25) about evolving goo's canonical URI into a
-> REST/WebDAV-shaped addressing + protocol model. The *shipped* addressing is
-> still `cosmic-goo:<source>:<input>` / `cosmic-goo+<scheme>:<value>` (see
-> [cli-reference](../cli-reference.md#subject-addressing)). Revisit this when a
-> real consumer exists (launcher meta-plugin #38, daemon #31, or xdg scheme
-> registration) — not before. The Rust port (rust-port-scoping.md) targets the
-> *current* form unless/until this is adopted.
+> **Status: the URI layer.** Defines what a goo address *is* —
+> `goo://<domain>/<path>[;matrix][?refine]`, the domain model, and the human
+> shorthands. The `goo://` URI shape is **shipped** (the Rust engine and bash
+> both resolve it; see [cli-reference](../cli-reference.md#subject-addressing)).
+> The `[[domains]]` **unification** below — folding the `goo+<scheme>:<value>`
+> handoffs (`file`/`text`/`clip`/…) into `goo://<domain>/<path>` so there is one
+> canonical form — is **not built yet**; it's the next addressing step.
+>
+> The **request/wire layer** — how a verb + this URI + headers *travel* (the
+> meta-verbs, case headers, status codes) — is a separate concern, developed in
+> **[goo-protocol.md](./goo-protocol.md)**. This doc defines the address; that
+> doc consumes it.
 
 ## Thesis: references, not data
 
@@ -75,7 +79,19 @@ empty authority route through `infer`; searching is always an explicit act.
 `file` path encoding: absolute by default, `~` = home, `.`/`..` = cwd-relative
 (context-dependent, may not exist).
 
-## Sigils (unchanged in spirit — nobody hand-writes `goo://`)
+## Sigils (shorthand for humans typing; machines emit canonical `goo://`)
+
+Sigils are a **terminal convenience** — shorthands a person types instead of a
+full `goo://` URI. Machines (`goo-compose`, the launcher, any IPC) emit the
+canonical `goo://` form directly; they don't go through sigils.
+
+> **NOTE — under review (TBD).** The built-in sigil *selection* below predates the
+> domain model and is being rethought. Direction: sigils are primarily a
+> **user-defined alias tool** (`[[sigils]]`); the built-in set should be minimal.
+> Value-first/search-fallback collapses value-vs-query in most cases, so the only
+> distinction that genuinely needs a marker is *forcing* search; `^` is just a
+> clipboard convenience; un-domained input routes through `infer`. A separate
+> design pass will settle the final set — see the sigil-model discussion.
 
 | you type | means | canonical |
 |---|---|---|
@@ -84,29 +100,23 @@ empty authority route through `infer`; searching is always an explicit act.
 | `^` | clipboard (built-in) | `goo://clip/` |
 | `./x`, `https://x` | native shapes → `infer` | `goo://file/…`, `goo://url/https://x` |
 
-## The request analogy (→ daemon protocol, #31)
+## The request layer → goo-protocol.md
 
-A full goo invocation is structurally an HTTP/WebDAV request — we converged on
-this, didn't copy it:
+A full goo invocation — a verb + this URI + the indirect slots — is structurally
+an HTTP/WebDAV request (we converged on this, didn't copy it). That **request/wire
+layer is a separate concern** from the addressing defined here, and is developed
+in **[goo-protocol.md](./goo-protocol.md)**:
 
-| goo | HTTP / WebDAV |
-|---|---|
-| verb | method (`open`↔GET; verbs ↔ extension methods) |
-| subject (URI) | request URI |
-| object (two-step target) | **`Destination:` header** (WebDAV `MOVE`/`COPY`) |
-| adverbs | headers (we have `--depth`; WebDAV has `Depth:`) |
-| inline content | body |
+- meta-verbs `GET` / `HEAD` / `OPTIONS` plus the `GOO` default verb;
+- the **`To:` / `Using:` / `With:`** grammatical-case headers (which **supersede**
+  the earlier `Destination:` / `Depth:` WebDAV-header sketch this section once held);
+- the reused-HTTP **status table** (`300` / `301` / `404` / `415` / `422` / `424`
+  / `428`) — which **supersedes** the earlier "resolve = `301` / multi-step =
+  `CONTINUE`" sketch;
+- `OPTIONS`-as-completion-oracle, and the `{id, label, weight}` entity shape.
 
-Consequences, all **daemon-era (#31)**, not the bash CLI:
-
-- `good` can speak HTTP (or an HTTP-shaped line protocol) over its unix socket —
-  debuggable with `curl --unix-socket`; the launcher/IPC just make requests.
-- **Resolve = 301.** Resolving a *search* yields a *determined* reference with
-  metadata: `goo://app/;q=firefox` → `301 goo://app/firefox?pid=1234&title=…`.
-  The warm daemon does this id-negotiation; the one-shot doesn't need it.
-- **Multi-step = CONTINUE / 3xx.** A verb needing an object, or a compose flow,
-  is a continuation (`100 Continue` / `300 Multiple Choices`) the client
-  satisfies. Maps compose's interactivity onto status-driven steps.
+All daemon-era (#31): `good` speaks it over a unix socket (`curl --unix-socket`-able),
+and the addresses on the wire are exactly the `goo://` URIs defined above.
 
 ## Scheme name
 
@@ -117,22 +127,25 @@ the engine. To our knowledge `goo` is not in the IANA URI Schemes registry
 (per-system, first-come). Confirm at <https://www.iana.org/assignments/uri-schemes/>
 if certainty is wanted. `cosmic-goo://` could remain a registered alias.
 
-## Relationship to today / migration cost (if adopted)
+## Migration cost — adopting the `[[domains]]` unification
 
-This **supersedes** the shipped `cosmic-goo:<source>:<input>` /
-`cosmic-goo+<scheme>:<value>` forms. Adopting it is a multi-commit arc:
+The `goo://` URI shape already ships (Rust engine + bash). What's *not* built is
+the **`[[domains]]` unification**: folding the `goo+<scheme>:<value>` handoffs
+(`file`/`text`/`clip`/`sel`/`stdin`/`url`) into `goo://<domain>/<path>`, so there
+is **one** canonical form, superseding today's split between `[[sources]]` and the
+built-in scheme-handlers. Adopting it is a multi-commit arc:
 
-1. rewrite `lib/address.sh` (canonicalize/resolve, the `[[domains]]` model),
-2. migrate every plugin's `[[sources]]` → `[[domains]]`,
-3. re-green `tests/address.bats` (+ likely `complete`/`plugins`/integration),
-4. update docs (cli-reference, plugin-authoring), the addressing memory, and the
-   Rust scoping doc (`Address { domain, path, matrix, refine }`),
-5. then port the now-final shape to Rust.
+1. rewrite the addressing layer — the Rust engine `address` module (canonical)
+   **and** `lib/address.sh` (the reference) — to the domain model (value-first /
+   search-fallback);
+2. migrate plugins' `[[sources]]` → `[[domains]]`, shipping the built-in value
+   domains (`url`/`file`/`text`/`clip`/`sel`/`stdin`) in a core plugin;
+3. re-green the Rust `address` tests + `tests/address.bats` + `cli.bats`;
+4. update docs (cli-reference, plugin-authoring) and the Rust scoping doc
+   (`Address { domain, path, matrix, refine }`).
 
 **Behavior change to flag:** today `:source:input` is search; value-first /
-search-fallback subtly changes resolution semantics that existing habits depend
-on.
+search-fallback subtly changes resolution semantics that existing habits depend on.
 
-Because the payoff (xdg registration, OS handoff, auto-linkify, the HTTP daemon)
-only lands when there's a consumer — and there isn't one yet — this stays a
-considered design, deliberately ahead of its build.
+The payoff (xdg registration, OS handoff, auto-linkify, the HTTP daemon) compounds
+with a consumer — so adopt it alongside `goo-compose`/the launcher, not in a vacuum.
