@@ -14,9 +14,28 @@ use std::io::IsTerminal;
 use std::process::Command;
 
 fn main() {
+    reset_sigpipe();
     let args: Vec<String> = std::env::args().skip(1).collect();
     std::process::exit(dispatch(&args, 0));
 }
+
+/// Restore the default SIGPIPE disposition. Rust ignores SIGPIPE at startup, so
+/// writing to a closed pipe (e.g. `goo plugins | head`) returns EPIPE and
+/// `println!` panics — unlike bash and every other Unix tool, which die quietly
+/// on the signal. Resetting to SIG_DFL restores that parity. (Linux/Unix ABI:
+/// SIGPIPE = 13, SIG_DFL = 0.)
+#[cfg(unix)]
+fn reset_sigpipe() {
+    extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
+    }
+    unsafe {
+        signal(13, 0);
+    }
+}
+
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
 
 /// `goo: <msg>` to stderr; returns exit code 1.
 fn die(msg: impl AsRef<str>) -> i32 {
