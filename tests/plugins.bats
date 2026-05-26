@@ -58,6 +58,37 @@ setup() {
     done
 }
 
+# Non-text handle domains exist to prove the noun→verb model generalizes
+# beyond text/LLM. Assert the source→type→verb wiring is intact for each,
+# without running any list_cmd (ps/ssh/docker would be non-deterministic):
+# the source/verbs are registered and `describe` confirms each verb accepts
+# the domain's vendor type.
+@test "real plugins: handle domains wire source→type→verb" {
+    local verbs sources
+    verbs=$("$GOO" __complete verbs </dev/null)
+    sources=$("$GOO" __complete sources </dev/null)
+
+    # source name | vendor type | accepting verbs...
+    local rows=(
+        "processes|application/vnd.process|proc-info proc-children"
+        "ssh-hosts|application/vnd.ssh.host|ssh-connect ssh-copy-id"
+        "containers|application/vnd.container|container-logs container-shell container-stop"
+        "branches|application/vnd.git.branch|branch-log branch-show"
+    )
+    for row in "${rows[@]}"; do
+        local src="${row%%|*}" rest="${row#*|}"
+        local vtype="${rest%%|*}" vlist="${rest#*|}"
+        echo "$sources" | grep -qx "$src" || { echo "missing handle source: $src" >&2; return 1; }
+        for v in $vlist; do
+            echo "$verbs" | grep -qx "$v" || { echo "missing handle verb: $v" >&2; return 1; }
+            run "$GOO" describe "$v" </dev/null
+            [ "$status" -eq 0 ]
+            echo "$output" | grep -q "accepts: .*$vtype" \
+                || { echo "$v does not accept $vtype" >&2; echo "$output" >&2; return 1; }
+        done
+    done
+}
+
 @test "real plugins: clipboard-history source is graceful when empty/unset" {
     # cliphist may have no store daemon (esp. on COSMIC without
     # COSMIC_DATA_CONTROL_ENABLED); the source must yield valid JSON, never
