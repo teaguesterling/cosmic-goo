@@ -26,7 +26,7 @@ $ goo sha256 "hello"
 See what's available:
 
 ```
-$ goo plugins          # the 22 loaded plugins
+$ goo plugins          # the 24 loaded plugins
 $ goo describe upper    # one verb's details
 verb: upper
 description: Convert to UPPERCASE
@@ -221,7 +221,7 @@ MAKE IT LOUD
 
 ```
 $ goo validate
-goo validate: OK (22 plugins, ...)
+goo validate: OK (24 plugins, ...)
 ```
 
 ---

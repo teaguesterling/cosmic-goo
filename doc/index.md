@@ -12,7 +12,7 @@ Plugins are TOML files declaring any combination of **types**, **sources**, **ve
 
 ## Status
 
-**The `goo` CLI is fully usable.** 22 built-in plugins (~77 verbs, 15 sources), subject addressing with sigils + native file/URL detection, `{var|q|uri}` template filters, bash tab completion, a registry cache, and a picker-driven compose dialog — covered by ~190 tests. E.g. `goo critique "text" --via=clipboard` renders a prompt onto the clipboard; `goo activate Alacritty` focuses the app; `goo calc "2+2*10"` → `22`; `goo qr-encode https://…` draws a QR in the terminal.
+**The `goo` CLI is fully usable.** 24 built-in plugins (~82 verbs, 17 sources), subject addressing with sigils + native file/URL detection, `{var|q|uri}` template filters, bash tab completion, a registry cache, and a picker-driven compose dialog — covered by ~190 tests. E.g. `goo critique "text" --via=clipboard` renders a prompt onto the clipboard; `goo activate Alacritty` focuses the app; `goo calc "2+2*10"` → `22`; `goo qr-encode https://…` draws a QR in the terminal.
 
 Not yet shipped: the pop-launcher meta-plugin for *inline* composition in `cosmic-launcher` (Phase 2), the scenes plugin (Phase 3), and the native libcosmic compose GUI (the current dialog is a shell-driven picker). See [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md) for the full plan and [`tutorial.md`](tutorial.md) to learn the CLI by example.
 

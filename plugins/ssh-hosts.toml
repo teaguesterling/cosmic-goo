@@ -1,0 +1,30 @@
+name = "ssh-hosts"
+tier = "core"
+description = "SSH hosts from ~/.ssh/config — connect, copy-id"
+
+[[types]]
+name = "application/vnd.ssh.host"
+display = "SSH host"
+kind = "handle"
+
+[[sources]]
+name = "ssh-hosts"
+prefix = "ssh"
+emits = "application/vnd.ssh.host"
+enumerate = false   # reach via :ssh:<query> on demand
+# `Host` aliases from ~/.ssh/config, skipping wildcard patterns.
+list_cmd = '''awk 'tolower($1)=="host"{for(i=2;i<=NF;i++) if($i !~ /[*?]/) print $i}' "$HOME/.ssh/config" 2>/dev/null | sort -u | jq -Rsc '[splits("\n")|select(length>0)|{id:.,title:.}]' '''
+
+[[verbs]]
+name = "ssh-connect"
+description = "Open an SSH session to the host"
+accepts = ["application/vnd.ssh.host"]
+default_for = "application/vnd.ssh.host"
+cmd = "ssh {subject.id|q}"
+
+[[verbs]]
+name = "ssh-copy-id"
+description = "Install your public key on the host"
+accepts = ["application/vnd.ssh.host"]
+cmd = "ssh-copy-id {subject.id|q}"
+confirm = true
