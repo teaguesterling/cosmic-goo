@@ -95,6 +95,25 @@ several claim it) → `300` (pick a verb).
 WebDAV's `MOVE`/`COPY`/`PROPFIND`): `OPEN`, `MOVE`, `EMAIL`, `SUMMARIZE`,
 `REBOOT`, `SOLVE`, … declared by plugins.
 
+**Verbs are case-insensitive.** The wire method (`SUMMARIZE`, uppercase by HTTP
+convention) and the CLI verb (`goo summarize`, lowercase) are the *same verb*,
+case-folded. So the method token carries no information the verb name doesn't.
+
+**A verb is an abstract operation; instruments implement it.** `summarize` is
+one verb that the `fabric` channel, a direct LLM, and a `duckdb` macro can each
+provide — selected via `Using:` (§4), *not* multiplied into `summarize-fabric` /
+`summarize-duckdb` verb names. Channels are "verbs on the *how* axis": same
+`accepts → emits` typing, composed with the verb rather than enumerated against
+it. A channel's per-verb capabilities are addressable for **discovery** —
+`OPTIONS goo://channel/fabric/summarize` returns fabric-summarize's params,
+`OPTIONS goo://channel/fabric/` lists fabric's verbs — but **invocation keeps the
+grammar** (`SUMMARIZE <subject> Using: fabric`): the *subject* is the
+request-target (what you act on), the *channel* is the instrument. Folding the
+verb into the channel path (`PUT goo://channel/fabric/summarize`) would invert
+that — making the channel the target and demoting the subject to a body — and
+break references-not-data + the noun→verb composition. So `/fabric/summarize` is
+a **discovery handle, not a request-target**.
+
 ## 4. Slots, the param map, and pass-through
 
 `Using:`/`To:`/`With:` **flatten into one parameter map** with `using`/`to`
@@ -147,6 +166,38 @@ strict = true     # reject params not in the schema → 422 Goo-Unexpected
 
 So: *discover via OPTIONS to do the right thing; pass-through so you're not
 punished for not discovering.*
+
+**Two faces of the param map — loose (human) ↔ strict (canonical).** The flat
+bag above is the *loose* surface: a human throws `With: depth=brief model=sonnet`
+(CLI `-v`) in and the engine routes each key to its owner by the composed OPTIONS
+schema. The *strict/canonical* form attaches each param to the entity it
+configures, on **that entity's own address** (the [matrix-vs-query
+rule](./addressing-and-protocol.md#the-uri)): channel config on the channel
+(`Using: goo://channel/fabric?model=sonnet`), target config on the target
+(`To: goo://buffer/log?mode=append`), subject filters on the subject. So:
+
+- `Using:` is a **typed instrument** — its `emits` decides the *result type*
+  (fabric → text, a duckdb macro → JSON). Picking the instrument picks the
+  mechanism. (No separate `From:`: the provider *is* the instrument.)
+- `To:` is a **typed destination** (a `{write}` domain — buffers, files, a chat).
+  `emits`(instrument) ↔ `accepts`(destination) is a second type-match in the
+  sentence; mismatch hard-fails (`415`) in v1 (no implicit coercion).
+- `With:` is the **method's own params** — the verb is the one participant with
+  no address to hang `?` on, so its params get a header. It stays **loose and
+  unchecked (pass-through) by default**: the whole map reaches the handler, which
+  *peels off what it understands and forwards the rest* — so a verb→channel→tool
+  chain can propagate params the engine never knew about. **Handlers shouldn't
+  have to know goo's internal shape** (see §11 on param-passing conventions).
+
+**Valid `With:` keys are determined by the resolved `Using:`** (and verb): a
+manner param is really an *(verb × instrument)* param — `depth` is
+fabric-summarize's, which is exactly why it's meaningless for `duckdb` (not in
+that implementation's schema). So `OPTIONS(verb, Using:)` is the *composed*
+schema; it's **advisory** (powers GUI forms + completion), not a gate — unknown
+keys 422-only-if-`strict`, else pass through. Consequence for tooling: a GUI
+renders the manner form **after** `Using:` resolves (re-populating if you switch
+instruments), and static `goo validate` is necessarily *partial* here — full
+validity is an OPTIONS-time check, not load-time.
 
 ## 5. Header-naming convention
 
@@ -332,3 +383,21 @@ ROT13     goo://text/Hello   To: goo://contact/x  # lenient: 'to' ignored | stri
   bag-of-related-entities need emerges; no dedicated header for now.
 - **OPTIONS narrowing beyond `Goo-Verb:`** — e.g. partial `With:` validation.
 - **`Via:`-style multi-hop `Using:` chain** (SIP stacks `Via:`) — not needed yet.
+- **`Log:` — a second output sink.** Primary result lands at `To:`; diagnostic /
+  secondary output would land at `Log:` (just another typed `{write}`
+  destination, same machinery as `To:`). CLI `--log`. Future.
+- **Named buffers (`^name`).** `^` is the unnamed clipboard; `^scratch` /
+  `goo://buffer/scratch` is a named `{read, write}` buffer (a read cmd + a write
+  cmd; `?mode=append` vs replace). The clipboard is the degenerate one-buffer
+  case. Lets `To: ^scratch` accumulate output and `summarize ^scratch` read it.
+- **Handler param-passing conventions** — *how* the engine hands params to a
+  handler's command, so **handlers don't bleed goo internals**. Today the `cmd`
+  template references goo's JSON shape (`{subject.id}`, `{adverbs.via}`); a
+  generic tool (fabric, duckdb) shouldn't need to know that. Candidate
+  mechanisms, declared per-verb/channel: **template** (today), **env** (goo sets
+  `GOO_SUBJECT_ID`/`GOO_WITH_MODEL`/… and the cmd reads them like any tool),
+  **argv** (params as flags/positionals), **stdin-JSON** (pipe the param map,
+  handler `jq`s it). The handler-manages-params principle (loose pass-through,
+  peel/forward) makes env/stdin attractive — the tool stays goo-agnostic. The
+  current TOML `cmd`/`prompt` + `{var|filter}` template is the `template`
+  convention; the others are additive. **Design this before the daemon.**

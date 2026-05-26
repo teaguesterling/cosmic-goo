@@ -43,10 +43,27 @@ REST/WebDAV-shaped, parsed as a normal URI:
 | `;matrix` | **engine** addressing params (search term, mode) | `goo://app/;q=firefox` |
 | `?refine` | **user/plugin** refinement filters | `?title=*Cosmic*` |
 
-**Why matrix (`;`) for search, query (`?`) for refine:** they're two namespaces,
-so the engine's search key (`q`) can never collide with a user/plugin filter
-key. Matrix params bind to a path *segment*, which also gives each segment of a
-future hierarchy its own params.
+**Matrix vs query — the rule of thumb (from the handler's seat):**
+
+> **`;matrix` is the *engine's* selection vocabulary; `?query` is the *handler's*
+> own parameters.**
+
+- **Matrix `;`** — a small, **fixed** set the engine owns and reads to decide
+  *which / how many* entities: `q=` (search term), `n=` / `all` / `pick`
+  (cardinality), `sort=`. Same across every domain. A plugin author **never
+  writes a matrix param** — that namespace belongs to the resolver.
+- **Query `?`** — **open** and the handler's: field filters, channel config,
+  write modes, formats. The engine doesn't interpret it; it hands it to the
+  handler.
+
+Implementer's test: *"Does this param choose/rank/count entities, or tell my
+handler how to behave?"* Choose/count → `;` (engine). Behave → `?` (handler).
+**Per-entity rule:** every entity (subject, channel, target) carries its own
+config on its **own address's `?`** — so params are unambiguous by *whose*
+address they ride. (`Using: goo://channel/fabric?model=x`,
+`To: goo://buffer/log?mode=append`, `goo://things/;q=x?title=beta`.) Matrix binds
+to a path *segment*, which also gives each segment of a future hierarchy its own
+params.
 
 Keep `//<domain>` as the authority (not domain-as-path-segment): it preserves
 the `//` that auto-linkifies and that one `x-scheme-handler/goo` registration
@@ -70,6 +87,41 @@ Resolution is **strict** — the syntax says which you mean, no implicit fuzzy
 fallback: a bare path (`goo://app/firefox`) is the **exact value**; search is
 **only** the explicit `;q=` form. (The human sigils mirror this: `:app/firefox` →
 value, `:app:firefox` → `;q=` search — see Sigils.)
+
+**The full capability set (subjects, destinations, instruments are all domains).**
+`value`/`search` are the *subject-side* capabilities (how an address resolves to
+a thing). Extend the same "capabilities, not kinds" idea to the action side, and
+every participant in a sentence is just a domain with some subset of:
+
+| capability | invoked when the entity is the… | examples |
+|---|---|---|
+| **value / search** | subject (resolve to a thing) | `app`, `file`, `ssh-host` |
+| **read** | subject (yields content) | `clip`, buffers, `file` |
+| **write** | `To:` destination (accepts content) | buffers, `file`, a chat |
+| **process** | `Using:` instrument (transforms / routes input→output) | `fabric`, an LLM, a mailer |
+
+So a **buffer** is a `{read, write}` domain (a subject *and* a `To:` destination —
+bidirectional storage; `^` is the unnamed clipboard buffer); a **channel** is a
+`{process}` domain (the `Using:` instrument). They are **siblings, not twins**:
+same capability-bearing-domain parent, different capabilities, different
+grammatical case (`To:` Goal vs `Using:` Instrument). They **compose** in one
+sentence rather than unifying:
+
+```
+SUMMARIZE goo://clip/  Using: goo://channel/fabric  To: goo://buffer/scratch
+#          ^read subject  ^process (instrument)        ^write (destination)
+```
+
+A **process** domain (channel) is typed like a verb — `accepts → emits` + its own
+params — and *choosing the instrument picks the result type via its `emits`*
+(fabric → `text/plain`, a duckdb macro → `application/json`). The request/slot
+mechanics live in [goo-protocol.md](./goo-protocol.md).
+
+> **`list` is not a separate capability** — it's `search` at the *collection*
+> level: `goo://app/` (no query) is the directory of members. A `value`-only
+> domain (`text`, `url`) can't list. Whether a use collapses the collection to
+> one (a subject) or keeps the set (`GET` / `goo list` / `;all`) is the
+> orthogonal *cardinality* phase (`;n=`), not a capability.
 
 Domains are ordinary registry entities — `[[domains]]` with `emits`, optional
 `list_cmd` (⇒ search) and value-construction rule (⇒ value). **No reserved
