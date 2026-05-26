@@ -104,15 +104,26 @@ one verb that the `fabric` channel, a direct LLM, and a `duckdb` macro can each
 provide — selected via `Using:` (§4), *not* multiplied into `summarize-fabric` /
 `summarize-duckdb` verb names. Channels are "verbs on the *how* axis": same
 `accepts → emits` typing, composed with the verb rather than enumerated against
-it. A channel's per-verb capabilities are addressable for **discovery** —
-`OPTIONS goo://channel/fabric/summarize` returns fabric-summarize's params,
-`OPTIONS goo://channel/fabric/` lists fabric's verbs — but **invocation keeps the
-grammar** (`SUMMARIZE <subject> Using: fabric`): the *subject* is the
-request-target (what you act on), the *channel* is the instrument. Folding the
-verb into the channel path (`PUT goo://channel/fabric/summarize`) would invert
-that — making the channel the target and demoting the subject to a body — and
-break references-not-data + the noun→verb composition. So `/fabric/summarize` is
-a **discovery handle, not a request-target**.
+it.
+
+A channel may offer **sub-channels (modes)** as path segments — each a distinct
+`{process}` instrument with its own `emits`: e.g. `goo://channel/fabric/inference`
+(default, → the *result*) and `goo://channel/fabric/assemble` (→ an unrun
+*prompt*, to hand off). These are valid `Using:` targets and are listed by
+`OPTIONS goo://channel/fabric/`. This makes `Using:` (what's produced) and `To:`
+(where it lands) fully orthogonal — `Using: fabric/inference  To: claude://desktop`
+("run, seed Claude with the result") is expressible, where a "the `To:` decides"
+rule couldn't.
+
+But a path segment under a channel is an **instrument mode, never a verb.** The
+verb is the method; to introspect a channel's params *for* a verb, **scope with
+`Goo-Verb:`** — `OPTIONS goo://channel/fabric/assemble` + `Goo-Verb: SUMMARIZE`.
+Folding the verb into the path (`PUT goo://channel/fabric/summarize`) would invert
+the grammar — channel as request-target, subject demoted to a body — and break
+references-not-data + noun→verb. **Modes in the channel path: yes. Verbs: no**
+(they're the method; `Goo-Verb:` scopes discovery). Invocation always keeps the
+grammar: `SUMMARIZE <subject> Using: goo://channel/fabric/assemble` — subject is
+the target, channel is the instrument.
 
 ## 4. Slots, the param map, and pass-through
 
