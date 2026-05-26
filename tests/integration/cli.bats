@@ -306,6 +306,14 @@ EOF
     [ "$output" = "sprocket" ]
 }
 
+@test "goo HANDLE-VERB resolves a canonical goo:// URL subject" {
+    # The canonical URL form of :gad:sprocket — resolves on both engines
+    # (sigils are just shorthand that canonicalize to this).
+    run "$GOO" name-of "goo://gad/sprocket" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "sprocket" ]
+}
+
 @test "goo list emits a source's raw JSON" {
     run "$GOO" list gadgets </dev/null
     [ "$status" -eq 0 ]
@@ -322,6 +330,12 @@ EOF
 
 @test "two-step verb resolves object via explicit :source: address" {
     run "$GOO" put :gad:sprocket :slot:one </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "sprocket->one" ]
+}
+
+@test "two-step verb resolves both subject and object via goo:// URLs" {
+    run "$GOO" put "goo://gad/sprocket" "goo://slot/one" </dev/null
     [ "$status" -eq 0 ]
     [ "$output" = "sprocket->one" ]
 }
