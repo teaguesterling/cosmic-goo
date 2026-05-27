@@ -43,6 +43,7 @@ A full invocation is one HTTP request. The slots are grammatical **cases**
 | **subject** (request-target URI) | Theme / Patient | what is acted on | `goo://file/~/article.md` |
 | **`Using:`** | Agent / Instrument | what performs / through what channel | `goo://channel/fabric` |
 | **`To:`** | Recipient / Goal (terminative) | what receives / where the *result* lands / a target value | `goo://chat/new`, `spanish` |
+| **`From:`** | Source / origin (ablative) | the calling session — capability-bearing; **default `To:`** (deferred, §12) | `goo://session/current` |
 | **`Log:`** | (secondary Goal) | where *diagnostic / secondary* output lands | `goo://file/~/goo.log`, `^scratch` |
 | **`With:`** | Manner | opaque `key=value` config | `depth=brief model=iq4xs` |
 | **body** | inline Theme | data, when there's no addressable referent | piped text |
@@ -475,7 +476,87 @@ Open: *how* goo-native is declared — per-verb, per-channel, or a property of t
 wrapped tool (a plugin wrapping `fabric` is foreign; one wrapping a `good`-speaking
 peer is native). Likely a flag (`speaks = "goo"`).
 
-## 12. Deferred / open
+## 12. The origin — `From:` and presentation negotiation
+
+Every request has an **origin**: the session it was made from. goo detects it as
+an addressable resource, **`goo://session/current`**, and exposes it as the
+**`From:`** slot (§2). `From:` is *identity* — "who's asking" — and its
+operational payoff is a single rule:
+
+> **Default `To:` is `From:`.** Absent an explicit destination, the result is
+> presented back to where the request came from.
+
+That is what makes `From:` *machinery* rather than provenance. A bare
+`goo view photo.png` has no `To:`, so the result returns to the calling session —
+and *how* it's presented depends on that session's capabilities.
+
+### Capabilities are a *preferred presentation*, not a hard `Accept:`
+
+The origin carries **capabilities** — `{pty}`, `{display}` (Wayland/X),
+`{interactive}`, an audio sink, … These define a **preferred presentation
+profile**, not a constraint:
+
+- a bare tty *prefers* `text/x-ansi` (render inline) but can still take image
+  bytes (a file redirect, a sixel terminal);
+- a desktop session *prefers* a GUI handoff (`xdg-open`).
+
+So, precisely: **`From:` implies a default Accept profile; an explicit `To:` —
+including a shell redirect to a file — displaces it.** `goo view photo.png > out.png`
+has a non-tty stdout (an explicit byte sink), so the engine sends image bytes —
+*by the model*, not by luck. The capability profile governs only the
+**unsolicited default**.
+
+### Accept drives `Using:` — negotiation, not enumeration
+
+Given the origin's preferred Accept and the handler's emitted representation:
+
+- **emit ∈ Accept** → present directly;
+- **gap** → the engine inserts a **`Using:` instrument** that bridges it. `chafa`
+  is `image/* → text/x-ansi`; it is auto-selected exactly when the origin prefers
+  ANSI but the handler emits image bytes.
+
+This is the **output-side dual of §6's input inference**: input infers the
+*subject's* type; output negotiates the *origin's* presentation. The same
+weighted-candidate machinery applies (the engine ranks bridging instruments),
+keyed on the origin's Accept profile instead of a destination's `accepts`.
+
+`chafa`-as-instrument is the tell that **this needs no bespoke mechanism**.
+`view`/`play` are not env-special verbs — they are ordinary verbs that emit a
+representation, and the *environment*, via `From:`, picks the route. "Terminal vs
+GUI" is a `Using:` instrument selected by capability, overridable with an explicit
+`To:`/`Using:`.
+
+### The origin is *sortable* — session-kind ontology
+
+"What am I called from" is a **kind**, and kinds are the existing ontology
+(kind-first, [addressing-and-protocol.md]): `goo://session/*` carries an `is_a`
+hierarchy —
+
+```
+session/real-tty   is_a session/interactive
+session/ssh        is_a session/interactive   (remote — display absent/forwarded)
+session/tmux       is_a session/interactive   (multiplexed; the outer session holds the real caps)
+session/script     is_a session/batch         (a python/shell caller — wants data, not presentation)
+session/launcher   is_a session/interactive   (wants the result rendered into *it*, not the spawner)
+```
+
+Detected from the environment (`isatty`, `$WAYLAND_DISPLAY`, `$SSH_TTY`, `$TMUX`,
+`$TERM`, parentage), the origin is *sortable* the same way a source's items are:
+a request can be ranked or branched by origin kind. A `script` origin's preferred
+Accept is the raw representation (no ANSI dressing); a `launcher` origin's is
+"render into the launcher's surface."
+
+### Status
+
+Designed-not-built. Gated on two pieces: **session detection** (cheap — an
+engine-built `goo://session/current` resolver) and **coercion** (§13 — `chafa` as
+an auto-routed channel). The minimal *first* step that needs neither: a **selector
+adverb whose default is environment-computed** (`default = "@auto"` → `terminal` /
+`gui` by capability) — env-aware `view`/`play` today, promotable to full `From:`
+negotiation when coercion lands. This is the consumer that *motivates* coercion on
+the **output** side, exactly as JSON motivated `infer_for` on the **input** side.
+
+## 13. Deferred / open
 
 - **Multi-subject ("comma trick")** — multiple *direct objects*, `EMAIL a.pdf, b.pdf`
   (distinct from multi-`To:`, which is repeated *indirect* objects and is already
@@ -488,16 +569,19 @@ peer is native). Likely a flag (`speaks = "goo"`).
 - **`Log:`** — now a first-class slot (§2/§4): a second `{write}` destination for
   diagnostic/secondary output. `Log-Using:` (a transform channel for the log
   stream) remains deferred — see §4.
-- **Type system, inference & coercion (the next major arc).** The slot model
-  already *accommodates* data-sink/transform endpoints — `To: goo://s3/bucket/key`,
+- **Type system, inference & coercion (the in-progress major arc).** The slot
+  model already *accommodates* data-sink/transform endpoints — `To: goo://s3/bucket/key`,
   `Using: goo://channel/sql-import`, a custom server channel — because they're
-  just `{write}`/`{process}` domains. What's *missing* is the **type machinery**:
-  richer MIME/type modeling, **inference** (shape + content → type, with weighted
-  choices), and **coercion** — when `emits`(instrument) ≠ `accepts`(destination),
+  just `{write}`/`{process}` domains. **Built** (Rust engine): the subtype lattice
+  (`is_subtype` — glob + structured-suffix + `is_a`) and **input inference**
+  (`infer_for` — JSON-shape → type, weighted, re-ranked by the verb's `accepts`).
+  **Still missing — coercion**: when `emits`(instrument) ≠ `accepts`(destination),
   do we hard-fail (`415`, v1) or insert an **implicit coercion channel** (json→sql
-  rows, csv→json, text→bytes)? Coercion channels would be ordinary `{process}`
-  domains the engine can *auto-route through* on a type gap. This is what unlocks
-  "send this JSON to a SQL table / an S3 bucket / a custom server" cleanly. Big;
-  designed-not-built; the slot model is ready for it, the type system isn't yet.
+  rows, csv→json, text→bytes, *image→ansi*)? Coercion channels would be ordinary
+  `{process}` domains the engine *auto-routes through* on a type gap. This unlocks
+  "send this JSON to a SQL table / an S3 bucket / a custom server" cleanly — **and**
+  the output-side presentation negotiation of §12 (`chafa` as an `image→ansi`
+  coercion channel, auto-routed for a tty origin). Two consumers, one mechanism.
+  Big; designed-not-built; the slot model is ready, the type system is partway.
   (Buffers — the materialization primitive that carries coercion intermediates
   and data-with-no-address — are now in §11.)
