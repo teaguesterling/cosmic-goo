@@ -60,7 +60,7 @@ EOF
 compose_with() {
     local ans="$BATS_TEST_TMPDIR/answers"
     printf '%s\n' "$@" > "$ans"
-    GOO_COMPOSE_ANSWERS="$ans" run "$GOO" compose
+    GOO_COMPOSE_ANSWERS="$ans" run "$GOO" compose </dev/null
 }
 
 @test "compose: text verb through an adverb route writes the rendered prompt" {

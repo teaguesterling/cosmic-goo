@@ -193,27 +193,27 @@ EOF
 }
 
 @test "goo --help prints usage" {
-    run "$GOO" --help
+    run "$GOO" --help </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Grammar Of Operations" ]]
     [[ "$output" =~ "USAGE" ]]
 }
 
 @test "goo plugins lists loaded fixtures" {
-    run "$GOO" plugins
+    run "$GOO" plugins </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" =~ "test-routes" ]]
     [[ "$output" =~ "test-verbs" ]]
 }
 
 @test "goo validate accepts well-formed fixture" {
-    run "$GOO" validate
+    run "$GOO" validate </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" =~ "OK" ]]
 }
 
 @test "goo describe shows verb details" {
-    run "$GOO" describe wrap
+    run "$GOO" describe wrap </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" =~ "verb: wrap" ]]
     [[ "$output" =~ "accepts: text/*" ]]
@@ -221,32 +221,32 @@ EOF
 }
 
 @test "goo describe unknown verb fails cleanly" {
-    run "$GOO" describe nonexistent
+    run "$GOO" describe nonexistent </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" =~ "no verb named" ]]
 }
 
 @test "goo <unknown> reports as unknown verb" {
-    run "$GOO" definitely-not-a-verb hello
+    run "$GOO" definitely-not-a-verb hello </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" =~ "unknown verb" ]]
 }
 
 @test "goo VERB POSITIONAL executes with text subject" {
-    run "$GOO" echo-back "hello goo"
+    run "$GOO" echo-back "hello goo" </dev/null
     [ "$status" -eq 0 ]
     [ "$output" = "hello goo" ]
 }
 
 @test "goo VERB renders prompt through the via adverb route" {
-    run "$GOO" wrap "important text" --via=dump
+    run "$GOO" wrap "important text" --via=dump </dev/null
     [ "$status" -eq 0 ]
     [ -f "$DUMP_FILE" ]
     [ "$(cat "$DUMP_FILE")" = "WRAPPED:important text:END" ]
 }
 
 @test "goo VERB uses the adverb's default when --via is omitted" {
-    run "$GOO" wrap "default route text"
+    run "$GOO" wrap "default route text" </dev/null
     [ "$status" -eq 0 ]
     [ -f "$DUMP_FILE" ]
     [ "$(cat "$DUMP_FILE")" = "WRAPPED:default route text:END" ]
@@ -256,7 +256,7 @@ EOF
     # Drive the picker with an empty answer (= cancel at the subject step).
     local ans="$BATS_TEST_TMPDIR/ans"
     printf '\n' > "$ans"
-    GOO_COMPOSE_ANSWERS="$ans" run "$GOO" compose
+    GOO_COMPOSE_ANSWERS="$ans" run "$GOO" compose </dev/null
     [ "$status" -eq 130 ]
     [[ "$output" =~ "cancelled" ]]
 }
