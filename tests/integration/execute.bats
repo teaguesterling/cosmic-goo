@@ -26,6 +26,21 @@ name = "show"
 kind = "present"
 accepts = ["text/*"]
 
+# A real verb that accepts text/x-up — reachable from a text/plain subject only
+# via the `up` channel (input coercion).
+[[verbs]]
+name = "revit"
+accepts = ["text/x-up"]
+emits = "text/x-rev"
+cmd = "rev < {subject.metadata.path|q}"
+
+# A real verb that accepts the subject directly — exercises the legacy path
+# (no gap → no negotiation).
+[[verbs]]
+name = "echo-it"
+accepts = ["text/plain"]
+cmd = "cat {subject.metadata.path|q}"
+
 [[channels]]
 name = "up"
 accepts = ["text/*"]
@@ -54,6 +69,29 @@ EOF
 
 @test "execute: --as with no reachable representation → 415" {
     run "$GOO" show "$BATS_TEST_TMPDIR/sub.txt" --as=image/png </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"415"* ]]
+}
+
+# 4b: a real verb whose accepts the subject doesn't satisfy → input coercion
+# (the `up` channel) then the verb runs.
+@test "execute: real verb coerces its input (text → up → revit)" {
+    run "$GOO" revit "$BATS_TEST_TMPDIR/sub.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "OOG OLLEH" ]   # up: HELLO GOO → rev: OOG OLLEH
+}
+
+# 4b: no gap (subject already accepted) → unchanged legacy render+exec path.
+@test "execute: no type gap runs the legacy path unchanged" {
+    run "$GOO" echo-it "$BATS_TEST_TMPDIR/sub.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "hello goo" ]
+}
+
+# 4b: a type gap with no coercion route → clean 415 (not the verb's own error).
+@test "execute: real-verb gap with no route → 415" {
+    printf '{"k":1}' > "$BATS_TEST_TMPDIR/d.json"   # application/json, no path to text/x-up here
+    run "$GOO" revit "$BATS_TEST_TMPDIR/d.json" </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" == *"415"* ]]
 }
