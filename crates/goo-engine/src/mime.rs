@@ -235,11 +235,18 @@ pub fn infer_for(content: &str, verb: &Value, reg: &Value) -> Option<String> {
     let accepts = verb.get("accepts").and_then(|a| a.as_array())?;
     let mut best: Option<(String, f64)> = None;
     for (mime, w) in infer_candidates(content) {
-        let accepted = accepts
-            .iter()
-            .filter_map(|p| p.as_str())
-            .any(|pat| is_subtype(&mime, pat, reg));
-        if accepted && best.as_ref().is_none_or(|(_, bw)| w > *bw) {
+        // A structural candidate earns its seat only when the verb is asking for
+        // the structured representation *specifically* — an accept pattern that
+        // matches the candidate but would NOT also accept plain text. This is the
+        // gating rule: a `text/*` verb sees plain text (the detect_content
+        // fallback), not the candidate, because `text/plain` already satisfies
+        // `text/*`; only a verb that accepts e.g. `application/json` (which doesn't
+        // subsume `text/plain`) gets the structured type. Without it, a structural
+        // signal would hijack every generic text verb (e.g. `goo upper '{"k":1}'`).
+        let earns_seat = accepts.iter().filter_map(|p| p.as_str()).any(|pat| {
+            is_subtype(&mime, pat, reg) && !is_subtype("text/plain", pat, reg)
+        });
+        if earns_seat && best.as_ref().is_none_or(|(_, bw)| w > *bw) {
             best = Some((mime, w));
         }
     }
@@ -448,5 +455,22 @@ mod tests {
         let reg = j!({});
         let verb = j!({ "accepts": ["application/json"] });
         assert_eq!(infer_for("just words", &verb, &reg), None);
+    }
+
+    // The gating rule, exercised where it matters: a registry where
+    // `application/json is_a text/plain` (as shipped). A text/* verb must NOT get
+    // the json candidate (text/plain already satisfies text/*), or it would
+    // hijack every generic text verb on structured-looking input.
+    #[test]
+    fn infer_for_gating_text_star_verb_gets_no_structured_candidate() {
+        let reg = j!({ "types": [{ "name": "application/json", "is_a": ["text/plain"] }] });
+        // sanity: json IS a subtype of text/* in this reg…
+        assert!(is_subtype("application/json", "text/*", &reg));
+        // …yet a text/* verb still declines the json candidate (gating).
+        let text_verb = j!({ "accepts": ["text/*"] });
+        assert_eq!(infer_for(r#"{"k":1}"#, &text_verb, &reg), None);
+        // A verb specifically accepting json still gets it.
+        let json_verb = j!({ "accepts": ["application/json"] });
+        assert_eq!(infer_for(r#"{"k":1}"#, &json_verb, &reg).as_deref(), Some("application/json"));
     }
 }
