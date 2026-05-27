@@ -47,6 +47,21 @@ accepts = ["text/*"]
 emits = "text/x-up"
 cost = "cheap"
 cmd = "tr a-z A-Z < {in.path|q}"
+
+# A usage verb (no own cmd) implemented by a channel — exercises 2b: the
+# planner picks the channel, the executor runs its cmd in the verb's context.
+[[verbs]]
+name = "yell"
+accepts = ["text/*"]
+suffix = "!!!"
+usage = ["shout"]
+
+[[channels]]
+name = "shout"
+accepts = ["text/*"]
+emits = "text/x-shout"
+cost = "normal"
+cmd = "printf '%s%s' {subject.text|q} {verb.suffix|q}"
 EOF
     printf 'hello goo' > "$BATS_TEST_TMPDIR/sub.txt"
 
@@ -94,4 +109,13 @@ EOF
     run "$GOO" revit "$BATS_TEST_TMPDIR/d.json" </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" == *"415"* ]]
+}
+
+# 2b: a usage verb (no own cmd) runs via its chosen channel, in verb context
+# ({subject.text} + {verb.suffix} both resolve).
+@test "execute: usage verb runs its channel (multi-instrument execution)" {
+    printf 'hi' > "$BATS_TEST_TMPDIR/y.txt"
+    run "$GOO" yell "$BATS_TEST_TMPDIR/y.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "hi!!!" ]
 }
