@@ -44,6 +44,18 @@ impl Tier {
             Tier::Network => 32,
         }
     }
+
+    /// Parse a `[[channels]]` `cost` string; unknown → `None` (validation flags it).
+    pub fn parse(s: &str) -> Option<Tier> {
+        match s {
+            "free" => Some(Tier::Free),
+            "cheap" => Some(Tier::Cheap),
+            "normal" => Some(Tier::Normal),
+            "lossy" => Some(Tier::Lossy),
+            "network" => Some(Tier::Network),
+            _ => None,
+        }
+    }
 }
 
 /// How a transformer consumes its input. Carried for the executor (slice 4),
@@ -53,6 +65,18 @@ pub enum Mode {
     Stream,
     Path,
     Bytes,
+}
+
+impl Mode {
+    /// Parse a `[[channels]]` `consumes` string; unknown → `None`.
+    pub fn parse(s: &str) -> Option<Mode> {
+        match s {
+            "stream" => Some(Mode::Stream),
+            "path" => Some(Mode::Path),
+            "bytes" => Some(Mode::Bytes),
+            _ => None,
+        }
+    }
 }
 
 /// A type→type transformer: a coercion channel (and the same entity a `Using:`
@@ -67,6 +91,7 @@ pub struct Converter {
     pub cost: Tier,
     pub requires: Vec<String>, // env capabilities that gate usability
     pub consumes: Mode,
+    pub cmd: String, // how it runs (executor, slice 4); empty in pure planner tests
 }
 
 /// A candidate (verb, instrument): the mandatory A→B transition. `emits == None`
@@ -144,6 +169,78 @@ pub fn plan(
         |node| *node == Node::Goal,
     )?;
     Some(reconstruct(path, total, &usable, &verbs, accept, reg))
+}
+
+/// Build the converter set from a registry's `[[channels]]` (slice 2). Skips
+/// entries missing the essentials (`validate_channels` reports those); applies
+/// defaults (`cost=normal`, `consumes=path`) for omitted fields.
+pub fn converters_from_registry(reg: &Value) -> Vec<Converter> {
+    reg.get("channels")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(channel_to_converter).collect())
+        .unwrap_or_default()
+}
+
+fn channel_to_converter(ch: &Value) -> Option<Converter> {
+    let name = ch.get("name")?.as_str()?.to_string();
+    let emits = ch.get("emits")?.as_str()?.to_string();
+    let accepts: Vec<String> = ch
+        .get("accepts")?
+        .as_array()?
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    if accepts.is_empty() {
+        return None;
+    }
+    let str_vec = |k: &str| -> Vec<String> {
+        ch.get(k)
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    };
+    Some(Converter {
+        name,
+        accepts,
+        emits,
+        cost: ch.get("cost").and_then(Value::as_str).and_then(Tier::parse).unwrap_or(Tier::Normal),
+        requires: str_vec("requires"),
+        consumes: ch.get("consumes").and_then(Value::as_str).and_then(Mode::parse).unwrap_or(Mode::Path),
+        cmd: ch.get("cmd").and_then(Value::as_str).unwrap_or("").to_string(),
+    })
+}
+
+/// Validate `[[channels]]` entries (slice 2). Enforces the §2.5 schema rules so
+/// the graph stays well-defined: `emits` concrete (no `*`), `accepts` non-empty,
+/// and known `cost`/`consumes` vocab. Returns one message per problem.
+pub fn validate_channels(reg: &Value) -> Vec<String> {
+    let mut errs = Vec::new();
+    let Some(arr) = reg.get("channels").and_then(Value::as_array) else { return errs };
+    for ch in arr {
+        let name = ch.get("name").and_then(Value::as_str).unwrap_or("<unnamed>");
+        match ch.get("emits").and_then(Value::as_str) {
+            None => errs.push(format!("channel \"{name}\" has no emits")),
+            Some(e) if e.contains('*') => {
+                errs.push(format!("channel \"{name}\" emits \"{e}\" — must be a concrete type, not a pattern"))
+            }
+            Some(_) => {}
+        }
+        let accepts_ok = ch.get("accepts").and_then(Value::as_array).is_some_and(|a| !a.is_empty());
+        if !accepts_ok {
+            errs.push(format!("channel \"{name}\" needs a non-empty accepts list"));
+        }
+        if let Some(c) = ch.get("cost").and_then(Value::as_str) {
+            if Tier::parse(c).is_none() {
+                errs.push(format!("channel \"{name}\" has unknown cost tier \"{c}\" (free|cheap|normal|lossy|network)"));
+            }
+        }
+        if let Some(m) = ch.get("consumes").and_then(Value::as_str) {
+            if Mode::parse(m).is_none() {
+                errs.push(format!("channel \"{name}\" has unknown consumes mode \"{m}\" (stream|path|bytes)"));
+            }
+        }
+    }
+    errs
 }
 
 fn successors(
@@ -261,6 +358,7 @@ mod tests {
             cost,
             requires: vec![],
             consumes: Mode::Path,
+            cmd: String::new(),
         }
     }
     fn conv_req(name: &str, accepts: &[&str], emits: &str, cost: Tier, requires: &[&str]) -> Converter {
@@ -414,5 +512,60 @@ mod tests {
         assert_eq!(p.steps.len(), 1);
         assert_eq!(p.steps[0].kind, StepKind::Verb("".into()));
         assert_eq!(p.cost, 0);
+    }
+
+    // ---- slice 2: [[channels]] schema → converter set ----
+
+    #[test]
+    fn converters_parse_from_registry() {
+        let reg = j!({ "channels": [
+            { "name": "chafa", "accepts": ["image/*"], "emits": "text/x-ansi",
+              "cost": "lossy", "consumes": "path", "cmd": "chafa {in.path|q}" },
+            { "name": "eog", "accepts": ["image/*"], "emits": "application/vnd.wayland.surface",
+              "requires": ["display"] },  // defaults: cost=normal, consumes=path
+        ]});
+        let cs = converters_from_registry(&reg);
+        assert_eq!(cs.len(), 2);
+        let chafa = &cs[0];
+        assert_eq!(chafa.name, "chafa");
+        assert_eq!(chafa.emits, "text/x-ansi");
+        assert_eq!(chafa.cost, Tier::Lossy);
+        assert_eq!(chafa.consumes, Mode::Path);
+        assert_eq!(chafa.cmd, "chafa {in.path|q}");
+        let eog = &cs[1];
+        assert_eq!(eog.cost, Tier::Normal); // default
+        assert_eq!(eog.requires, vec!["display".to_string()]);
+    }
+
+    // The parsed converters drive the planner end-to-end.
+    #[test]
+    fn parsed_converters_feed_the_planner() {
+        let reg = j!({ "channels": [
+            { "name": "chafa", "accepts": ["image/*"], "emits": "text/x-ansi", "cost": "lossy" }
+        ]});
+        let cs = converters_from_registry(&reg);
+        let verbs = [present(&["image/*"])];
+        let p = plan("image/png", &verbs, &cs, &strs(&["text/x-ansi"]), &[], &reg).unwrap();
+        assert_eq!(p.steps[1].kind, StepKind::Convert("chafa".into()));
+    }
+
+    #[test]
+    fn validate_flags_pattern_emits_and_empty_accepts() {
+        let reg = j!({ "channels": [
+            { "name": "bad-emit", "accepts": ["image/*"], "emits": "text/*" },   // pattern emit
+            { "name": "no-accept", "accepts": [], "emits": "text/plain" },        // empty accepts
+            { "name": "bad-cost", "accepts": ["text/*"], "emits": "text/plain", "cost": "huge" },
+            { "name": "ok", "accepts": ["image/*"], "emits": "text/x-ansi", "cost": "lossy" },
+        ]});
+        let errs = validate_channels(&reg);
+        assert!(errs.iter().any(|e| e.contains("bad-emit") && e.contains("concrete")));
+        assert!(errs.iter().any(|e| e.contains("no-accept") && e.contains("non-empty")));
+        assert!(errs.iter().any(|e| e.contains("bad-cost") && e.contains("unknown cost")));
+        assert!(!errs.iter().any(|e| e.contains("\"ok\"")));
+    }
+
+    #[test]
+    fn validate_clean_when_no_channels() {
+        assert!(validate_channels(&j!({})).is_empty());
     }
 }

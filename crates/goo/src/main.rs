@@ -8,7 +8,7 @@
 //! XDG dirs `registry::dirs()` reads); no path magic. Exit codes: 0 / 1
 //! (catch-all) / 130 (cancel).
 
-use goo_engine::{address, dispatch as disp, mime, registry, selection, verbs};
+use goo_engine::{address, dispatch as disp, mime, negotiation, registry, selection, verbs};
 use serde_json::{json, Map, Value};
 use std::io::IsTerminal;
 use std::process::Command;
@@ -456,11 +456,18 @@ fn cmd_validate() -> i32 {
         }
     }
 
+    // 8. Channels (coercion converters): emits concrete, accepts non-empty, known
+    // cost/consumes vocab (see negotiation §2.5). No-op until a plugin ships them.
+    for msg in negotiation::validate_channels(&reg) {
+        err(msg);
+        errors += 1;
+    }
+
     if errors == 0 {
         let n = |k: &str| arr(k).len();
         println!(
-            "goo validate: OK ({} plugins, {} types, {} sources, {} verbs, {} adverbs, {} sigils, {} aliases, {} dispatch)",
-            n("plugins"), n("types"), n("sources"), n("verbs"), n("adverbs"), n("sigils"), n("aliases"), n("dispatch")
+            "goo validate: OK ({} plugins, {} types, {} sources, {} verbs, {} adverbs, {} sigils, {} aliases, {} channels, {} dispatch)",
+            n("plugins"), n("types"), n("sources"), n("verbs"), n("adverbs"), n("sigils"), n("aliases"), n("channels"), n("dispatch")
         );
         0
     } else {
