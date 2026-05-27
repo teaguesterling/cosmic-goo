@@ -56,6 +56,7 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
         Some("describe") => cmd_describe(args.get(1).map(String::as_str)),
         Some("plugins") => cmd_plugins(),
         Some("validate") => cmd_validate(),
+        Some("--explain") => cmd_explain(&args[1..]),
         Some("dispatch") => cmd_dispatch(args.get(1).map(String::as_str)),
         Some("__complete") => cmd_complete(args.get(1).map(String::as_str), args.get(2).map(String::as_str)),
         Some("-h") | Some("--help") | Some("help") => {
@@ -164,6 +165,8 @@ USAGE
     goo compose                          Build a sentence (scripted via GOO_COMPOSE_ANSWERS)
     goo plugins                          List loaded plugins
     goo validate                         Validate all loaded plugins
+    goo --explain <verb> [@TYPE|subj]    Show the negotiation plan (route/415) — read-only
+                                         [--as TYPE] [--explain-env tty|cosmic|desktop|piped]
 
 SUBJECT INFERENCE
     If no positional is given, the subject falls back in order:
@@ -183,6 +186,120 @@ EXAMPLES
 // ---------------- helpers ----------------
 
 use goo_engine::shell::{bash_capture, bash_exec};
+
+/// `goo --explain VERB [SUBJECT|@TYPE] [--as TYPE] [--explain-env ENV]` — the
+/// negotiation plan explainer (goo-debug). Read-only: shows the Accept profile
+/// and the planned route (or a 415), never runs anything. `@<mime>` asserts the
+/// subject type virtually (no file needed); `--explain-env tty|cosmic|desktop|
+/// piped` overrides the detected environment (default: isatty + $WAYLAND_DISPLAY).
+fn cmd_explain(args: &[String]) -> i32 {
+    let reg = registry::load_all();
+    let (mut verb_name, mut subj, mut type_override, mut as_type, mut env_ovr) =
+        (None, None, None, None, None);
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if let Some(v) = a.strip_prefix("--as=") {
+            as_type = Some(v);
+        } else if a == "--as" {
+            as_type = args.get(i + 1).map(String::as_str);
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--explain-env=") {
+            env_ovr = Some(v);
+        } else if a == "--explain-env" {
+            env_ovr = args.get(i + 1).map(String::as_str);
+            i += 1;
+        } else if let Some(t) = a.strip_prefix('@') {
+            type_override = Some(t); // @<mime> — assert the subject type virtually
+        } else if verb_name.is_none() {
+            verb_name = Some(a);
+        } else if subj.is_none() {
+            subj = Some(a);
+        }
+        i += 1;
+    }
+
+    let verb_name = match verb_name {
+        Some(v) => v,
+        None => return die("explain: usage: goo --explain VERB [@TYPE|subject] [--as TYPE] [--explain-env tty|cosmic|desktop|piped]"),
+    };
+    let verb = match reg["verbs"].as_array().and_then(|a| a.iter().find(|v| v["name"].as_str() == Some(verb_name))) {
+        Some(v) => v.clone(),
+        None => return die(format!("explain: unknown verb '{verb_name}'")),
+    };
+
+    let subject_type = if let Some(t) = type_override {
+        t.to_string()
+    } else if let Some(s) = subj {
+        if std::path::Path::new(s).exists() {
+            mime::detect_path(s).unwrap_or_else(|_| "application/octet-stream".into())
+        } else {
+            mime::detect_content(s)
+        }
+    } else {
+        return die("explain: needs a subject — e.g. `@image/png` or a file path");
+    };
+
+    let (tty, display) = match env_ovr {
+        Some("tty") => (true, false),
+        Some("cosmic") | Some("cosmic-term") => (true, true),
+        Some("desktop") => (false, true),
+        Some("piped") => (false, false),
+        Some(other) => return die(format!("explain: unknown --explain-env '{other}' (tty|cosmic|desktop|piped)")),
+        None => {
+            use std::io::IsTerminal;
+            let disp = std::env::var("WAYLAND_DISPLAY").is_ok_and(|v| !v.is_empty())
+                || std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty());
+            (std::io::stdout().is_terminal(), disp)
+        }
+    };
+
+    let mut target = negotiation::target_from_env(tty, display);
+    if let Some(t) = as_type {
+        target = target.with_accept(t);
+    }
+
+    let caps = if target.env_caps.is_empty() {
+        String::new()
+    } else {
+        format!("   · caps {{{}}}", target.env_caps.join(", "))
+    };
+    println!("Accept: {}{}", target.accept.join("  "), caps);
+
+    match negotiation::plan_request(&subject_type, &verb, &target, &reg) {
+        None => {
+            println!("415 · no route — {subject_type} can't be presented here (verb: {verb_name})");
+            1
+        }
+        Some(plan) => {
+            let start = plan.steps.first().map(|s| s.from.clone()).unwrap_or_else(|| subject_type.clone());
+            let mut line = start;
+            for s in &plan.steps {
+                match &s.kind {
+                    negotiation::StepKind::Convert(name) => {
+                        line.push_str(&format!(" →[{name}: {}]→ {}", channel_tier(&reg, name), s.to));
+                    }
+                    negotiation::StepKind::Verb(inst) => {
+                        let label = if inst.is_empty() { verb_name } else { inst.as_str() };
+                        line.push_str(&format!(" →({label})→ {}", s.to));
+                    }
+                }
+            }
+            println!("{line}   (cost {})", plan.cost);
+            0
+        }
+    }
+}
+
+/// The declared cost tier of a channel, for `--explain` display.
+fn channel_tier(reg: &Value, name: &str) -> String {
+    reg["channels"]
+        .as_array()
+        .and_then(|a| a.iter().find(|c| c["name"].as_str() == Some(name)))
+        .and_then(|c| c["cost"].as_str())
+        .unwrap_or("normal")
+        .to_string()
+}
 
 /// Render a verb and execute it, honouring `confirm`.
 fn exec_verb(

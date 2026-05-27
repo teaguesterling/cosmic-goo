@@ -70,6 +70,16 @@ requires = ["display"]
 consumes = "path"
 cmd = "xdg-open {in.path|q}"
 
+# A data coercion (no display needed): lets a json verb accept a CSV subject —
+# input coercion before the verb runs (`goo --explain json-keys @text/csv`).
+[[channels]]
+name = "csv2json"
+accepts = ["text/csv"]
+emits = "application/json"
+cost = "cheap"
+consumes = "stream"
+cmd = "mlr --icsv --ojson cat {in.path|q}"
+
 # ---- presentation verb ----
 # `view` an image: the subject is the result; the engine negotiates where it
 # lands (chafa→ansi on a tty, eog→surface on a desktop). No default_for, so GOO
