@@ -43,7 +43,7 @@ A full invocation is one HTTP request. The slots are grammatical **cases**
 | **subject** (request-target URI) | Theme / Patient | what is acted on | `goo://file/~/article.md` |
 | **`Using:`** | Agent / Instrument | what performs / through what channel | `goo://channel/fabric` |
 | **`To:`** | Recipient / Goal (terminative) | what receives / where the *result* lands / a target value | `goo://chat/new`, `spanish` |
-| **`From:`** | Source / origin (ablative) | the calling session — capability-bearing; **default `To:`** (deferred, §12) | `goo://session/current` |
+| **`From:`** | Source / origin (ablative) | the calling session — a named return address + origin kind, when the inherited channel isn't enough (deferred, §12) | `goo://session/current` |
 | **`Log:`** | (secondary Goal) | where *diagnostic / secondary* output lands | `goo://file/~/goo.log`, `^scratch` |
 | **`With:`** | Manner | opaque `key=value` config | `depth=brief model=iq4xs` |
 | **body** | inline Theme | data, when there's no addressable referent | piped text |
@@ -476,85 +476,102 @@ Open: *how* goo-native is declared — per-verb, per-channel, or a property of t
 wrapped tool (a plugin wrapping `fabric` is foreign; one wrapping a `good`-speaking
 peer is native). Likely a flag (`speaks = "goo"`).
 
-## 12. The origin — `From:` and presentation negotiation
+## 12. Presentation negotiation — `Accept:`, the inherited channel, and `From:`
 
-Every request has an **origin**: the session it was made from. goo detects it as
-an addressable resource, **`goo://session/current`**, and exposes it as the
-**`From:`** slot (§2). `From:` is *identity* — "who's asking" — and its
-operational payoff is a single rule:
+The same subject renders differently depending on who's looking: an image is
+bytes to a file, a GUI window on a desktop, ANSI inline in a bare terminal. This
+is **content negotiation**, and it's what makes goo *not* a typed `xdg-open`
+wrapper — `xdg-open` is type→handler dispatch with no notion of "what can the
+caller render," so it structurally can't do "show this image as ANSI because I'm
+a terminal."
 
-> **Default `To:` is `From:`.** Absent an explicit destination, the result is
-> presented back to where the request came from.
+### `Accept:` is the mechanism; the inherited channel is the default destination
 
-That is what makes `From:` *machinery* rather than provenance. A bare
-`goo view photo.png` has no `To:`, so the result returns to the calling session —
-and *how* it's presented depends on that session's capabilities.
+A caller declares what representations it can take with **`Accept:`** (HTTP-exact).
+The engine negotiates the handler's emitted representation against it. And the
+load-bearing rule for *where the result goes*:
 
-### Capabilities are a *preferred presentation*, not a hard `Accept:`
+> **The default destination is the inherited channel** — the stdout/fd the request
+> came in on. Absent an explicit `To:`, an unsolicited result is presented back
+> over the channel that carried the request.
 
-The origin carries **capabilities** — `{pty}`, `{display}` (Wayland/X),
-`{interactive}`, an audio sink, … These define a **preferred presentation
-profile**, not a constraint:
+So negotiation is never left dangling at "the engine picked a representation" with
+no answer to "and sent it *where*": unsolicited output goes back the way it came.
+This is also where the **`-` convention** lives: **`-` means "the inherited
+channel."** As a *subject* that's stdin (the established Unix idiom); as a
+*destination/route* it's the inherited stdout/fd; as a **selector-adverb default**
+(`default = "-"`) it's "the route that fits the inherited channel." One token,
+coherent across slots.
 
-- a bare tty *prefers* `text/x-ansi` (render inline) but can still take image
-  bytes (a file redirect, a sixel terminal);
-- a desktop session *prefers* a GUI handoff (`xdg-open`).
+### The common path: a bare CLI gets a default `Accept:` from a thin heuristic
 
-So, precisely: **`From:` implies a default Accept profile; an explicit `To:` —
-including a shell redirect to a file — displaces it.** `goo view photo.png > out.png`
+A human typing `goo view photo.png` will not type `--accept text/x-ansi`. So the
+**bare-CLI path is the dominant one**, and it works by *synthesizing* a default
+Accept from the environment: a quick `isatty(1)` + `$WAYLAND_DISPLAY` check — tty
+and no display → prefer `text/x-ansi`; a display → prefer a GUI handoff. That
+heuristic is the whole of what's needed for ~90% of invocations; explicit
+`Accept:` (scripts, launchers, an MCP proxy) is the *secondary* path that
+overrides it.
+
+The synthesized Accept is a **preferred presentation, not a hard constraint.** A
+tty *prefers* ANSI but can still take image bytes — a file redirect, a sixel
+terminal. So: **the heuristic governs only the *unsolicited default*; an explicit
+`To:` — including a shell redirect to a file — displaces it.** `goo view photo.png > out.png`
 has a non-tty stdout (an explicit byte sink), so the engine sends image bytes —
-*by the model*, not by luck. The capability profile governs only the
-**unsolicited default**.
+*by the model*, not by luck.
 
 ### Accept drives `Using:` — negotiation, not enumeration
 
-Given the origin's preferred Accept and the handler's emitted representation:
+Given the negotiated Accept and the handler's emitted representation:
 
 - **emit ∈ Accept** → present directly;
 - **gap** → the engine inserts a **`Using:` instrument** that bridges it. `chafa`
-  is `image/* → text/x-ansi`; it is auto-selected exactly when the origin prefers
+  is `image/* → text/x-ansi`; it's auto-selected exactly when the caller prefers
   ANSI but the handler emits image bytes.
 
 This is the **output-side dual of §6's input inference**: input infers the
-*subject's* type; output negotiates the *origin's* presentation. The same
+*subject's* type; output negotiates the *caller's* presentation. The same
 weighted-candidate machinery applies (the engine ranks bridging instruments),
-keyed on the origin's Accept profile instead of a destination's `accepts`.
+keyed on the Accept profile instead of a destination's `accepts`.
 
 `chafa`-as-instrument is the tell that **this needs no bespoke mechanism**.
-`view`/`play` are not env-special verbs — they are ordinary verbs that emit a
-representation, and the *environment*, via `From:`, picks the route. "Terminal vs
-GUI" is a `Using:` instrument selected by capability, overridable with an explicit
-`To:`/`Using:`.
+`view`/`play` are not env-special verbs — they're ordinary verbs that emit a
+representation; *negotiation* picks the route. "Terminal vs GUI" is a `Using:`
+instrument selected by Accept, overridable with an explicit `To:`/`Using:`.
 
-### The origin is *sortable* — session-kind ontology
+### `From:` — when the caller is more than its inherited channel
 
-"What am I called from" is a **kind**, and kinds are the existing ontology
-(kind-first, [addressing-and-protocol.md]): `goo://session/*` carries an `is_a`
-hierarchy —
+Two things `Accept:` alone can't express, and only these earn the full origin
+model:
 
-```
-session/real-tty   is_a session/interactive
-session/ssh        is_a session/interactive   (remote — display absent/forwarded)
-session/tmux       is_a session/interactive   (multiplexed; the outer session holds the real caps)
-session/script     is_a session/batch         (a python/shell caller — wants data, not presentation)
-session/launcher   is_a session/interactive   (wants the result rendered into *it*, not the spawner)
-```
+1. **A return address that isn't the inherited fd.** A launcher saying "render the
+   result into *me*, not the terminal that spawned me" must *name* itself — an
+   address, not a content type. That's `From: goo://session/current` (or an
+   explicit `To:` the caller supplies), used as the destination.
+2. **Branching on origin *kind*.** "What am I called from" is a kind, and kinds are
+   the existing ontology (kind-first, [addressing-and-protocol.md]): `goo://session/*`
+   with an `is_a` hierarchy — `session/{real-tty, ssh, tmux, script, launcher}`,
+   each `is_a session/{interactive, batch}`. This is just a **richer version of the
+   thin Accept heuristic** (a `tmux`-in-cosmic-terminal has a display the immediate
+   pipe hides; an `ssh` session may have none; a `script` wants raw data). Detected
+   from `isatty`/`$WAYLAND_DISPLAY`/`$SSH_TTY`/`$TMUX`/`$TERM`/parentage; *sortable*
+   the way a source's items are.
 
-Detected from the environment (`isatty`, `$WAYLAND_DISPLAY`, `$SSH_TTY`, `$TMUX`,
-`$TERM`, parentage), the origin is *sortable* the same way a source's items are:
-a request can be ranked or branched by origin kind. A `script` origin's preferred
-Accept is the raw representation (no ANSI dressing); a `launcher` origin's is
-"render into the launcher's surface."
+If results always flow back over the inherited fds, **`From:` isn't needed at
+all** — `Accept:` + the inherited-channel default cover everything, and the
+session-kind ontology is earned only when render-into-a-named-surface becomes
+real.
 
 ### Status
 
-Designed-not-built. Gated on two pieces: **session detection** (cheap — an
-engine-built `goo://session/current` resolver) and **coercion** (§13 — `chafa` as
-an auto-routed channel). The minimal *first* step that needs neither: a **selector
-adverb whose default is environment-computed** (`default = "@auto"` → `terminal` /
-`gui` by capability) — env-aware `view`/`play` today, promotable to full `From:`
-negotiation when coercion lands. This is the consumer that *motivates* coercion on
-the **output** side, exactly as JSON motivated `infer_for` on the **input** side.
+Designed-not-built. Negotiation proper is gated on **coercion** (§13 — `chafa` as
+an auto-routed `image→ansi` channel); the named-return-channel and kind ontology
+are a later refinement. The minimal *first* step that needs neither: a **selector
+adverb whose default is `-`** (environment-computed → `terminal` / `gui` by the
+`isatty`/`$WAYLAND_DISPLAY` heuristic) — env-aware `view`/`play` today, promotable
+to full negotiation when coercion lands. This is the consumer that *motivates*
+coercion on the **output** side, exactly as JSON motivated `infer_for` on the
+**input** side.
 
 ## 13. Deferred / open
 
