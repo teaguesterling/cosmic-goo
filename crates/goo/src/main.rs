@@ -291,12 +291,33 @@ fn cmd_explain(args: &[String]) -> i32 {
     }
 }
 
-/// Execute a `kind="present"` verb: plan the subject's route to the
-/// environment's Accept profile and run it through the negotiation executor
-/// (the executor driving the renderers — chafa/eog/…). The final step inherits
-/// stdout, so a terminal renderer sees the tty. `--as=TYPE` pins the Accept.
-fn exec_present(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) -> i32 {
+fn is_present(verb: &Value) -> bool {
+    verb.get("kind").and_then(|k| k.as_str()) == Some("present")
+}
+
+/// True when the subject's type isn't a subtype of anything the verb `accepts`
+/// — a type gap that needs input coercion (4b). Verbs with no `accepts`
+/// (no-subject verbs) and typeless/absent subjects never qualify.
+fn needs_coercion(reg: &Value, verb: &Value, subject: &Value) -> bool {
+    let accepts = match verb.get("accepts").and_then(|a| a.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => return false,
+    };
+    let stype = match subject.get("type").and_then(|t| t.as_str()) {
+        Some(t) => t,
+        None => return false,
+    };
+    !accepts.iter().filter_map(|p| p.as_str()).any(|p| mime::is_subtype(stype, p, reg))
+}
+
+/// Run a verb through the negotiation engine — for a `present` verb (the subject
+/// is the result) or a real verb with a type gap (input coercion). Materialize
+/// the subject to a file, plan its route to the environment's Accept (pinned by
+/// `--as`), and execute (final step inherits stdout; the executor drives the
+/// converters/renderers and runs the verb step). No route → 415.
+fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) -> i32 {
     let subject_type = subject.get("type").and_then(|t| t.as_str()).unwrap_or("application/octet-stream");
+    let verb_name = verb.get("name").and_then(|n| n.as_str()).unwrap_or("");
 
     // The subject as a file on disk — the value the executor threads. Inline
     // content (no backing path, e.g. stdin) is materialized to a temp file.
@@ -322,10 +343,10 @@ fn exec_present(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) -> 
     }
 
     match negotiation::plan_request(subject_type, verb, &target, reg) {
-        None => die(format!("415 · no route — {subject_type} can't be presented here")),
+        None => die(format!("415 · no route — can't route {subject_type} through '{verb_name}' to this destination")),
         Some(plan) => match exec::execute(&plan, &subject_path, verb, reg) {
             Ok(code) => code,
-            Err(e) => die(format!("present: {e}")),
+            Err(e) => die(format!("{verb_name}: {e}")),
         },
     }
 }
@@ -348,11 +369,13 @@ fn exec_verb(
     object: &Value,
     adverbs: &Value,
 ) -> i32 {
-    // A `kind="present"` verb has no cmd — the subject *is* the result, and
-    // delivery is the negotiation engine's job. Plan the route to the
-    // environment's Accept and run it (the executor drives the renderers).
-    if verb.get("kind").and_then(|k| k.as_str()) == Some("present") {
-        return exec_present(reg, verb, subject, adverbs);
+    // Route through the negotiation engine when (a) the verb is `present` (the
+    // subject is the result; delivery is the engine's job), or (b) there's a
+    // type gap — the subject isn't a subtype of anything the verb `accepts`, so
+    // input coercion is needed (4b). Otherwise the subject already fits: take the
+    // unchanged legacy render+exec path (parity-safe — no gap, no change).
+    if is_present(verb) || needs_coercion(reg, verb, subject) {
+        return exec_negotiated(reg, verb, subject, adverbs);
     }
     let rendered = match verbs::render(reg, verb, subject, object, adverbs) {
         Ok(r) => r,
