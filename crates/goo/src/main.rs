@@ -8,7 +8,7 @@
 //! XDG dirs `registry::dirs()` reads); no path magic. Exit codes: 0 / 1
 //! (catch-all) / 130 (cancel).
 
-use goo_engine::{address, dispatch as disp, mime, negotiation, registry, selection, verbs};
+use goo_engine::{address, dispatch as disp, exec, mime, negotiation, registry, selection, verbs};
 use serde_json::{json, Map, Value};
 use std::io::IsTerminal;
 
@@ -291,6 +291,45 @@ fn cmd_explain(args: &[String]) -> i32 {
     }
 }
 
+/// Execute a `kind="present"` verb: plan the subject's route to the
+/// environment's Accept profile and run it through the negotiation executor
+/// (the executor driving the renderers — chafa/eog/…). The final step inherits
+/// stdout, so a terminal renderer sees the tty. `--as=TYPE` pins the Accept.
+fn exec_present(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) -> i32 {
+    let subject_type = subject.get("type").and_then(|t| t.as_str()).unwrap_or("application/octet-stream");
+
+    // The subject as a file on disk — the value the executor threads. Inline
+    // content (no backing path, e.g. stdin) is materialized to a temp file.
+    let subject_path: String = match subject.get("metadata").and_then(|m| m.get("path")).and_then(|p| p.as_str()) {
+        Some(p) => p.to_string(),
+        None => {
+            let text = subject.get("text").and_then(|t| t.as_str()).unwrap_or("");
+            let tmp = std::env::temp_dir().join(format!("goo-present-{}.bin", std::process::id()));
+            if std::fs::write(&tmp, text).is_err() {
+                return die("present: cannot materialize the subject");
+            }
+            tmp.to_string_lossy().into_owned()
+        }
+    };
+
+    // Real environment → Accept profile (pinned by --as if given).
+    use std::io::IsTerminal;
+    let display = std::env::var("WAYLAND_DISPLAY").is_ok_and(|v| !v.is_empty())
+        || std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty());
+    let mut target = negotiation::target_from_env(std::io::stdout().is_terminal(), display);
+    if let Some(as_t) = adverbs.get("as").and_then(|v| v.as_str()) {
+        target = target.with_accept(as_t);
+    }
+
+    match negotiation::plan_request(subject_type, verb, &target, reg) {
+        None => die(format!("415 · no route — {subject_type} can't be presented here")),
+        Some(plan) => match exec::execute(&plan, &subject_path, reg) {
+            Ok(code) => code,
+            Err(e) => die(format!("present: {e}")),
+        },
+    }
+}
+
 /// The declared cost tier of a channel, for `--explain` display.
 fn channel_tier(reg: &Value, name: &str) -> String {
     reg["channels"]
@@ -310,15 +349,10 @@ fn exec_verb(
     adverbs: &Value,
 ) -> i32 {
     // A `kind="present"` verb has no cmd — the subject *is* the result, and
-    // delivery is the negotiation engine's job. That executor isn't CLI-wired
-    // yet, so fail with a deliberate message rather than render's generic
-    // "neither cmd nor route". `--explain` shows the plan today.
+    // delivery is the negotiation engine's job. Plan the route to the
+    // environment's Accept and run it (the executor drives the renderers).
     if verb.get("kind").and_then(|k| k.as_str()) == Some("present") {
-        let name = verb.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        return die(format!(
-            "'{name}' is a present verb — negotiation-engine execution isn't wired yet; \
-             try `goo --explain {name} <subject>` to see the plan"
-        ));
+        return exec_present(reg, verb, subject, adverbs);
     }
     let rendered = match verbs::render(reg, verb, subject, object, adverbs) {
         Ok(r) => r,
