@@ -133,6 +133,29 @@ EOF
     echo "$output" | jq -e '.adverbs| length == 1' >/dev/null
 }
 
+# Parity guard for the negotiation [[channels]] collection: the bash loader must
+# pass it through with provenance, byte-identically to the Rust engine's
+# registry::channels (asserted by the same fixture + assertions in
+# crates/goo-engine/src/registry.rs `channels_pass_through_with_provenance`).
+@test "plugin_load passes [[channels]] through with provenance" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/chtest.toml" <<'EOF'
+name = "chtest"
+
+[[channels]]
+name = "chafa"
+accepts = ["image/*"]
+emits = "text/x-ansi"
+cost = "lossy"
+cmd = "chafa {in.path|q}"
+EOF
+    run plugin_load "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/chtest.toml"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.channels | length == 1' >/dev/null
+    echo "$output" | jq -e '.channels[0].name == "chafa"' >/dev/null
+    echo "$output" | jq -e '.channels[0].emits == "text/x-ansi"' >/dev/null
+    echo "$output" | jq -e '.channels[0]._plugin == "chtest"' >/dev/null
+}
+
 @test "plugin_load fails clearly on missing file" {
     run plugin_load "$BATS_TEST_TMPDIR/does-not-exist.toml"
     [ "$status" -ne 0 ]

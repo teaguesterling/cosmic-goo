@@ -227,6 +227,23 @@ mod tests {
         assert_eq!(c["plugins"][0]["name"], json!("p"));
     }
 
+    // Parity guard for the negotiation [[channels]] collection — same fixture +
+    // assertions as tests/plugin-loader.bats `plugin_load passes [[channels]]
+    // through with provenance` (the bash loader must produce the same shape).
+    #[test]
+    fn channels_pass_through_with_provenance() {
+        let c = contrib_of(
+            "chtest",
+            "name=\"chtest\"\n[[channels]]\nname=\"chafa\"\naccepts=[\"image/*\"]\nemits=\"text/x-ansi\"\ncost=\"lossy\"\ncmd=\"chafa {in.path|q}\"\n",
+        );
+        let reg = merge(&empty_registry(), &c);
+        let ch = reg["channels"].as_array().unwrap();
+        assert_eq!(ch.len(), 1);
+        assert_eq!(ch[0]["name"], json!("chafa"));
+        assert_eq!(ch[0]["emits"], json!("text/x-ansi"));
+        assert_eq!(ch[0]["_plugin"], json!("chtest"));
+    }
+
     #[test]
     fn name_falls_back_to_basename() {
         let parsed: Value = toml::from_str("[[verbs]]\nname=\"go\"\n").unwrap();
