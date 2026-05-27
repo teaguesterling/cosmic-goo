@@ -21,7 +21,8 @@ crates/target/
 # Build artifacts
 /dist/
 /build/
-/site/         # mkdocs build output
+# mkdocs build output (gitignore has no inline comments — keep it on its own line)
+/site/
 
 # Local overrides
 .cosmic-goo.local/
