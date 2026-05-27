@@ -142,13 +142,29 @@ pub fn render(
         }
     }
 
-    // 3. Resolve adverbs (selected values, injected template_vars, route).
-    let resolved = adverbs::resolve(reg, verb, user_adverbs);
+    // 3-5. Build the substitution context (adverbs, template_vars, prompt).
+    let (context, resolved) = build_context(reg, verb, subject, object, user_adverbs);
 
-    // 4. Build the substitution context; template_vars spread at top level.
-    let cwd = std::env::current_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    // 6. Pick the template: adverb route → verb cmd → error.
+    let template_str = match resolved["route_template"].as_str().filter(|s| !s.is_empty()) {
+        Some(r) => r.to_string(),
+        None => match verb.get("cmd").and_then(|c| c.as_str()).filter(|s| !s.is_empty()) {
+            Some(c) => c.to_string(),
+            None => {
+                return Err("verb has neither cmd nor an adverb-routed template".into())
+            }
+        },
+    };
+
+    Ok(Rendered { cmd: template::substitute(&template_str, &context), confirm: confirm_of(verb) })
+}
+
+/// Steps 3-5 of `render`: resolve adverbs and build the `{subject, object, verb,
+/// adverbs, cwd, …template_vars}` substitution context, with `verb.prompt`
+/// pre-rendered and re-injected. Returns `(context, resolved-adverbs)`.
+fn build_context(reg: &Value, verb: &Value, subject: &Value, object: &Value, user_adverbs: &Value) -> (Value, Value) {
+    let resolved = adverbs::resolve(reg, verb, user_adverbs);
+    let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     let mut context = json!({
         "subject": subject,
         "object": object,
@@ -162,29 +178,34 @@ pub fn render(
             obj.insert(k.clone(), v.clone());
         }
     }
-
-    // 5. Render verb.prompt first, re-injecting so {verb.prompt} resolves in the
-    //    command/route template.
     let raw_prompt = verb.get("prompt").and_then(|p| p.as_str()).unwrap_or("");
     if !raw_prompt.is_empty() {
-        let rendered_prompt = template::substitute(raw_prompt, &context);
-        context["verb"]["prompt"] = json!(rendered_prompt);
+        context["verb"]["prompt"] = json!(template::substitute(raw_prompt, &context));
     }
+    (context, resolved)
+}
 
-    // 6. Pick the template: adverb route → verb cmd → error.
-    let template_str = match resolved["route_template"].as_str().filter(|s| !s.is_empty()) {
-        Some(r) => r.to_string(),
-        None => match verb.get("cmd").and_then(|c| c.as_str()).filter(|s| !s.is_empty()) {
-            Some(c) => c.to_string(),
-            None => {
-                return Err("verb has neither cmd nor an adverb-routed template".into())
-            }
-        },
-    };
+fn confirm_of(verb: &Value) -> bool {
+    verb.get("confirm").and_then(|c| c.as_bool()).unwrap_or(false)
+}
 
-    let cmd = template::substitute(&template_str, &context);
-    let confirm = verb.get("confirm").and_then(|c| c.as_bool()).unwrap_or(false);
-    Ok(Rendered { cmd, confirm })
+/// Render an arbitrary `template` in the verb's full context — the negotiation
+/// executor's entry point for running a verb's chosen `usage` channel `cmd`
+/// (slice 2b). Steps 2-6 *minus validation*: it skips the subject-`accepts` and
+/// `valid_when` checks because the caller is mid-pipeline and the planner already
+/// cleared them at plan time (the subject here is the post-coercion buffer, which
+/// may lack the original metadata `valid_when` was written against). The `cmd`
+/// sees `{subject.*}` / `{verb.*}` / `{verb.prompt}`, exactly like `verb.cmd`.
+pub fn render_template_in_context(
+    reg: &Value,
+    verb: &Value,
+    subject: &Value,
+    object: &Value,
+    user_adverbs: &Value,
+    template: &str,
+) -> Rendered {
+    let (context, _) = build_context(reg, verb, subject, object, user_adverbs);
+    Rendered { cmd: template::substitute(template, &context), confirm: confirm_of(verb) }
 }
 
 /// Resolve the indirect OBJECT of a two-step verb against its `object_type`.
