@@ -7,6 +7,7 @@
 pub mod address;
 pub mod adverbs;
 pub mod dispatch;
+pub mod exec;
 pub mod mime;
 pub mod negotiation;
 pub mod registry;

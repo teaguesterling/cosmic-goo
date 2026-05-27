@@ -238,6 +238,23 @@ when they exist. Buffer insertion, deref-in / re-buffer-out at any foreign
 boundary, and GC are the *executor's* job (§11's no-leak rule); the planner only
 *accounts* for the cost.
 
+### Executor v1 boundaries
+
+The first executor (slice 4) runs a `Plan` hop by hop, with these pinned rules:
+
+- **The initial value is the caller-supplied subject** (a path/bytes on disk).
+  Buffering starts at the *first converter's output*, never the input — `view photo.png`
+  passes the original path to the first converter, it doesn't temp-copy it first.
+- **Intermediate steps capture stdout** (→ a temp-file buffer feeding the next
+  hop); **the final step inherits stdout** — `chafa`'s ANSI goes straight to the
+  inherited terminal (the "inherited channel is the default destination" rule),
+  not through a buffer.
+- **A present-verb identity step is elided explicitly** (type-in = type-out, no
+  `cmd`). It is *not* skipped via "empty cmd" — a non-present step with an empty
+  `cmd` is a **v1 error to surface**, not a silent no-op.
+- v1 always buffers via temp files (correct, not minimal); mode-aware
+  streaming/bytes is a later optimization.
+
 ## 6. Failure & visibility
 
 - **`415`** — no path: report the gap (`can't present image/png as text/plain
