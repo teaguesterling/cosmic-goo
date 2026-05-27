@@ -98,11 +98,6 @@ fn render_step(step: &Step, current: &Path, verb: &Value, reg: &Value) -> Result
             Ok(template::substitute(cmd, &json!({ "in": { "path": cur } })))
         }
         StepKind::Verb(inst) => {
-            // Multi-instrument verbs (Using: channels) carry per-instrument
-            // templates the schema doesn't model yet — surfaced, not guessed.
-            if !inst.is_empty() && verb.get("instruments").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
-                return Err(format!("exec: multi-instrument execution not supported in v1 (instrument '{inst}')"));
-            }
             // Synthesize the subject from the current buffer; only read bytes
             // into `text` for a text subtype (don't slurp media).
             let text = if mime::is_subtype(&step.from, "text/*", reg) {
@@ -114,9 +109,29 @@ fn render_step(step: &Step, current: &Path, verb: &Value, reg: &Value) -> Result
                 "type": step.from, "text": text, "id": cur,
                 "metadata": { "path": cur }
             });
-            verbs::render(reg, verb, &subject, &Value::Null, &json!({}))
-                .map(|r| r.cmd)
-                .map_err(|e| format!("exec: verb render: {e}"))
+            if inst.is_empty() {
+                // Plain verb: its own cmd.
+                verbs::render(reg, verb, &subject, &Value::Null, &json!({}))
+                    .map(|r| r.cmd)
+                    .map_err(|e| format!("exec: verb render: {e}"))
+            } else {
+                // A `usage` channel implements the verb (2b): run THE CHANNEL's
+                // cmd in the verb's context — accepts/valid_when were cleared at
+                // plan time. Convention: a channel as `usage` reads {subject.*}/
+                // {verb.*}; auto-plugged as a coercion converter (the Convert arm)
+                // it reads {in.path}. v1 splits the two by role; the eventual
+                // unification is one context (negotiation §2.3 / goo-protocol §3).
+                let cmd = reg
+                    .get("channels")
+                    .and_then(Value::as_array)
+                    .and_then(|a| a.iter().find(|c| c.get("name").and_then(Value::as_str) == Some(inst.as_str())))
+                    .and_then(|c| c.get("cmd").and_then(Value::as_str))
+                    .filter(|s| !s.is_empty());
+                match cmd {
+                    Some(cmd) => Ok(verbs::render_template_in_context(reg, verb, &subject, &Value::Null, &json!({}), cmd).cmd),
+                    None => Err(format!("exec: usage channel '{inst}' not found or has no cmd")),
+                }
+            }
         }
     }
 }
@@ -263,18 +278,38 @@ mod tests {
         assert_eq!(out, "OLLEH"); // up → HELLO, then rev → OLLEH
     }
 
-    // Multi-instrument verbs aren't executable in v1 — surfaced, not guessed.
+    // 2b: a chosen `usage` channel implements the verb — run THE CHANNEL's cmd
+    // in the verb's context ({subject.text} + {verb.*} both resolve).
     #[test]
-    fn multi_instrument_step_errors() {
-        let verb = json!({ "name": "summarize", "accepts": ["text/*"],
-            "instruments": [{ "name": "fabric/inference", "emits": "text/plain" }] });
+    fn usage_channel_step_runs_in_verb_context() {
+        let reg = json!({ "channels": [
+            { "name": "shout", "accepts": ["text/*"], "emits": "text/x-shout", "cost": "normal",
+              "cmd": "printf '%s%s' {subject.text|q} {verb.suffix|q}" }
+        ]});
+        let verb = json!({ "name": "yell", "accepts": ["text/*"], "suffix": "!!!",
+            "usage": ["shout"] });
         let plan = Plan {
-            steps: vec![step(StepKind::Verb("fabric/inference".into()), "text/plain", "text/plain")],
+            steps: vec![step(StepKind::Verb("shout".into()), "text/plain", "text/x-shout")],
+            delivered: "text/x-shout".into(),
+            cost: 4,
+        };
+        let subj = write_subject("hi");
+        let out = execute_capture(&plan, subj.to_str().unwrap(), &verb, &reg).unwrap();
+        assert_eq!(out, "hi!!!"); // {subject.text}=hi + {verb.suffix}=!!!
+    }
+
+    // 2b: a usage channel name that doesn't resolve → a clean error (the
+    // replacement for the old "multi-instrument not supported").
+    #[test]
+    fn usage_channel_not_found_errors() {
+        let verb = json!({ "name": "summarize", "accepts": ["text/*"], "usage": ["ghost"] });
+        let plan = Plan {
+            steps: vec![step(StepKind::Verb("ghost".into()), "text/plain", "text/plain")],
             delivered: "text/plain".into(),
             cost: 4,
         };
         let subj = write_subject("essay");
         let err = execute_capture(&plan, subj.to_str().unwrap(), &verb, &json!({})).unwrap_err();
-        assert!(err.contains("multi-instrument"), "{err}");
+        assert!(err.contains("usage channel 'ghost' not found"), "{err}");
     }
 }

@@ -295,6 +295,13 @@ fn is_present(verb: &Value) -> bool {
     verb.get("kind").and_then(|k| k.as_str()) == Some("present")
 }
 
+/// A verb implemented by `usage` channels (rather than its own `cmd`) — it must
+/// always go through the negotiation engine (the planner picks a channel, the
+/// executor runs it), even with no type gap, since it has no `cmd` to render.
+fn has_usage(verb: &Value) -> bool {
+    verb.get("usage").and_then(|u| u.as_array()).is_some_and(|a| !a.is_empty())
+}
+
 /// True when the subject's type isn't a subtype of anything the verb `accepts`
 /// — a type gap that needs input coercion (4b). Verbs with no `accepts`
 /// (no-subject verbs) and typeless/absent subjects never qualify.
@@ -370,11 +377,12 @@ fn exec_verb(
     adverbs: &Value,
 ) -> i32 {
     // Route through the negotiation engine when (a) the verb is `present` (the
-    // subject is the result; delivery is the engine's job), or (b) there's a
-    // type gap — the subject isn't a subtype of anything the verb `accepts`, so
-    // input coercion is needed (4b). Otherwise the subject already fits: take the
-    // unchanged legacy render+exec path (parity-safe — no gap, no change).
-    if is_present(verb) || needs_coercion(reg, verb, subject) {
+    // subject is the result; delivery is the engine's job), (b) it's implemented
+    // by `usage` channels (no own cmd — the planner picks one, 2b), or (c) there's
+    // a type gap so the subject needs input coercion (4b). Otherwise the subject
+    // already fits and the verb has its own cmd: the unchanged legacy render+exec
+    // path (parity-safe — no gap, no change).
+    if is_present(verb) || has_usage(verb) || needs_coercion(reg, verb, subject) {
         return exec_negotiated(reg, verb, subject, adverbs);
     }
     let rendered = match verbs::render(reg, verb, subject, object, adverbs) {
