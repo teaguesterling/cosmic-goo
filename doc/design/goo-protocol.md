@@ -108,6 +108,20 @@ provide — selected via `Using:` (§4), *not* multiplied into `summarize-fabric
 `accepts → emits` typing, composed with the verb rather than enumerated against
 it.
 
+> **Terminology — one resource, one slot.** The "how it's performed" axis has
+> historically sprawled across four words; they reconcile to two:
+>
+> | word | what it is | keep? |
+> |---|---|---|
+> | **`channel`** | the **resource** — a `{process}` transformer (`accepts → emits` + a `cmd`). The *one* noun; auto-plugged for coercion *and* named for `Using:`. | **yes — the resource** |
+> | **`Using:`** | the **slot** (grammatical case) — which channel performs the verb. CLI: `--using`. | **yes — the slot** |
+> | **instrument** | the *case-word* for what fills `Using:` (= a channel in that role). Not a separate entity. | only as the case-label |
+> | **`via`** | a legacy verb-local selector adverb that conflates `Using:` (a process, e.g. `fabric`) with `To:` (a destination, e.g. `clipboard`). | **retire** → decompose into `Using:`+`To:` |
+>
+> So: a verb declares the **channels** that *implement* it; the planner picks one
+> (by `emits`/cost — §6); the chosen channel fills `Using:`. "Instrument" is what
+> we *call* that channel in its slot, nothing more.
+
 A channel may offer **sub-channels (modes)** as path segments — each a distinct
 `{process}` instrument with its own `emits`: e.g. `goo://channel/fabric/inference`
 (default, → the *result*) and `goo://channel/fabric/assemble` (→ an unrun
