@@ -12,6 +12,11 @@
 //! schema parsing (slice 2) and no execution/materialization (slice 4). The
 //! graph is **virtual**: a node's successors are computed on the fly by
 //! lattice-matching (`is_subtype`), never stored as an adjacency structure.
+//!
+//! `plan` returns the single minimum-cost route. `300`-style enumeration of
+//! equal-cost *alternatives* (for the picker / `--explain`) is a separate entry
+//! point in a later slice (`pathfinding::astar_bag` or `dijkstra_all`), not a
+//! retrofit of `plan`.
 
 use crate::mime::is_subtype;
 use pathfinding::prelude::dijkstra;
@@ -56,7 +61,9 @@ pub enum Mode {
 pub struct Converter {
     pub name: String,
     pub accepts: Vec<String>, // lattice patterns
-    pub emits: String,        // concrete type
+    // SCHEMA RULE (§2.5): `emits` must be a concrete type, never a pattern —
+    // Dijkstra needs a node to land on. Slice 2's TOML validation enforces it.
+    pub emits: String,
     pub cost: Tier,
     pub requires: Vec<String>, // env capabilities that gate usability
     pub consumes: Mode,
@@ -67,7 +74,8 @@ pub struct Converter {
 /// result and all the work is the output route.
 #[derive(Clone, Debug)]
 pub struct VerbEdge {
-    pub instrument: String, // "" for a plain/present verb with no named instrument
+    // `""` = no named instrument (a plain or `kind="present"` verb).
+    pub instrument: String,
     pub accepts: Vec<String>,
     pub emits: Option<String>,
     pub cost: Tier,
@@ -202,13 +210,20 @@ fn reconstruct(
             _ => {}
         }
     }
-    // Strip the rank penalty so `cost` is the route cost alone.
+    // Strip the rank penalty so `cost` is the route cost alone. The invariant
+    // (route cost < RANK_PENALTY) holds for sane tier weights; saturating_sub +
+    // debug_assert guard against a future tier inflated past the penalty.
     let rank = accept.iter().position(|p| is_subtype(&delivered, p, reg)).unwrap_or(0) as u32;
-    Plan { steps, delivered, cost: total - rank * RANK_PENALTY }
+    let penalty = rank * RANK_PENALTY;
+    debug_assert!(penalty <= total, "route cost must stay below RANK_PENALTY");
+    Plan { steps, delivered, cost: total.saturating_sub(penalty) }
 }
 
 // Reconstruction re-derives which edge Dijkstra used by matching (from, to) and
 // taking the cheapest candidate — consistent with what the search relaxed.
+// Tiebreaker when two edges share endpoints *and* cost: the first in slice order
+// (Vec iteration). Deterministic, and the choice the slice-4 executor will run —
+// so converter/instrument ordering in the registry is the authority on ties.
 fn pick_converter(from: &str, to: &str, converters: &[&Converter], reg: &Value) -> String {
     converters
         .iter()
@@ -280,6 +295,37 @@ mod tests {
         assert_eq!(p.steps[0].kind, StepKind::Convert("csv2json".into()));
         assert_eq!(p.steps[1].kind, StepKind::Verb("jq".into()));
         assert_eq!(p.delivered, "application/json");
+    }
+
+    // Multi-hop coercion: the algorithm actually *chains* converters
+    // (csv→tsv→json), not just direct edges.
+    #[test]
+    fn multi_hop_coercion_chains() {
+        let reg = j!({});
+        let verbs = [verb("jq", &["application/json"], Some("application/json"), Tier::Normal)];
+        let convs = [
+            conv("csv2tsv", &["text/csv"], "text/tab-separated-values", Tier::Cheap),
+            conv("tsv2json", &["text/tab-separated-values"], "application/json", Tier::Cheap),
+        ];
+        let p = plan("text/csv", &verbs, &convs, &strs(&["application/json"]), &[], &reg).unwrap();
+        assert_eq!(p.steps[0].kind, StepKind::Convert("csv2tsv".into()));
+        assert_eq!(p.steps[1].kind, StepKind::Convert("tsv2json".into()));
+        assert_eq!(p.steps[2].kind, StepKind::Verb("jq".into()));
+    }
+
+    // Minimum-cost, not just *a* path: a direct converter beats a two-hop route.
+    #[test]
+    fn cheapest_route_wins() {
+        let reg = j!({});
+        let verbs = [verb("jq", &["application/json"], Some("application/json"), Tier::Normal)];
+        let convs = [
+            conv("csv2tsv", &["text/csv"], "text/tab-separated-values", Tier::Cheap),
+            conv("tsv2json", &["text/tab-separated-values"], "application/json", Tier::Cheap),
+            conv("csv2json", &["text/csv"], "application/json", Tier::Cheap), // 1 hop vs 2
+        ];
+        let p = plan("text/csv", &verbs, &convs, &strs(&["application/json"]), &[], &reg).unwrap();
+        assert_eq!(p.steps[0].kind, StepKind::Convert("csv2json".into()));
+        assert_eq!(p.steps.len(), 2); // direct convert + verb
     }
 
     // Output negotiation: image→ansi after an identity (present) verb. Same
