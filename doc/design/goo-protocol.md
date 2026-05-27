@@ -562,6 +562,19 @@ all** — `Accept:` + the inherited-channel default cover everything, and the
 session-kind ontology is earned only when render-into-a-named-surface becomes
 real.
 
+> **`From:` is goo's `User-Agent` — so don't sniff it.** The web spent two decades
+> learning that branching on client *identity* (User-Agent strings) is a trap:
+> every client ends up lying to pass the checks, and the mechanism rots. The
+> principled replacement it converged on is *capability* negotiation — `Accept`,
+> Client Hints, CSS media features (`pointer: coarse`, not "is it an iPhone").
+> goo is type-driven from the start for the same reason. A session **kind** is a
+> **named bundle of capabilities, not an identity to special-case**:
+> `session/launcher` is sugar for `{has display, wants render-into-self}`, the way
+> `pointer: coarse` names a capability rather than a device. Negotiate on what the
+> caller *accepts*; reach for the kind label only as shorthand for a common
+> capability set, never as a thing to branch on. (This is why the kind ontology is
+> a *refinement of the Accept heuristic* above, not a parallel identity mechanism.)
+
 ### Status
 
 Designed-not-built. Negotiation proper is gated on **coercion** (§13 — `chafa` as
