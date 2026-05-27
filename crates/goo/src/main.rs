@@ -323,7 +323,7 @@ fn exec_present(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) -> 
 
     match negotiation::plan_request(subject_type, verb, &target, reg) {
         None => die(format!("415 · no route — {subject_type} can't be presented here")),
-        Some(plan) => match exec::execute(&plan, &subject_path, reg) {
+        Some(plan) => match exec::execute(&plan, &subject_path, verb, reg) {
             Ok(code) => code,
             Err(e) => die(format!("present: {e}")),
         },

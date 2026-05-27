@@ -19,31 +19,36 @@
 
 use crate::negotiation::{Plan, Step, StepKind};
 use crate::shell::{bash_capture, bash_exec};
-use crate::template;
+use crate::{mime, template, verbs};
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Run the plan, the **final step inheriting stdout** (the CLI path). Returns
-/// the final command's exit code.
-pub fn execute(plan: &Plan, subject_path: &str, reg: &Value) -> Result<i32, String> {
-    Ok(run_pipeline(plan, subject_path, reg, false)?.0)
+/// Run the plan for `verb`, the **final step inheriting stdout** (the CLI path).
+/// Returns the final command's exit code.
+pub fn execute(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value) -> Result<i32, String> {
+    Ok(run_pipeline(plan, subject_path, verb, reg, false)?.0)
 }
 
 /// Run the plan, **capturing** the final output instead of inheriting stdout
 /// (for tests and non-terminal consumers). Returns the delivered bytes as text.
-pub fn execute_capture(plan: &Plan, subject_path: &str, reg: &Value) -> Result<String, String> {
-    Ok(run_pipeline(plan, subject_path, reg, true)?.1.unwrap_or_default())
+pub fn execute_capture(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value) -> Result<String, String> {
+    Ok(run_pipeline(plan, subject_path, verb, reg, true)?.1.unwrap_or_default())
 }
 
-/// A present-verb identity step (`from == to`): the subject is the result, no
-/// command. Elided explicitly — *not* via "empty cmd" (that's a real-verb bug).
-fn is_identity_verb(s: &Step) -> bool {
-    matches!(s.kind, StepKind::Verb(_)) && s.from == s.to
+fn is_present(verb: &Value) -> bool {
+    verb.get("kind").and_then(Value::as_str) == Some("present")
 }
 
-fn run_pipeline(plan: &Plan, subject_path: &str, reg: &Value, capture_final: bool) -> Result<(i32, Option<String>), String> {
-    let steps: Vec<&Step> = plan.steps.iter().filter(|s| !is_identity_verb(s)).collect();
+fn run_pipeline(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value, capture_final: bool) -> Result<(i32, Option<String>), String> {
+    // A present verb's A→B step is identity (the subject *is* the result) — drop
+    // it. A real verb's step stays and runs its cmd (4b).
+    let present = is_present(verb);
+    let steps: Vec<&Step> = plan
+        .steps
+        .iter()
+        .filter(|s| !(present && matches!(s.kind, StepKind::Verb(_))))
+        .collect();
 
     // No real steps (pure presentation / identity): deliver the subject itself.
     if steps.is_empty() {
@@ -55,9 +60,7 @@ fn run_pipeline(plan: &Plan, subject_path: &str, reg: &Value, capture_final: boo
     let mut out = (0, None);
     let last = steps.len() - 1;
     for (i, step) in steps.iter().enumerate() {
-        let cmd = step_cmd(step, reg)?;
-        let ctx = json!({ "in": { "path": current.to_string_lossy() } });
-        let rendered = template::substitute(&cmd, &ctx);
+        let rendered = render_step(step, &current, verb, reg)?;
         if i == last && !capture_final {
             out = (bash_exec(&rendered), None); // final → inherit stdout
         } else {
@@ -75,9 +78,12 @@ fn run_pipeline(plan: &Plan, subject_path: &str, reg: &Value, capture_final: boo
     Ok(out)
 }
 
-/// The shell command for a step. Converter → the channel's `cmd`. A non-identity
-/// Verb step (a real verb in the pipeline) is unsupported in v1 — surfaced.
-fn step_cmd(step: &Step, reg: &Value) -> Result<String, String> {
+/// The ready-to-run shell command for a step.
+///   - Converter → the channel's `cmd` with `{in.path}` = the current buffer.
+///   - Verb (4b) → the verb's `cmd`, rendered against a subject synthesized from
+///     the current buffer (`{subject.metadata.path}`, `{subject.text}` if texty).
+fn render_step(step: &Step, current: &Path, verb: &Value, reg: &Value) -> Result<String, String> {
+    let cur = current.to_string_lossy().into_owned();
     match &step.kind {
         StepKind::Convert(name) => {
             let cmd = reg
@@ -89,13 +95,29 @@ fn step_cmd(step: &Step, reg: &Value) -> Result<String, String> {
             if cmd.is_empty() {
                 return Err(format!("exec: converter '{name}' has no cmd"));
             }
-            Ok(cmd.to_string())
+            Ok(template::substitute(cmd, &json!({ "in": { "path": cur } })))
         }
-        StepKind::Verb(inst) => Err(format!(
-            "exec: real-verb pipeline execution not supported in v1 (verb '{}', {} → {})",
-            if inst.is_empty() { "<unnamed>" } else { inst },
-            step.from, step.to
-        )),
+        StepKind::Verb(inst) => {
+            // Multi-instrument verbs (Using: channels) carry per-instrument
+            // templates the schema doesn't model yet — surfaced, not guessed.
+            if !inst.is_empty() && verb.get("instruments").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
+                return Err(format!("exec: multi-instrument execution not supported in v1 (instrument '{inst}')"));
+            }
+            // Synthesize the subject from the current buffer; only read bytes
+            // into `text` for a text subtype (don't slurp media).
+            let text = if mime::is_subtype(&step.from, "text/*", reg) {
+                fs::read_to_string(current).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let subject = json!({
+                "type": step.from, "text": text, "id": cur,
+                "metadata": { "path": cur }
+            });
+            verbs::render(reg, verb, &subject, &Value::Null, &json!({}))
+                .map(|r| r.cmd)
+                .map_err(|e| format!("exec: verb render: {e}"))
+        }
     }
 }
 
@@ -133,8 +155,15 @@ mod tests {
     fn present_id(t: &str) -> Step {
         step(StepKind::Verb(String::new()), t, t)
     }
+    fn present_verb() -> Value {
+        json!({ "name": "view", "kind": "present" })
+    }
     fn write_subject(body: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("goo-subj-{}-{}.txt", std::process::id(), body.len()));
+        // Unique per call — tests run in parallel; keying by body.len() collides.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static N: AtomicU32 = AtomicU32::new(0);
+        let id = N.fetch_add(1, Ordering::Relaxed);
+        let p = std::env::temp_dir().join(format!("goo-subj-{}-{id}.txt", std::process::id()));
         fs::write(&p, body).unwrap();
         p
     }
@@ -151,7 +180,7 @@ mod tests {
             cost: 1,
         };
         let subj = write_subject("hello world");
-        let out = execute_capture(&plan, subj.to_str().unwrap(), &reg).unwrap();
+        let out = execute_capture(&plan, subj.to_str().unwrap(), &present_verb(), &reg).unwrap();
         assert_eq!(out, "HELLO WORLD");
     }
 
@@ -172,7 +201,7 @@ mod tests {
             cost: 2,
         };
         let subj = write_subject("abc");
-        let out = execute_capture(&plan, subj.to_str().unwrap(), &reg).unwrap();
+        let out = execute_capture(&plan, subj.to_str().unwrap(), &present_verb(), &reg).unwrap();
         assert_eq!(out, "CBA");
     }
 
@@ -181,7 +210,7 @@ mod tests {
     fn identity_delivers_the_subject() {
         let plan = Plan { steps: vec![present_id("text/plain")], delivered: "text/plain".into(), cost: 0 };
         let subj = write_subject("verbatim");
-        let out = execute_capture(&plan, subj.to_str().unwrap(), &json!({})).unwrap();
+        let out = execute_capture(&plan, subj.to_str().unwrap(), &present_verb(), &json!({})).unwrap();
         assert_eq!(out, "verbatim");
     }
 
@@ -195,20 +224,57 @@ mod tests {
             cost: 0,
         };
         let subj = write_subject("z");
-        let err = execute_capture(&plan, subj.to_str().unwrap(), &reg).unwrap_err();
+        let err = execute_capture(&plan, subj.to_str().unwrap(), &present_verb(), &reg).unwrap_err();
         assert!(err.contains("has no cmd"), "{err}");
     }
 
-    // A real (non-identity) verb step in the pipeline is a v1 error to surface.
+    // 4b: a real (non-present) verb step renders its cmd against the current
+    // buffer and runs (`{subject.metadata.path}`).
     #[test]
-    fn real_verb_step_is_unsupported_in_v1() {
+    fn real_verb_step_runs() {
+        let verb = json!({ "name": "up", "accepts": ["text/plain"], "cmd": "tr a-z A-Z < {subject.metadata.path|q}" });
         let plan = Plan {
-            steps: vec![step(StepKind::Verb("summarize".into()), "text/plain", "text/x-summary")],
-            delivered: "text/x-summary".into(),
+            steps: vec![step(StepKind::Verb(String::new()), "text/plain", "text/x-up")],
+            delivered: "text/x-up".into(),
+            cost: 4,
+        };
+        let subj = write_subject("hello");
+        let out = execute_capture(&plan, subj.to_str().unwrap(), &verb, &json!({})).unwrap();
+        assert_eq!(out, "HELLO");
+    }
+
+    // 4b end-to-end: input coercion (converter) THEN the real verb.
+    #[test]
+    fn coerces_then_runs_the_verb() {
+        let reg = json!({ "channels": [
+            { "name": "up", "accepts": ["text/plain"], "emits": "text/x-up", "cmd": "tr a-z A-Z < {in.path|q}" }
+        ]});
+        let verb = json!({ "name": "rev", "accepts": ["text/x-up"], "cmd": "rev < {subject.metadata.path|q}" });
+        let plan = Plan {
+            steps: vec![
+                step(StepKind::Convert("up".into()), "text/plain", "text/x-up"),
+                step(StepKind::Verb(String::new()), "text/x-up", "text/x-rev"),
+            ],
+            delivered: "text/x-rev".into(),
+            cost: 5,
+        };
+        let subj = write_subject("hello");
+        let out = execute_capture(&plan, subj.to_str().unwrap(), &verb, &reg).unwrap();
+        assert_eq!(out, "OLLEH"); // up → HELLO, then rev → OLLEH
+    }
+
+    // Multi-instrument verbs aren't executable in v1 — surfaced, not guessed.
+    #[test]
+    fn multi_instrument_step_errors() {
+        let verb = json!({ "name": "summarize", "accepts": ["text/*"],
+            "instruments": [{ "name": "fabric/inference", "emits": "text/plain" }] });
+        let plan = Plan {
+            steps: vec![step(StepKind::Verb("fabric/inference".into()), "text/plain", "text/plain")],
+            delivered: "text/plain".into(),
             cost: 4,
         };
         let subj = write_subject("essay");
-        let err = execute_capture(&plan, subj.to_str().unwrap(), &json!({})).unwrap_err();
-        assert!(err.contains("not supported in v1"), "{err}");
+        let err = execute_capture(&plan, subj.to_str().unwrap(), &verb, &json!({})).unwrap_err();
+        assert!(err.contains("multi-instrument"), "{err}");
     }
 }
