@@ -17,7 +17,8 @@ linked below; this is just "we've built up through here."
 | **Executor** — run a plan hop by hop (temp-file buffers; final step inherits stdout); present verbs wired (`goo view` renders) | **built** (Rust) | `exec.rs`; `execute.bats` |
 | **Shipped converters + `view`** (`kind=present`; chafa/eog/cosmic-edit/xdg-open/csv2json; `application/json is_a text/plain`) | **built** | `presentation.toml`, `content.toml` |
 | **Real-verb input coercion** — `goo VERB X` negotiates when X's type isn't accepted (`json-keys data.csv` → csv2json → json-keys); no gap → unchanged legacy path; no route → 415 | **built** (Rust) | `exec.rs`, `cmd_verb`; `execute.bats` |
-| **Multi-instrument execution** (`Using:` channels per verb — no per-instrument template in the schema yet) | **designed** (surfaced exec error) | [negotiation §3](negotiation.md) |
+| **Terminology** — reconciled to two: **`channel`** (the `{process}` resource) + **`Using:`** (the slot); "instrument" = the case-word; `via` = legacy (decomposes to `Using:`+`To:`). Verbs declare `implementations = [<channel>…]` | **built** (Rust + simulator) | goo-protocol §3 Terminology; `verb_edges` |
+| **Multi-instrument execution** — *running* a chosen implementation channel's `cmd` at the verb step (planner already selects among them) | **designed** (surfaced exec error) | [negotiation §2.3](negotiation.md) |
 | **`--to`/`--on` destination override on the run path; mode-aware (non-temp-file) buffering** | **designed** | [negotiation §5](negotiation.md) |
 | **Coercion as built** (auto-route on a type gap; the planner *plans* it, nothing *runs* it yet) | **designed** | [negotiation](negotiation.md), [goo-protocol §13](goo-protocol.md) |
 | **Output value model** — value (path/bytes/stream/ref/**live surface**) as first-class vs a marshalling-mode annotation | **designed** | [negotiation §2.1](negotiation.md) |

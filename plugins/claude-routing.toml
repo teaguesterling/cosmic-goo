@@ -1,4 +1,5 @@
 name = "claude-routing"
+tier = "desktop"
 description = "Routes text verbs to Fabric, Claude Desktop, Claude Code, or clipboard"
 
 # Templates use substitution filters (see doc/plugin-authoring.md):
@@ -7,6 +8,15 @@ description = "Routes text verbs to Fabric, Claude Desktop, Claude Code, or clip
 # This keeps arbitrary selected content (quotes, parens, newlines, $(...))
 # inert without the verbose quoted-heredoc dance.
 
+# LEGACY (deprecated). The `via` adverb conflates two slots: Using: (a process —
+# `fabric`) and To: (a destination — `clipboard`, `claude-desktop`, `claude-code`).
+# It predates the negotiation slot model (see doc/design/goo-protocol.md §3
+# Terminology). When the Using:/To: run-path lands, this decomposes:
+#   --via=fabric         → --using=goo://channel/fabric
+#   --via=clipboard      → --to=goo://chat/clipboard
+#   --via=claude-desktop → --to=goo://chat/claude-desktop
+#   --via=claude-code    → --to=goo://chat/claude-code
+# Until then it stays functional — critique/summarize/etc. depend on it.
 [[adverbs]]
 name = "via"
 kind = "selector"
@@ -31,3 +41,34 @@ template = "xdg-open 'claude://code/new?q={verb.prompt|uri}&folder={cwd|uri}'"
 [adverbs.values.clipboard]
 description = "Copy assembled prompt to clipboard"
 template = "wl-copy <<< {verb.prompt|q}"
+
+
+# ---------------------------------------------------------------------------
+# Per-verb CLOUD model defaults (informational).
+#
+# From the opus-graded scribe verb evals (scoreboard v4, 15 cases). The rule:
+# pick the CHEAPEST Claude tier that still scores >=4 on the verb, since Opus
+# sweeps everything at 5.00 but is overkill for structured transforms. These
+# are actionable on the `fabric` route (Fabric takes `-m <model>`); the
+# claude-desktop / claude-code routes use whatever model the app is set to.
+#
+# Haiku is the workhorse — it scores 4-5 on transforms (extract, memorize,
+# rewrite, summarize, translate) at the lowest cost. Escalate to Sonnet for
+# drafting/explaining/visualizing. Nothing defaults to Opus: it sweeps at 5.00
+# but is overkill — reserve it for --depth=ultra or when a regression is
+# unacceptable.
+# ---------------------------------------------------------------------------
+
+[verb_defaults]
+critique = { model = "haiku" }        # 4.0 — sound reasoning at low cost
+draft-response = { model = "sonnet" } # 5.0; haiku drops to 3 (no draft, only questions)
+explain = { model = "sonnet" }        # 4.5; haiku 3.5
+extract = { model = "haiku" }         # 3.5 (cheapest decent); sonnet face-plants at 2, opus=5 if recall must be perfect
+memorize = { model = "haiku" }        # 5.0 — best value, ties opus
+rewrite = { model = "haiku" }         # 4.0
+summarize = { model = "haiku" }       # 4.0
+think = { model = "haiku" }           # 4.0; escalate to sonnet/opus via --depth
+translate = { model = "haiku" }       # 4.0
+visualize = { model = "sonnet" }      # 4.0 — needs real DuckDB tool execution; haiku 3.0
+# Universal ceiling: Opus scored 5.00 and won all 15 cases — use it whenever
+# quality dominates cost (or via --depth=ultra).
