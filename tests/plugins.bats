@@ -89,6 +89,70 @@ setup() {
     done
 }
 
+# Content-inspection verbs (the content.toml plugin) accept *content* MIME
+# types — structured (application/json) and non-text entities (image/*,
+# audio/*, video/*, inode/directory). Structural check: present + accepts.
+@test "real plugins: content verbs accept their content types" {
+    local verbs
+    verbs=$("$GOO" __complete verbs </dev/null)
+    # verb | accepted type substring
+    local rows=(
+        "json-pretty|application/json"
+        "json-keys|application/json"
+        "image-info|image/*"
+        "media-info|audio/*"
+        "dir-tree|inode/directory"
+        "dir-size|inode/directory"
+    )
+    for row in "${rows[@]}"; do
+        local v="${row%%|*}" vtype="${row#*|}"
+        echo "$verbs" | grep -qx "$v" || { echo "missing content verb: $v" >&2; return 1; }
+        run "$GOO" describe "$v" </dev/null
+        [ "$status" -eq 0 ]
+        echo "$output" | grep -qF "accepts: " && echo "$output" | grep -qF "$vtype" \
+            || { echo "$v does not accept $vtype" >&2; echo "$output" >&2; return 1; }
+    done
+}
+
+# json verbs on a real file resolve the same on both engines (no inference
+# needed — resolve_file types the path application/json via libmagic).
+@test "real plugins: json-pretty/json-keys work on a JSON file" {
+    local f="$BATS_TEST_TMPDIR/data.json"
+    printf '{"b":2,"a":1}' > "$f"
+    run "$GOO" json-pretty "$f" </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.a == 1 and .b == 2' >/dev/null
+    run "$GOO" json-keys "$f" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf 'a\nb')" ]
+}
+
+# directory verbs resolve a native path to inode/directory and act on it.
+@test "real plugins: dir-size/dir-tree work on a directory" {
+    local d="$BATS_TEST_TMPDIR/tree"
+    mkdir -p "$d/sub"
+    printf 'hi' > "$d/a.txt"
+    run "$GOO" dir-size "$d" </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ [0-9] ]]                    # a size like "12K"
+    if command -v tree >/dev/null 2>&1; then
+        run "$GOO" dir-tree "$d" </dev/null
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"a.txt"* ]]
+    fi
+}
+
+# image-info needs ImageMagick's identify; skip cleanly without it.
+@test "real plugins: image-info reports dimensions" {
+    command -v identify >/dev/null 2>&1 || skip "identify (ImageMagick) not installed"
+    command -v convert  >/dev/null 2>&1 || skip "convert (ImageMagick) not installed"
+    local p="$BATS_TEST_TMPDIR/x.png"
+    convert -size 4x3 xc:red "$p" 2>/dev/null || skip "convert failed"
+    run "$GOO" image-info "$p" </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"4x3"* ]]
+}
+
 @test "real plugins: clipboard-history source is graceful when empty/unset" {
     # cliphist may have no store daemon (esp. on COSMIC without
     # COSMIC_DATA_CONTROL_ENABLED); the source must yield valid JSON, never
