@@ -11,5 +11,6 @@ pub mod mime;
 pub mod negotiation;
 pub mod registry;
 pub mod selection;
+pub mod shell;
 pub mod template;
 pub mod verbs;

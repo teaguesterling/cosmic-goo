@@ -11,7 +11,6 @@
 use goo_engine::{address, dispatch as disp, mime, negotiation, registry, selection, verbs};
 use serde_json::{json, Map, Value};
 use std::io::IsTerminal;
-use std::process::Command;
 
 fn main() {
     reset_sigpipe();
@@ -183,25 +182,7 @@ EXAMPLES
 
 // ---------------- helpers ----------------
 
-/// Run `bash -c <cmd>` inheriting stdio (so the verb's output flows through us,
-/// which is what `bats run` captures). Returns the child's exit code.
-fn bash_exec(cmd: &str) -> i32 {
-    match Command::new("bash").arg("-c").arg(cmd).status() {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(_) => 1,
-    }
-}
-
-/// `bash -c <cmd>`, capturing stdout (for `list` / handle search).
-fn bash_capture(cmd: &str) -> String {
-    Command::new("bash")
-        .arg("-c")
-        .arg(cmd)
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default()
-}
+use goo_engine::shell::{bash_capture, bash_exec};
 
 /// Render a verb and execute it, honouring `confirm`.
 fn exec_verb(
