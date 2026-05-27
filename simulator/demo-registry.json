@@ -11,16 +11,15 @@
     { "name": "mpv", "accepts": ["video/*", "audio/*"], "emits": "application/vnd.wayland.surface", "cost": "normal", "requires": ["display"], "consumes": "path" },
     { "name": "csv2json", "accepts": ["text/csv"], "emits": "application/json", "cost": "cheap", "consumes": "stream" },
     { "name": "cosmic-edit", "accepts": ["text/*"], "emits": "application/vnd.wayland.surface", "cost": "normal", "requires": ["display"], "consumes": "path", "cmd": "cosmic-edit {in.path|q}" },
-    { "name": "xdg-open", "accepts": ["*/*"], "emits": "application/vnd.wayland.surface", "cost": "normal", "requires": ["display"], "consumes": "path", "cmd": "xdg-open {in.path|q}" }
+    { "name": "xdg-open", "accepts": ["*/*"], "emits": "application/vnd.wayland.surface", "cost": "normal", "requires": ["display"], "consumes": "path", "cmd": "xdg-open {in.path|q}" },
+    { "name": "fabric/inference", "accepts": ["text/*"], "emits": "text/plain", "cost": "network", "consumes": "stream", "cmd": "fabric -p {verb.fabric_pattern} <<< {subject.text|q}" },
+    { "name": "fabric/assemble", "accepts": ["text/*"], "emits": "application/vnd.goo.prompt", "cost": "cheap", "consumes": "stream", "cmd": "cat <<< {subject.text|q}" }
   ],
   "verbs": [
     { "name": "open", "kind": "present", "accepts": ["*/*"] },
     { "name": "view", "kind": "present", "accepts": ["image/*"] },
     { "name": "play", "kind": "present", "accepts": ["video/*", "audio/*"] },
     { "name": "keys", "accepts": ["application/json"], "emits": "text/plain" },
-    { "name": "summarize", "accepts": ["text/*"], "instruments": [
-      { "name": "fabric/inference", "emits": "text/plain", "cost": "network" },
-      { "name": "fabric/assemble", "emits": "application/vnd.goo.prompt", "cost": "cheap" }
-    ]}
+    { "name": "summarize", "accepts": ["text/*"], "implementations": ["fabric/inference", "fabric/assemble"] }
   ]
 }

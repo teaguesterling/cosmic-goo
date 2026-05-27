@@ -243,10 +243,13 @@ impl Target {
 
 /// Build the verb's candidate edges (the mandatory A→B transition). A
 /// `kind="present"` verb is an identity edge (the subject is the result). A verb
-/// may declare `[[verbs.instruments]]` (name/emits/cost) — each a candidate the
-/// planner chooses among (`Using:` selection); otherwise one edge whose `emits`
-/// is the verb's declared `emits` (default `text/plain`).
-pub fn verb_edges(verb: &Value) -> Vec<VerbEdge> {
+/// may declare `implementations = [<channel name>, …]` — each names a channel
+/// (in `[[channels]]`) that carries the verb out; the planner chooses among them
+/// (`Using:` selection), taking `emits`/`cost`/`requires` from the channel. A
+/// plain verb (no `implementations`) is its own implementation: one edge whose
+/// `emits` is the verb's declared `emits` (default `text/plain`). See
+/// goo-protocol §3 *Terminology* — the chosen channel is the "instrument".
+pub fn verb_edges(verb: &Value, reg: &Value) -> Vec<VerbEdge> {
     let strvec = |v: &Value, k: &str| -> Vec<String> {
         v.get(k)
             .and_then(Value::as_array)
@@ -258,16 +261,23 @@ pub fn verb_edges(verb: &Value) -> Vec<VerbEdge> {
     if verb.get("kind").and_then(Value::as_str) == Some("present") {
         return vec![VerbEdge { instrument: String::new(), accepts, emits: None, cost: Tier::Free, requires: vec![] }];
     }
-    if let Some(insts) = verb.get("instruments").and_then(Value::as_array) {
-        return insts
+    if let Some(impls) = verb.get("implementations").and_then(Value::as_array) {
+        return impls
             .iter()
-            .filter_map(|i| {
+            .filter_map(Value::as_str)
+            .filter_map(|name| {
+                // Resolve the implementing channel; emits/cost/requires live there.
+                let ch = reg
+                    .get("channels")
+                    .and_then(Value::as_array)?
+                    .iter()
+                    .find(|c| c.get("name").and_then(Value::as_str) == Some(name))?;
                 Some(VerbEdge {
-                    instrument: i.get("name")?.as_str()?.to_string(),
+                    instrument: name.to_string(),
                     accepts: accepts.clone(),
-                    emits: Some(i.get("emits")?.as_str()?.to_string()),
-                    cost: i.get("cost").and_then(Value::as_str).and_then(Tier::parse).unwrap_or(Tier::Normal),
-                    requires: strvec(i, "requires"),
+                    emits: Some(ch.get("emits")?.as_str()?.to_string()),
+                    cost: ch.get("cost").and_then(Value::as_str).and_then(Tier::parse).unwrap_or(Tier::Normal),
+                    requires: strvec(ch, "requires"),
                 })
             })
             .collect();
@@ -281,7 +291,7 @@ pub fn verb_edges(verb: &Value) -> Vec<VerbEdge> {
 /// (`--explain`) and the wasm simulator both call.
 pub fn plan_request(subject_type: &str, verb: &Value, target: &Target, reg: &Value) -> Option<Plan> {
     let convs = converters_from_registry(reg);
-    let edges = verb_edges(verb);
+    let edges = verb_edges(verb, reg);
     plan(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg)
 }
 
@@ -707,22 +717,36 @@ mod tests {
     #[test]
     fn verb_edges_present_is_identity() {
         let v = j!({ "name": "view", "kind": "present", "accepts": ["image/*"] });
-        let e = verb_edges(&v);
+        let e = verb_edges(&v, &j!({}));
         assert_eq!(e.len(), 1);
         assert!(e[0].emits.is_none());
         assert_eq!(e[0].cost, Tier::Free);
     }
 
+    // A verb's `implementations` name channels; emits/cost come from the channel.
     #[test]
-    fn verb_edges_reads_instruments() {
-        let v = j!({ "name": "summarize", "accepts": ["text/*"], "instruments": [
-            { "name": "fabric/inference", "emits": "text/plain" },
-            { "name": "fabric/assemble", "emits": "application/vnd.goo.prompt", "cost": "cheap" },
+    fn verb_edges_resolves_implementation_channels() {
+        let reg = j!({ "channels": [
+            { "name": "fabric/inference", "accepts": ["text/*"], "emits": "text/plain", "cost": "network", "cmd": "fabric ..." },
+            { "name": "fabric/assemble", "accepts": ["text/*"], "emits": "application/vnd.goo.prompt", "cost": "cheap", "cmd": "cat ..." },
         ]});
-        let e = verb_edges(&v);
+        let v = j!({ "name": "summarize", "accepts": ["text/*"],
+            "implementations": ["fabric/inference", "fabric/assemble"] });
+        let e = verb_edges(&v, &reg);
         assert_eq!(e.len(), 2);
         assert_eq!(e[0].instrument, "fabric/inference");
-        assert_eq!(e[1].cost, Tier::Cheap);
+        assert_eq!(e[0].emits.as_deref(), Some("text/plain")); // from the channel
+        assert_eq!(e[1].cost, Tier::Cheap); // from the channel
+    }
+
+    // A plain verb (no implementations) is its own implementation: one edge.
+    #[test]
+    fn verb_edges_plain_verb_single_edge() {
+        let v = j!({ "name": "json-keys", "accepts": ["application/json"], "emits": "text/plain" });
+        let e = verb_edges(&v, &j!({}));
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].instrument, "");
+        assert_eq!(e[0].emits.as_deref(), Some("text/plain"));
     }
 
     // A curated demo registry: the surface type hierarchy + image converters +
