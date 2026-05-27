@@ -41,12 +41,12 @@ These were limitations in earlier drafts and are now fixed:
 
 ## Roadmap
 
-Done: the **Rust engine + CLI** (the default `goo`; bash is the reference), **24 plugins** (~82 verbs, 17 sources, incl. non-text handle domains), goo:// addressing + **GOO default-verb dispatch**, content-dispatch, completion, filters, command aliases, the compose dialog, and `goo-compose-gui` v1 (iced) scaffolding. Remaining:
+Done: the **Rust engine + CLI** (the default `goo`; bash is the reference), **25 plugins** (~88 verbs, 17 sources, incl. non-text handle domains *and* content-inspection verbs for JSON/images/media/directories), goo:// addressing + **GOO default-verb dispatch**, content-dispatch, completion, filters, command aliases, the compose dialog, `goo-compose-gui` v1 (iced) scaffolding, and the **subtype lattice + JSON-shape inference** (type-system arc, in progress). Remaining:
 
 - **`goo-compose-gui` build-out** — grow the iced dialog (verb pane → exec), then **swap to libcosmic** for the native COSMIC look (the bones port mostly mechanically).
 - **pop-launcher meta-plugin** — inline `cosmic-launcher` composition with type-aware autocomplete, emitting canonical `goo://` URIs.
 - **`good` daemon (#31)** — warm registry + the HTTP-shaped request protocol over a unix socket (`GET`/`OPTIONS`, `Using:`/`To:`/`With:`/`Log:`, channels). Gated on a consumer (the launcher).
-- **type system, inference & coercion** — the next major arc: richer MIME modeling, shape+content inference, and `emits`≠`accepts` coercion (auto-route through a `{process}` channel) — what unlocks data-sink channels (SQL/S3/server). Designed-not-built.
+- **type system, inference & coercion** — the in-progress major arc. Landed (Rust engine): the **subtype lattice** (`is_subtype` — glob + structured-suffix + declared `is_a`, wired into all `accepts` matching) and **structural content inference** (`infer_for` — a positive JSON-shape signal types a bare positional/stdin as `application/json` when the verb accepts it, e.g. `goo json-pretty '{"k":1}'`). Still **designed-not-built**: `emits`≠`accepts` **coercion** (auto-route through a `{process}` channel — what unlocks data-sink channels like SQL/S3/server), and inference beyond JSON shape (yaml/csv/xml). The lattice + inference are Rust-only; the bash reference matches by glob.
 - **scenes plugin**, fabric patterns as verbs, packaging, more bindings examples.
 
 The addressing + request-protocol design is captured in [`doc/design/addressing-and-protocol.md`](design/addressing-and-protocol.md) (the goo:// URI layer — domains, capabilities, sigils) and [`doc/design/goo-protocol.md`](design/goo-protocol.md) (the request/wire layer — verbs, slots, params, OPTIONS); the daemon-era pieces are gated there. Full original plan: [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md).

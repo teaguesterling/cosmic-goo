@@ -864,6 +864,13 @@ fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str
 
     // 2. Bare positional.
     if !positional.is_empty() {
+        // Context-sensitive inference: a positive structural signal (JSON shape)
+        // for a type the verb accepts wins ahead of the text/handle fallbacks.
+        // Returns None for unstructured content, so the text path below is
+        // reached exactly as before.
+        if let Some(mt) = mime::infer_for(positional, verb, reg) {
+            return Ok(json!({ "type": mt, "text": positional }));
+        }
         if accepts_text(verb, reg) {
             let mt = mime::detect_content(positional);
             return Ok(json!({ "type": mt, "text": positional }));
@@ -878,6 +885,13 @@ fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str
     }
 
     // 3. No positional: implicit chain — stdin → selection → clipboard.
+    // Structural inference on stdin first (parity-safe: stdin is already read,
+    // and infer_for only fires on a positive signal the verb accepts).
+    if !stdin_text.is_empty() {
+        if let Some(mt) = mime::infer_for(stdin_text, verb, reg) {
+            return Ok(json!({ "type": mt, "text": stdin_text }));
+        }
+    }
     if accepts_text(verb, reg) {
         let mut text = stdin_text.to_string();
         if text.is_empty() {

@@ -201,6 +201,51 @@ fn file_on_stdin(content: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// True if `content` (trimmed) is a complete JSON object or array — a *positive*
+/// structural signal. Unlike libmagic (`file_on_stdin`), which is unreliable on
+/// short strings, this actually parses, so `{"k":1}` is recognized.
+pub fn looks_like_json(content: &str) -> bool {
+    let t = content.trim();
+    (t.starts_with('{') || t.starts_with('[')) && serde_json::from_str::<Value>(t).is_ok()
+}
+
+/// Structural content inference: positive shape signals → `(mime, weight)`
+/// candidates, *additive* to `detect_content`'s no-context default. Each entry
+/// is a type the content positively looks like, weighted above the text/plain
+/// fallback so it wins when a verb accepts it. Empty for unstructured content
+/// (the common case) — which is why this never perturbs existing behavior.
+///
+/// Extend here (yaml/csv/xml shape) as consumers land; the re-ranking in
+/// [`infer_for`] is type-agnostic.
+pub fn infer_candidates(content: &str) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
+    if looks_like_json(content) {
+        out.push(("application/json".to_string(), 2.0));
+    }
+    out
+}
+
+/// Context-sensitive inference: of the structural candidates `content` yields,
+/// return the highest-weighted one the verb *accepts* (subtype-aware), else
+/// `None`. `None` means "no positive signal this verb wants" — the caller falls
+/// back to `detect_content`, so today's behavior is preserved exactly. A type
+/// verb only sees an inferred type when both (a) the content positively looks
+/// like it and (b) the verb's `accepts` admits it.
+pub fn infer_for(content: &str, verb: &Value, reg: &Value) -> Option<String> {
+    let accepts = verb.get("accepts").and_then(|a| a.as_array())?;
+    let mut best: Option<(String, f64)> = None;
+    for (mime, w) in infer_candidates(content) {
+        let accepted = accepts
+            .iter()
+            .filter_map(|p| p.as_str())
+            .any(|pat| is_subtype(&mime, pat, reg));
+        if accepted && best.as_ref().is_none_or(|(_, bw)| w > *bw) {
+            best = Some((mime, w));
+        }
+    }
+    best.map(|(m, _)| m)
+}
+
 #[cfg(test)]
 mod tests {
     use super::mime_matches;
@@ -356,5 +401,52 @@ mod tests {
         assert!(detect_path(p).unwrap().starts_with("text/"));
         assert!(detect_path(&format!("{p}.nope")).is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---- structural inference (infer_candidates / infer_for) ----
+    use super::{infer_candidates, infer_for, looks_like_json};
+    use serde_json::json as j;
+
+    #[test]
+    fn json_shape_detects_objects_and_arrays() {
+        assert!(looks_like_json(r#"{"k":1}"#));
+        assert!(looks_like_json("  [1,2,3] "));
+        assert!(!looks_like_json("just words"));
+        assert!(!looks_like_json("{not json"));
+        assert!(!looks_like_json("42")); // a bare scalar isn't an object/array
+    }
+
+    #[test]
+    fn infer_candidates_is_empty_for_plain_text() {
+        // The common case: no structural signal, so nothing perturbs detect_content.
+        assert!(infer_candidates("hello world").is_empty());
+    }
+
+    #[test]
+    fn infer_candidates_offers_json_above_baseline() {
+        let c = infer_candidates(r#"{"k":1}"#);
+        assert_eq!(c, vec![("application/json".to_string(), 2.0)]);
+    }
+
+    #[test]
+    fn infer_for_picks_json_when_verb_accepts_it() {
+        let reg = j!({});
+        let verb = j!({ "accepts": ["application/json"] });
+        assert_eq!(infer_for(r#"{"k":1}"#, &verb, &reg).as_deref(), Some("application/json"));
+    }
+
+    #[test]
+    fn infer_for_declines_json_for_a_text_only_verb() {
+        // Parity direction: a text-only verb never gets json from inference.
+        let reg = j!({});
+        let verb = j!({ "accepts": ["text/*"] });
+        assert_eq!(infer_for(r#"{"k":1}"#, &verb, &reg), None);
+    }
+
+    #[test]
+    fn infer_for_declines_plain_text() {
+        let reg = j!({});
+        let verb = j!({ "accepts": ["application/json"] });
+        assert_eq!(infer_for("just words", &verb, &reg), None);
     }
 }
