@@ -171,6 +171,101 @@ pub fn plan(
     Some(reconstruct(path, total, &usable, &verbs, accept, reg))
 }
 
+/// A resolved presentation context: the preference-ordered Accept profile
+/// (most-preferred first) and the available environment capabilities (which gate
+/// converter `requires`). The `--as` / `--to` overrides and the env heuristic
+/// both produce one of these.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Target {
+    pub accept: Vec<String>,
+    pub env_caps: Vec<String>,
+}
+
+fn owned(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+/// The §12 thin heuristic: synthesize the default Target from environment
+/// signals. `tty` = stdout is a terminal; `display` = a Wayland/X display is
+/// present. A tty prefers inline ANSI; a display offers a surface; a
+/// piped/redirected (non-tty) stdout is a plain byte sink.
+pub fn target_from_env(tty: bool, display: bool) -> Target {
+    match (tty, display) {
+        // cosmic-terminal: both available, ANSI preferred over a popped window.
+        (true, true) => Target {
+            accept: owned(&["text/x-ansi", "text/plain", "application/vnd.goo.surface"]),
+            env_caps: owned(&["pty", "display"]),
+        },
+        (true, false) => Target {
+            accept: owned(&["text/x-ansi", "text/plain"]),
+            env_caps: owned(&["pty"]),
+        },
+        // launcher-ish: a surface consumer with no inherited tty.
+        (false, true) => Target {
+            accept: owned(&["application/vnd.goo.surface", "*/*"]),
+            env_caps: owned(&["display"]),
+        },
+        // piped / redirected: a byte sink takes anything.
+        (false, false) => Target {
+            accept: owned(&["*/*"]),
+            env_caps: vec![],
+        },
+    }
+}
+
+impl Target {
+    /// `--as <type>`: pin the Accept to exactly this representation (env_caps
+    /// unchanged — the override says *what*, not *where*).
+    pub fn with_accept(mut self, as_type: &str) -> Target {
+        self.accept = vec![as_type.to_string()];
+        self
+    }
+}
+
+/// Build the verb's candidate edges (the mandatory A→B transition). A
+/// `kind="present"` verb is an identity edge (the subject is the result). A verb
+/// may declare `[[verbs.instruments]]` (name/emits/cost) — each a candidate the
+/// planner chooses among (`Using:` selection); otherwise one edge whose `emits`
+/// is the verb's declared `emits` (default `text/plain`).
+pub fn verb_edges(verb: &Value) -> Vec<VerbEdge> {
+    let strvec = |v: &Value, k: &str| -> Vec<String> {
+        v.get(k)
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    };
+    let accepts = strvec(verb, "accepts");
+
+    if verb.get("kind").and_then(Value::as_str) == Some("present") {
+        return vec![VerbEdge { instrument: String::new(), accepts, emits: None, cost: Tier::Free, requires: vec![] }];
+    }
+    if let Some(insts) = verb.get("instruments").and_then(Value::as_array) {
+        return insts
+            .iter()
+            .filter_map(|i| {
+                Some(VerbEdge {
+                    instrument: i.get("name")?.as_str()?.to_string(),
+                    accepts: accepts.clone(),
+                    emits: Some(i.get("emits")?.as_str()?.to_string()),
+                    cost: i.get("cost").and_then(Value::as_str).and_then(Tier::parse).unwrap_or(Tier::Normal),
+                    requires: strvec(i, "requires"),
+                })
+            })
+            .collect();
+    }
+    let emits = verb.get("emits").and_then(Value::as_str).unwrap_or("text/plain").to_string();
+    vec![VerbEdge { instrument: String::new(), accepts, emits: Some(emits), cost: Tier::Normal, requires: vec![] }]
+}
+
+/// Top-level planning entry: pull converters from the registry, build the verb's
+/// edges, and plan a route to the target's Accept. Pure — the surface the CLI
+/// (`--explain`) and the wasm simulator both call.
+pub fn plan_request(subject_type: &str, verb: &Value, target: &Target, reg: &Value) -> Option<Plan> {
+    let convs = converters_from_registry(reg);
+    let edges = verb_edges(verb);
+    plan(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg)
+}
+
 /// Build the converter set from a registry's `[[channels]]` (slice 2). Skips
 /// entries missing the essentials (`validate_channels` reports those); applies
 /// defaults (`cost=normal`, `consumes=path`) for omitted fields.
@@ -567,5 +662,82 @@ mod tests {
     #[test]
     fn validate_clean_when_no_channels() {
         assert!(validate_channels(&j!({})).is_empty());
+    }
+
+    // ---- slice 3: accept derivation, verb edges, plan_request ----
+
+    #[test]
+    fn env_synthesizes_accept_profiles() {
+        assert_eq!(target_from_env(true, false).accept, owned(&["text/x-ansi", "text/plain"]));
+        // cosmic-terminal: ansi preferred over surface.
+        let ct = target_from_env(true, true);
+        assert_eq!(ct.accept[0], "text/x-ansi");
+        assert!(ct.accept.contains(&"application/vnd.goo.surface".to_string()));
+        assert_eq!(ct.env_caps, owned(&["pty", "display"]));
+        // piped/redirected: a byte sink.
+        assert_eq!(target_from_env(false, false).accept, owned(&["*/*"]));
+    }
+
+    #[test]
+    fn as_override_pins_accept() {
+        let t = target_from_env(true, false).with_accept("application/json");
+        assert_eq!(t.accept, vec!["application/json".to_string()]);
+        assert_eq!(t.env_caps, owned(&["pty"])); // override says what, not where
+    }
+
+    #[test]
+    fn verb_edges_present_is_identity() {
+        let v = j!({ "name": "view", "kind": "present", "accepts": ["image/*"] });
+        let e = verb_edges(&v);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].emits.is_none());
+        assert_eq!(e[0].cost, Tier::Free);
+    }
+
+    #[test]
+    fn verb_edges_reads_instruments() {
+        let v = j!({ "name": "summarize", "accepts": ["text/*"], "instruments": [
+            { "name": "fabric/inference", "emits": "text/plain" },
+            { "name": "fabric/assemble", "emits": "application/vnd.goo.prompt", "cost": "cheap" },
+        ]});
+        let e = verb_edges(&v);
+        assert_eq!(e.len(), 2);
+        assert_eq!(e[0].instrument, "fabric/inference");
+        assert_eq!(e[1].cost, Tier::Cheap);
+    }
+
+    // A curated demo registry: the surface type hierarchy + image converters +
+    // a present `view` verb. The SAME request plans differently by environment.
+    fn demo_reg() -> Value {
+        j!({
+            "types": [
+                { "name": "application/vnd.wayland.surface", "is_a": ["application/vnd.goo.surface"] }
+            ],
+            "channels": [
+                { "name": "chafa", "accepts": ["image/*"], "emits": "text/x-ansi", "cost": "lossy" },
+                { "name": "eog", "accepts": ["image/*"], "emits": "application/vnd.wayland.surface",
+                  "cost": "normal", "requires": ["display"] }
+            ]
+        })
+    }
+
+    #[test]
+    fn plan_request_routes_by_environment() {
+        let reg = demo_reg();
+        let view = j!({ "name": "view", "kind": "present", "accepts": ["image/*"] });
+
+        // bare tty → chafa → ansi
+        let tty = plan_request("image/png", &view, &target_from_env(true, false), &reg).unwrap();
+        assert_eq!(tty.delivered, "text/x-ansi");
+        assert_eq!(tty.steps[1].kind, StepKind::Convert("chafa".into()));
+
+        // bare desktop → eog → surface (the lattice resolves wayland.surface ⊑ goo.surface)
+        let desktop = plan_request("image/png", &view, &target_from_env(false, true), &reg).unwrap();
+        assert_eq!(desktop.delivered, "application/vnd.wayland.surface");
+        assert_eq!(desktop.steps[1].kind, StepKind::Convert("eog".into()));
+
+        // cosmic-terminal (pty+display) → ansi preferred over the cheaper surface
+        let ct = plan_request("image/png", &view, &target_from_env(true, true), &reg).unwrap();
+        assert_eq!(ct.delivered, "text/x-ansi");
     }
 }
