@@ -243,12 +243,13 @@ impl Target {
 
 /// Build the verb's candidate edges (the mandatory A→B transition). A
 /// `kind="present"` verb is an identity edge (the subject is the result). A verb
-/// may declare `implementations = [<channel name>, …]` — each names a channel
-/// (in `[[channels]]`) that carries the verb out; the planner chooses among them
-/// (`Using:` selection), taking `emits`/`cost`/`requires` from the channel. A
-/// plain verb (no `implementations`) is its own implementation: one edge whose
-/// `emits` is the verb's declared `emits` (default `text/plain`). See
-/// goo-protocol §3 *Terminology* — the chosen channel is the "instrument".
+/// may declare `usage = [<channel name>, …]` — each names a channel (in
+/// `[[channels]]`) that carries the verb out; the planner chooses among them
+/// (filling the `Using:` slot), taking `emits`/`cost`/`requires` from the
+/// channel. A plain verb (no `usage`) is carried out by its own `cmd`: one edge
+/// whose `emits` is the verb's declared `emits` (default `text/plain`). See
+/// goo-protocol §3 *Terminology* (channel + the use-axis; the chosen channel is
+/// the "instrument").
 pub fn verb_edges(verb: &Value, reg: &Value) -> Vec<VerbEdge> {
     let strvec = |v: &Value, k: &str| -> Vec<String> {
         v.get(k)
@@ -261,8 +262,8 @@ pub fn verb_edges(verb: &Value, reg: &Value) -> Vec<VerbEdge> {
     if verb.get("kind").and_then(Value::as_str) == Some("present") {
         return vec![VerbEdge { instrument: String::new(), accepts, emits: None, cost: Tier::Free, requires: vec![] }];
     }
-    if let Some(impls) = verb.get("implementations").and_then(Value::as_array) {
-        return impls
+    if let Some(usage) = verb.get("usage").and_then(Value::as_array) {
+        return usage
             .iter()
             .filter_map(Value::as_str)
             .filter_map(|name| {
@@ -723,15 +724,15 @@ mod tests {
         assert_eq!(e[0].cost, Tier::Free);
     }
 
-    // A verb's `implementations` name channels; emits/cost come from the channel.
+    // A verb's `usage` names channels; emits/cost come from the channel.
     #[test]
-    fn verb_edges_resolves_implementation_channels() {
+    fn verb_edges_resolves_usage_channels() {
         let reg = j!({ "channels": [
             { "name": "fabric/inference", "accepts": ["text/*"], "emits": "text/plain", "cost": "network", "cmd": "fabric ..." },
             { "name": "fabric/assemble", "accepts": ["text/*"], "emits": "application/vnd.goo.prompt", "cost": "cheap", "cmd": "cat ..." },
         ]});
         let v = j!({ "name": "summarize", "accepts": ["text/*"],
-            "implementations": ["fabric/inference", "fabric/assemble"] });
+            "usage": ["fabric/inference", "fabric/assemble"] });
         let e = verb_edges(&v, &reg);
         assert_eq!(e.len(), 2);
         assert_eq!(e[0].instrument, "fabric/inference");
@@ -739,7 +740,7 @@ mod tests {
         assert_eq!(e[1].cost, Tier::Cheap); // from the channel
     }
 
-    // A plain verb (no implementations) is its own implementation: one edge.
+    // A plain verb (no usage) is carried out by its own cmd: one edge.
     #[test]
     fn verb_edges_plain_verb_single_edge() {
         let v = j!({ "name": "json-keys", "accepts": ["application/json"], "emits": "text/plain" });

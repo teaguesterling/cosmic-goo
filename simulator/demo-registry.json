@@ -20,6 +20,6 @@
     { "name": "view", "kind": "present", "accepts": ["image/*"] },
     { "name": "play", "kind": "present", "accepts": ["video/*", "audio/*"] },
     { "name": "keys", "accepts": ["application/json"], "emits": "text/plain" },
-    { "name": "summarize", "accepts": ["text/*"], "implementations": ["fabric/inference", "fabric/assemble"] }
+    { "name": "summarize", "accepts": ["text/*"], "usage": ["fabric/inference", "fabric/assemble"] }
   ]
 }

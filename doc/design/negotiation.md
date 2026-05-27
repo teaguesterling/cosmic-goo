@@ -84,14 +84,13 @@ Example — `chafa`: `image/* → text/x-ansi`, `lossy`, `requires=[]`, `consume
 
 ### 2.3 Verb
 
-`accepts → emits`, implemented by one or more **channels** (a verb lists them in
-`implementations = [...]`; "instrument" is the case-word for the chosen one — see
+`accepts → emits`, carried out by one or more **channels** (a verb lists them in
+`usage = [<channel>…]`; "instrument" is the case-word for the chosen one — see
 goo-protocol §3 *Terminology*). The chosen channel fixes the actual `emits` and
 owns the `cmd` (`fabric/inference` emits the result; `fabric/assemble` emits an
-unrun prompt). A single-`cmd` verb is its own implementation (no
-`implementations` list). *Running* a chosen implementation channel's `cmd` at the
-verb step (multi-instrument execution) is deferred; the planner already selects
-among them.
+unrun prompt). A single-`cmd` verb has no `usage` list — it's carried out by its
+own `cmd`. *Running* a chosen usage channel's `cmd` at the verb step
+(multi-instrument execution) is deferred; the planner already selects among them.
 
 **Presentation verbs are a kind, not a hack.** `view`/`play`/`open` have
 `emits = accepts` (identity on type — the subject *is* the result) and **no

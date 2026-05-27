@@ -118,9 +118,11 @@ it.
 > | **instrument** | the *case-word* for what fills `Using:` (= a channel in that role). Not a separate entity. | only as the case-label |
 > | **`via`** | a legacy verb-local selector adverb that conflates `Using:` (a process, e.g. `fabric`) with `To:` (a destination, e.g. `clipboard`). | **retire** → decompose into `Using:`+`To:` |
 >
-> So: a verb declares the **channels** that *implement* it; the planner picks one
-> (by `emits`/cost — §6); the chosen channel fills `Using:`. "Instrument" is what
-> we *call* that channel in its slot, nothing more.
+> So: a verb declares the **channels** that carry it out — `usage = [<channel>…]`
+> (the noun of the use-axis: `usage` on the verb, `Using:` the slot, `--using` the
+> flag — one root word, not a new concept); the planner picks one (by `emits`/cost
+> — §6); the chosen channel fills `Using:`. "Instrument" is what we *call* that
+> channel in its slot, nothing more.
 
 A channel may offer **sub-channels (modes)** as path segments — each a distinct
 `{process}` instrument with its own `emits`: e.g. `goo://channel/fabric/inference`
