@@ -539,6 +539,42 @@ keyed on the Accept profile instead of a destination's `accepts`.
 representation; *negotiation* picks the route. "Terminal vs GUI" is a `Using:`
 instrument selected by Accept, overridable with an explicit `To:`/`Using:`.
 
+### The CLI surface — `--as`, `--to`/`--on`, `--using`
+
+The two negotiation defaults each have an explicit override, plus the instrument:
+
+| flag | slot | overrides |
+|---|---|---|
+| `--as <type>` | `Accept:` | the synthesized Accept — "give it to me **as** text / ansi / json" |
+| `--to` / `--on` `<resource>` | `To:` | the inherited-channel destination |
+| `--using <x>` | `Using:` | (no default — names the instrument) |
+
+**`--on` is `--to`; the difference is a capability of the *target*, not a second
+slot.** A destination is a resource, and what arriving *means* is decided by that
+resource's capability — keeping the whole thing type-driven rather than slot-driven:
+
+- `--to ~/copy.png` → the file's `{write}` capability **stores** bytes;
+- `--on goo://display/0:1` → the display's `{present}` capability **shows** it.
+
+`--on` is just the preposition for when the destination is a *surface* not a
+*sink* — English following the capability. **Don't add a slot for what's a
+capability distinction on a resource** (cf. the `User-Agent` discipline above).
+
+This is why a fully-specified sentence isn't "deliver bytes to a display":
+
+```
+goo open image.png --using firefox --on display:0:1
+  OPEN   goo://file/image.png
+  Using: goo://app/firefox
+  To:    goo://display/0:1        # a {present} target, not a {write} sink
+```
+
+You aren't writing bytes *to* display 0:1 — the display's `{present}` capability
+plus the named presenter (`firefox`) means the engine **wires `DISPLAY=0:1` into
+firefox at the marshalling boundary (§11)**. "to a file" and "on a display" are
+one slot; the *target's capability* (and any named instrument) decide what
+crossing the boundary means.
+
 ### `From:` — when the caller is more than its inherited channel
 
 Two things `Accept:` alone can't express, and only these earn the full origin
