@@ -92,6 +92,11 @@ pub struct Converter {
     pub requires: Vec<String>, // env capabilities that gate usability
     pub consumes: Mode,
     pub cmd: String, // how it runs (executor, slice 4); empty in pure planner tests
+    // The binary the `cmd` needs (`mlr`, `chafa`). `None` = no PATH dependency
+    // (always usable). Orthogonal to `requires` (env capability vs binary
+    // presence): the planner prunes a channel whose `tool` isn't on PATH, so a
+    // route around an uninstalled tool is found, or a 415 names what's missing.
+    pub tool: Option<String>,
 }
 
 /// A candidate (verb, instrument): the mandatory A→B transition. `emits == None`
@@ -289,11 +294,41 @@ pub fn verb_edges(verb: &Value, reg: &Value) -> Vec<VerbEdge> {
 
 /// Top-level planning entry: pull converters from the registry, build the verb's
 /// edges, and plan a route to the target's Accept. Pure — the surface the CLI
-/// (`--explain`) and the wasm simulator both call.
-pub fn plan_request(subject_type: &str, verb: &Value, target: &Target, reg: &Value) -> Option<Plan> {
-    let convs = converters_from_registry(reg);
-    let edges = verb_edges(verb, reg);
+/// (`--explain`) and the wasm simulator both call. `available_tools` is the set
+/// of channel `tool` binaries present on PATH (the bin probes it; the planner
+/// prunes channels whose tool is declared but absent — routing around an
+/// uninstalled tool, or to a 415).
+pub fn plan_request(subject_type: &str, verb: &Value, target: &Target, reg: &Value, available_tools: &[String]) -> Option<Plan> {
+    let convs: Vec<Converter> = converters_from_registry(reg)
+        .into_iter()
+        .filter(|c| tool_present(&c.tool, available_tools))
+        .collect();
+    let edges: Vec<VerbEdge> = verb_edges(verb, reg)
+        .into_iter()
+        .filter(|e| usage_tool_present(e, reg, available_tools))
+        .collect();
     plan(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg)
+}
+
+fn tool_present(tool: &Option<String>, available: &[String]) -> bool {
+    tool.as_ref().is_none_or(|t| available.iter().any(|a| a == t))
+}
+
+/// A verb edge's instrument is a `usage` channel name; prune the edge if that
+/// channel declares a `tool` that isn't present. Plain/present edges (no
+/// instrument) have no tool dependency.
+fn usage_tool_present(edge: &VerbEdge, reg: &Value, available: &[String]) -> bool {
+    if edge.instrument.is_empty() {
+        return true;
+    }
+    let tool = reg
+        .get("channels")
+        .and_then(Value::as_array)
+        .and_then(|a| a.iter().find(|c| c.get("name").and_then(Value::as_str) == Some(edge.instrument.as_str())))
+        .and_then(|c| c.get("tool").and_then(Value::as_str))
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    tool_present(&tool, available)
 }
 
 /// Build the converter set from a registry's `[[channels]]` (slice 2). Skips
@@ -332,6 +367,7 @@ fn channel_to_converter(ch: &Value) -> Option<Converter> {
         requires: str_vec("requires"),
         consumes: ch.get("consumes").and_then(Value::as_str).and_then(Mode::parse).unwrap_or(Mode::Path),
         cmd: ch.get("cmd").and_then(Value::as_str).unwrap_or("").to_string(),
+        tool: ch.get("tool").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from),
     })
 }
 
@@ -363,6 +399,10 @@ pub fn validate_channels(reg: &Value) -> Vec<String> {
             if Mode::parse(m).is_none() {
                 errs.push(format!("channel \"{name}\" has unknown consumes mode \"{m}\" (stream|path|bytes)"));
             }
+        }
+        // An empty `tool` is author confusion — omit the field for "no tool".
+        if ch.get("tool").and_then(Value::as_str) == Some("") {
+            errs.push(format!("channel \"{name}\" has an empty tool (omit `tool` for no PATH dependency)"));
         }
     }
     errs
@@ -484,6 +524,7 @@ mod tests {
             requires: vec![],
             consumes: Mode::Path,
             cmd: String::new(),
+            tool: None,
         }
     }
     fn conv_req(name: &str, accepts: &[&str], emits: &str, cost: Tier, requires: &[&str]) -> Converter {
@@ -795,7 +836,7 @@ mod tests {
             if let Some(a) = sc.get("as").and_then(Value::as_str) {
                 target = target.with_accept(a);
             }
-            let got = plan_request(sc["subject"].as_str().unwrap(), verb, &target, &reg)
+            let got = plan_request(sc["subject"].as_str().unwrap(), verb, &target, &reg, &[])
                 .map(|p| p.to_json())
                 .unwrap_or(Value::Null);
             assert_eq!(
@@ -812,17 +853,33 @@ mod tests {
         let view = j!({ "name": "view", "kind": "present", "accepts": ["image/*"] });
 
         // bare tty → chafa → ansi
-        let tty = plan_request("image/png", &view, &target_from_env(true, false), &reg).unwrap();
+        let tty = plan_request("image/png", &view, &target_from_env(true, false), &reg, &[]).unwrap();
         assert_eq!(tty.delivered, "text/x-ansi");
         assert_eq!(tty.steps[1].kind, StepKind::Convert("chafa".into()));
 
         // bare desktop → eog → surface (the lattice resolves wayland.surface ⊑ goo.surface)
-        let desktop = plan_request("image/png", &view, &target_from_env(false, true), &reg).unwrap();
+        let desktop = plan_request("image/png", &view, &target_from_env(false, true), &reg, &[]).unwrap();
         assert_eq!(desktop.delivered, "application/vnd.wayland.surface");
         assert_eq!(desktop.steps[1].kind, StepKind::Convert("eog".into()));
 
         // cosmic-terminal (pty+display) → ansi preferred over the cheaper surface
-        let ct = plan_request("image/png", &view, &target_from_env(true, true), &reg).unwrap();
+        let ct = plan_request("image/png", &view, &target_from_env(true, true), &reg, &[]).unwrap();
         assert_eq!(ct.delivered, "text/x-ansi");
+    }
+
+    // #2: a channel declaring a `tool` is pruned when the tool isn't available —
+    // routing around it, or to a 415 when it's the only path.
+    #[test]
+    fn plan_request_prunes_channels_with_missing_tools() {
+        let reg = j!({ "channels": [
+            { "name": "needs-mlr", "accepts": ["text/csv"], "emits": "application/json",
+              "cost": "cheap", "cmd": "mlr …", "tool": "mlr" }
+        ]});
+        let verb = j!({ "name": "keys", "accepts": ["application/json"], "emits": "text/plain" });
+        let target = target_from_env(true, false); // accepts text/plain
+        // mlr present → csv →[needs-mlr]→ json →(keys)→ text/plain
+        assert!(plan_request("text/csv", &verb, &target, &reg, &["mlr".into()]).is_some());
+        // mlr absent → the only csv→json channel is pruned → no route (415).
+        assert!(plan_request("text/csv", &verb, &target, &reg, &[]).is_none());
     }
 }

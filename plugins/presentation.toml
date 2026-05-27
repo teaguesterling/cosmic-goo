@@ -42,6 +42,7 @@ emits = "text/x-ansi"
 cost = "lossy"                      # renders an image as ANSI — fidelity loss
 consumes = "path"
 cmd = "chafa {in.path|q}"
+tool = "chafa"
 
 [[channels]]
 name = "eog"
@@ -51,6 +52,7 @@ cost = "normal"
 requires = ["display"]
 consumes = "path"
 cmd = "eog {in.path|q}"
+tool = "eog"
 
 [[channels]]
 name = "cosmic-edit"
@@ -60,6 +62,7 @@ cost = "normal"
 requires = ["display"]
 consumes = "path"
 cmd = "cosmic-edit {in.path|q}"
+tool = "cosmic-edit"
 
 [[channels]]
 name = "xdg-open"
@@ -69,6 +72,7 @@ cost = "normal"
 requires = ["display"]
 consumes = "path"
 cmd = "xdg-open {in.path|q}"
+tool = "xdg-open"
 
 # A data coercion (no display needed): lets a json verb accept a CSV subject —
 # input coercion before the verb runs (`goo --explain json-keys @text/csv`).
@@ -79,6 +83,7 @@ emits = "application/json"
 cost = "cheap"
 consumes = "stream"
 cmd = "mlr --icsv --ojson cat {in.path|q}"
+tool = "mlr"
 
 # ---- presentation verb ----
 # `view` an image: the subject is the result; the engine negotiates where it

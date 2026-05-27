@@ -38,7 +38,9 @@ fn plan_for(reg: &Value, sc: &Value) -> Option<goo_engine::negotiation::Plan> {
     if let Some(as_type) = sc.get("as").and_then(Value::as_str) {
         target = target.with_accept(as_type);
     }
-    plan_request(subject, verb, &target, reg)
+    // Demo registry declares no channel `tool`s, so tool-availability is moot:
+    // pass an empty set (no channel is pruned).
+    plan_request(subject, verb, &target, reg, &[])
 }
 
 fn main() {

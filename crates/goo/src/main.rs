@@ -266,7 +266,13 @@ fn cmd_explain(args: &[String]) -> i32 {
     };
     println!("Accept: {}{}", target.accept.join("  "), caps);
 
-    match negotiation::plan_request(&subject_type, &verb, &target, &reg) {
+    // --explain is tool-AGNOSTIC: it shows the planned route regardless of which
+    // converter tools are installed locally (a planning/debug view, not a
+    // local-reality check). Pass every declared tool so nothing is pruned;
+    // execution (exec_negotiated) prunes by real availability.
+    let (avail, missing) = channel_tools(&reg);
+    let all_tools: Vec<String> = avail.into_iter().chain(missing).collect();
+    match negotiation::plan_request(&subject_type, &verb, &target, &reg, &all_tools) {
         None => {
             println!("415 · no route — {subject_type} can't be presented here (verb: {verb_name})");
             1
@@ -349,8 +355,15 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
         target = target.with_accept(as_t);
     }
 
-    match negotiation::plan_request(subject_type, verb, &target, reg) {
-        None => die(format!("415 · no route — can't route {subject_type} through '{verb_name}' to this destination")),
+    let (available, missing) = channel_tools(reg);
+    match negotiation::plan_request(subject_type, verb, &target, reg, &available) {
+        None => {
+            // No route with the installed tools. If a route *would* exist with
+            // everything installed, name the missing tools *on that route* — so
+            // the hint is actionable ("install: mlr"), not every uninstalled tool.
+            let hint = route_missing_tools_hint(subject_type, verb, &target, reg, &missing);
+            die(format!("415 · no route — can't route {subject_type} through '{verb_name}'{hint}"))
+        }
         Some(plan) => match exec::execute(&plan, &subject_path, verb, reg) {
             Ok(code) => code,
             Err(e) => die(format!("{verb_name}: {e}")),
@@ -366,6 +379,71 @@ fn channel_tier(reg: &Value, name: &str) -> String {
         .and_then(|c| c["cost"].as_str())
         .unwrap_or("normal")
         .to_string()
+}
+
+/// The `tool` a channel declares, if any.
+fn channel_tool(reg: &Value, name: &str) -> Option<String> {
+    reg.get("channels")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.iter().find(|c| c.get("name").and_then(|n| n.as_str()) == Some(name)))
+        .and_then(|c| c.get("tool").and_then(|t| t.as_str()))
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+/// For a 415 where tool-pruning may be the cause: re-plan tool-agnostically (as
+/// if everything were installed); if a route exists, return " — install: X, Y"
+/// naming the missing tools *on that route*. Empty if no route exists regardless.
+fn route_missing_tools_hint(subject_type: &str, verb: &Value, target: &negotiation::Target, reg: &Value, missing: &[String]) -> String {
+    if missing.is_empty() {
+        return String::new();
+    }
+    let all: Vec<String> = {
+        let (a, m) = channel_tools(reg);
+        a.into_iter().chain(m).collect()
+    };
+    let Some(ideal) = negotiation::plan_request(subject_type, verb, target, reg, &all) else {
+        return String::new(); // no route even with everything installed — not a tool problem
+    };
+    let mut needed: Vec<String> = Vec::new();
+    for step in &ideal.steps {
+        let name = match &step.kind {
+            negotiation::StepKind::Convert(n) | negotiation::StepKind::Verb(n) => n,
+        };
+        if let Some(t) = channel_tool(reg, name) {
+            if missing.contains(&t) && !needed.contains(&t) {
+                needed.push(t);
+            }
+        }
+    }
+    if needed.is_empty() { String::new() } else { format!(" — install: {}", needed.join(", ")) }
+}
+
+/// True if `tool` is on PATH (or, if it contains a slash, exists as a file).
+fn tool_on_path(tool: &str) -> bool {
+    if tool.contains('/') {
+        return std::path::Path::new(tool).exists();
+    }
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(tool).is_file()))
+        .unwrap_or(false)
+}
+
+/// The distinct channel `tool`s declared in the registry, partitioned by PATH
+/// presence — `(available, missing)`. The planner prunes channels whose tool is
+/// missing; the missing set feeds the 415 hint.
+fn channel_tools(reg: &Value) -> (Vec<String>, Vec<String>) {
+    let (mut available, mut missing) = (Vec::new(), Vec::new());
+    let Some(chs) = reg.get("channels").and_then(|v| v.as_array()) else { return (available, missing) };
+    for ch in chs {
+        if let Some(t) = ch.get("tool").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+            let bucket = if tool_on_path(t) { &mut available } else { &mut missing };
+            if !bucket.iter().any(|x| x == t) {
+                bucket.push(t.to_string());
+            }
+        }
+    }
+    (available, missing)
 }
 
 /// Render a verb and execute it, honouring `confirm`.
