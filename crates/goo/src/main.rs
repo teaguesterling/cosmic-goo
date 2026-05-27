@@ -192,6 +192,17 @@ fn exec_verb(
     object: &Value,
     adverbs: &Value,
 ) -> i32 {
+    // A `kind="present"` verb has no cmd — the subject *is* the result, and
+    // delivery is the negotiation engine's job. That executor isn't CLI-wired
+    // yet, so fail with a deliberate message rather than render's generic
+    // "neither cmd nor route". `--explain` shows the plan today.
+    if verb.get("kind").and_then(|k| k.as_str()) == Some("present") {
+        let name = verb.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        return die(format!(
+            "'{name}' is a present verb — negotiation-engine execution isn't wired yet; \
+             try `goo --explain {name} <subject>` to see the plan"
+        ));
+    }
     let rendered = match verbs::render(reg, verb, subject, object, adverbs) {
         Ok(r) => r,
         Err(e) => return die(format!("verb_apply: {e}")),
