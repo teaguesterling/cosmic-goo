@@ -13,8 +13,11 @@ linked below; this is just "we've built up through here."
 | **Converter schema** — `[[channels]]` → `converters_from_registry`, `validate_channels` | **built** (Rust) | `negotiation.rs`, `registry.rs` |
 | **Accept derivation** — `target_from_env` (isatty/$WAYLAND_DISPLAY heuristic), `plan_request` | **built** (Rust) | `negotiation.rs` |
 | **Simulator** — JS mirror of the planner, self-checked against Rust golden plans | **built** | `simulator/goo-simulator.html` |
-| **Executor** — run a plan hop by hop; buffers/materialization at the marshalling boundary | **designed** | [negotiation §5](negotiation.md), [goo-protocol §11](goo-protocol.md) |
-| **Real converters + `view`/`play`/`open`** (`kind=present`; chafa + surface converters) | **designed** | [negotiation §8](negotiation.md) |
+| **Plan explainer** — `goo --explain VERB [@TYPE] [--as] [--explain-env]` (Accept profile + route / 415) | **built** (Rust) | `goo` bin; `tests/integration/explain.bats` |
+| **Executor** — run a plan hop by hop (temp-file buffers; final step inherits stdout); present verbs wired (`goo view` renders) | **built** (Rust) | `exec.rs`; `execute.bats` |
+| **Shipped converters + `view`** (`kind=present`; chafa/eog/cosmic-edit/xdg-open/csv2json; `application/json is_a text/plain`) | **built** | `presentation.toml`, `content.toml` |
+| **Real-verb-in-pipeline** (input/output coercion around a non-present verb — currently a surfaced exec error) | **designed** | [negotiation §8](negotiation.md) (slice 4b) |
+| **`--to`/`--on` destination override on the run path; mode-aware (non-temp-file) buffering** | **designed** | [negotiation §5](negotiation.md) |
 | **Coercion as built** (auto-route on a type gap; the planner *plans* it, nothing *runs* it yet) | **designed** | [negotiation](negotiation.md), [goo-protocol §13](goo-protocol.md) |
 | **Output value model** — value (path/bytes/stream/ref/**live surface**) as first-class vs a marshalling-mode annotation | **designed** | [negotiation §2.1](negotiation.md) |
 
