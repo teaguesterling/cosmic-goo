@@ -8,6 +8,7 @@ pub mod address;
 pub mod adverbs;
 pub mod dispatch;
 pub mod mime;
+pub mod negotiation;
 pub mod registry;
 pub mod selection;
 pub mod template;
