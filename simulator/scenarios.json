@@ -7,6 +7,11 @@
     { "id": "view-piped",    "title": "view image · piped/redirected",     "verb": "view",      "subject": "image/png", "env": { "tty": false, "display": false }, "shows": "byte sink: identity, raw image bytes" },
     { "id": "view-as-pdf",   "title": "view image --as application/pdf",   "verb": "view",      "subject": "image/png", "env": { "tty": true,  "display": false }, "as": "application/pdf", "shows": "415: no converter reaches application/pdf" },
     { "id": "summarize-tty", "title": "summarize text · bare terminal",    "verb": "summarize", "subject": "text/plain", "env": { "tty": true, "display": false }, "shows": "Using: selection → fabric/inference (assemble's prompt can't reach a text sink)" },
-    { "id": "keys-csv-tty",  "title": "keys of a CSV · bare terminal",     "verb": "keys",      "subject": "text/csv",  "env": { "tty": true,  "display": false }, "shows": "input coercion → csv2json before the verb" }
+    { "id": "keys-csv-tty",  "title": "keys of a CSV · bare terminal",     "verb": "keys",      "subject": "text/csv",  "env": { "tty": true,  "display": false }, "shows": "input coercion → csv2json before the verb" },
+    { "id": "keys-as-surface-desktop", "title": "keys --as surface · desktop", "verb": "keys", "subject": "application/json", "env": { "tty": false, "display": true }, "as": "application/vnd.goo.surface", "shows": "text→surface coercion: keys→text/plain→cosmic-edit (a GUI window)" },
+    { "id": "keys-as-surface-tty",     "title": "keys --as surface · bare terminal", "verb": "keys", "subject": "application/json", "env": { "tty": true, "display": false }, "as": "application/vnd.goo.surface", "shows": "415: no display → no surface-capable converter (honest refusal)" },
+    { "id": "open-json-tty",   "title": "open JSON · bare terminal",  "verb": "open", "subject": "application/json", "env": { "tty": true,  "display": false }, "shows": "application/json is_a text/plain → shows as text, no converter needed" },
+    { "id": "open-pdf-desktop","title": "open PDF · desktop",         "verb": "open", "subject": "application/pdf",  "env": { "tty": false, "display": true  }, "shows": "xdg-open catch-all (*/* → surface) — the real desktop fallback" },
+    { "id": "open-pdf-tty",    "title": "open PDF · bare terminal",   "verb": "open", "subject": "application/pdf",  "env": { "tty": true,  "display": false }, "shows": "415: a PDF can't be shown in a bare terminal (no path to ansi/text)" }
   ]
 }

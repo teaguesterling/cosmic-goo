@@ -1,4 +1,23 @@
 {
+  "keys-as-surface-desktop": {
+    "cost": 8,
+    "delivered": "application/vnd.wayland.surface",
+    "steps": [
+      {
+        "from": "application/json",
+        "kind": "verb",
+        "name": "",
+        "to": "text/plain"
+      },
+      {
+        "from": "text/plain",
+        "kind": "convert",
+        "name": "cosmic-edit",
+        "to": "application/vnd.wayland.surface"
+      }
+    ]
+  },
+  "keys-as-surface-tty": null,
   "keys-csv-tty": {
     "cost": 5,
     "delivered": "text/plain",
@@ -17,6 +36,37 @@
       }
     ]
   },
+  "open-json-tty": {
+    "cost": 0,
+    "delivered": "application/json",
+    "steps": [
+      {
+        "from": "application/json",
+        "kind": "verb",
+        "name": "",
+        "to": "application/json"
+      }
+    ]
+  },
+  "open-pdf-desktop": {
+    "cost": 4,
+    "delivered": "application/vnd.wayland.surface",
+    "steps": [
+      {
+        "from": "application/pdf",
+        "kind": "verb",
+        "name": "",
+        "to": "application/pdf"
+      },
+      {
+        "from": "application/pdf",
+        "kind": "convert",
+        "name": "xdg-open",
+        "to": "application/vnd.wayland.surface"
+      }
+    ]
+  },
+  "open-pdf-tty": null,
   "summarize-tty": {
     "cost": 32,
     "delivered": "text/plain",
