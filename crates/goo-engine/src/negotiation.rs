@@ -129,6 +129,25 @@ pub struct Plan {
     pub cost: u32, // route cost only; the preference-rank penalty is stripped
 }
 
+impl Plan {
+    /// A stable, flat JSON shape for the plan — the contract the wasm/JS
+    /// simulator mirrors and the conformance fixtures are dumped in.
+    pub fn to_json(&self) -> Value {
+        let steps: Vec<Value> = self
+            .steps
+            .iter()
+            .map(|s| {
+                let (kind, name) = match &s.kind {
+                    StepKind::Convert(n) => ("convert", n.as_str()),
+                    StepKind::Verb(n) => ("verb", n.as_str()),
+                };
+                serde_json::json!({ "kind": kind, "name": name, "from": s.from, "to": s.to })
+            })
+            .collect();
+        serde_json::json!({ "steps": steps, "delivered": self.delivered, "cost": self.cost })
+    }
+}
+
 // A Dijkstra node: a type in a layer (`false` = pre-verb A, `true` = post-verb
 // B), or the synthetic Goal sink. Delivery edges (B→Goal) carry the
 // preference-rank penalty, so preference is the primary sort and cost the
@@ -719,6 +738,47 @@ mod tests {
                   "cost": "normal", "requires": ["display"] }
             ]
         })
+    }
+
+    // Conformance contract for site/goo-simulator.html: the dumped golden plans
+    // (site/demo-plans.json) must match what plan_request produces *now*. A Rust
+    // change that alters planning without regenerating the fixtures fails here —
+    // and the simulator's JS planner is checked against the same fixtures on load.
+    #[test]
+    fn demo_plans_match_fixtures() {
+        use std::path::PathBuf;
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../simulator");
+        let read = |f: &str| -> Value {
+            serde_json::from_str(&std::fs::read_to_string(dir.join(f)).unwrap()).unwrap()
+        };
+        let reg = read("demo-registry.json");
+        let scenarios = read("scenarios.json");
+        let golden = read("demo-plans.json");
+        let scs = scenarios["scenarios"].as_array().unwrap();
+        for sc in scs {
+            let id = sc["id"].as_str().unwrap();
+            let verb = reg["verbs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["name"].as_str() == sc["verb"].as_str())
+                .unwrap();
+            let mut target = target_from_env(
+                sc["env"]["tty"].as_bool().unwrap_or(false),
+                sc["env"]["display"].as_bool().unwrap_or(false),
+            );
+            if let Some(a) = sc.get("as").and_then(Value::as_str) {
+                target = target.with_accept(a);
+            }
+            let got = plan_request(sc["subject"].as_str().unwrap(), verb, &target, &reg)
+                .map(|p| p.to_json())
+                .unwrap_or(Value::Null);
+            assert_eq!(
+                &got, &golden[id],
+                "scenario '{id}' drifted — regenerate: cargo run --example dump_plans -p goo-engine"
+            );
+        }
+        assert_eq!(golden.as_object().unwrap().len(), scs.len(), "stale ids in demo-plans.json");
     }
 
     #[test]

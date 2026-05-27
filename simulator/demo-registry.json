@@ -1,0 +1,22 @@
+{
+  "_comment": "Curated demo registry for goo-simulator.html. NOT a shipped plugin set — it feeds the negotiation simulator. The Rust example crates/goo-engine/examples/dump_plans.rs runs plan_request over simulator/scenarios.json against THIS registry and writes simulator/demo-plans.json; the simulator's JS planner must reproduce those plans exactly (self-check on load).",
+  "types": [
+    { "name": "application/vnd.wayland.surface", "is_a": ["application/vnd.goo.surface"] },
+    { "name": "application/vnd.x11.window", "is_a": ["application/vnd.goo.surface"] }
+  ],
+  "channels": [
+    { "name": "chafa", "accepts": ["image/*"], "emits": "text/x-ansi", "cost": "lossy", "consumes": "path" },
+    { "name": "eog", "accepts": ["image/*"], "emits": "application/vnd.wayland.surface", "cost": "normal", "requires": ["display"], "consumes": "path" },
+    { "name": "mpv", "accepts": ["video/*", "audio/*"], "emits": "application/vnd.wayland.surface", "cost": "normal", "requires": ["display"], "consumes": "path" },
+    { "name": "csv2json", "accepts": ["text/csv"], "emits": "application/json", "cost": "cheap", "consumes": "stream" }
+  ],
+  "verbs": [
+    { "name": "view", "kind": "present", "accepts": ["image/*"] },
+    { "name": "play", "kind": "present", "accepts": ["video/*", "audio/*"] },
+    { "name": "keys", "accepts": ["application/json"], "emits": "text/plain" },
+    { "name": "summarize", "accepts": ["text/*"], "instruments": [
+      { "name": "fabric/inference", "emits": "text/plain", "cost": "network" },
+      { "name": "fabric/assemble", "emits": "application/vnd.goo.prompt", "cost": "cheap" }
+    ]}
+  ]
+}

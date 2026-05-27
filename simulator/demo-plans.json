@@ -1,0 +1,99 @@
+{
+  "keys-csv-tty": {
+    "cost": 5,
+    "delivered": "text/plain",
+    "steps": [
+      {
+        "from": "text/csv",
+        "kind": "convert",
+        "name": "csv2json",
+        "to": "application/json"
+      },
+      {
+        "from": "application/json",
+        "kind": "verb",
+        "name": "",
+        "to": "text/plain"
+      }
+    ]
+  },
+  "summarize-tty": {
+    "cost": 32,
+    "delivered": "text/plain",
+    "steps": [
+      {
+        "from": "text/plain",
+        "kind": "verb",
+        "name": "fabric/inference",
+        "to": "text/plain"
+      }
+    ]
+  },
+  "view-as-pdf": null,
+  "view-cosmic": {
+    "cost": 16,
+    "delivered": "text/x-ansi",
+    "steps": [
+      {
+        "from": "image/png",
+        "kind": "verb",
+        "name": "",
+        "to": "image/png"
+      },
+      {
+        "from": "image/png",
+        "kind": "convert",
+        "name": "chafa",
+        "to": "text/x-ansi"
+      }
+    ]
+  },
+  "view-desktop": {
+    "cost": 4,
+    "delivered": "application/vnd.wayland.surface",
+    "steps": [
+      {
+        "from": "image/png",
+        "kind": "verb",
+        "name": "",
+        "to": "image/png"
+      },
+      {
+        "from": "image/png",
+        "kind": "convert",
+        "name": "eog",
+        "to": "application/vnd.wayland.surface"
+      }
+    ]
+  },
+  "view-piped": {
+    "cost": 0,
+    "delivered": "image/png",
+    "steps": [
+      {
+        "from": "image/png",
+        "kind": "verb",
+        "name": "",
+        "to": "image/png"
+      }
+    ]
+  },
+  "view-tty": {
+    "cost": 16,
+    "delivered": "text/x-ansi",
+    "steps": [
+      {
+        "from": "image/png",
+        "kind": "verb",
+        "name": "",
+        "to": "image/png"
+      },
+      {
+        "from": "image/png",
+        "kind": "convert",
+        "name": "chafa",
+        "to": "text/x-ansi"
+      }
+    ]
+  }
+}

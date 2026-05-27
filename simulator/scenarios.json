@@ -1,0 +1,12 @@
+{
+  "_comment": "Simulator scenarios. Each is (verb × subject_type × env × optional --as). The Rust dumper produces simulator/demo-plans.json[id]; the JS planner must match. Covers all three emergent behaviors plus preference, override, multi-hop, and a 415.",
+  "scenarios": [
+    { "id": "view-tty",      "title": "view image · bare terminal",        "verb": "view",      "subject": "image/png", "env": { "tty": true,  "display": false }, "shows": "output negotiation → chafa (image→ansi)" },
+    { "id": "view-cosmic",   "title": "view image · cosmic-terminal",      "verb": "view",      "subject": "image/png", "env": { "tty": true,  "display": true  }, "shows": "preference: ansi chosen over the cheaper surface" },
+    { "id": "view-desktop",  "title": "view image · desktop (no tty)",     "verb": "view",      "subject": "image/png", "env": { "tty": false, "display": true  }, "shows": "GUI route → eog (image→surface)" },
+    { "id": "view-piped",    "title": "view image · piped/redirected",     "verb": "view",      "subject": "image/png", "env": { "tty": false, "display": false }, "shows": "byte sink: identity, raw image bytes" },
+    { "id": "view-as-pdf",   "title": "view image --as application/pdf",   "verb": "view",      "subject": "image/png", "env": { "tty": true,  "display": false }, "as": "application/pdf", "shows": "415: no converter reaches application/pdf" },
+    { "id": "summarize-tty", "title": "summarize text · bare terminal",    "verb": "summarize", "subject": "text/plain", "env": { "tty": true, "display": false }, "shows": "Using: selection → fabric/inference (assemble's prompt can't reach a text sink)" },
+    { "id": "keys-csv-tty",  "title": "keys of a CSV · bare terminal",     "verb": "keys",      "subject": "text/csv",  "env": { "tty": true,  "display": false }, "shows": "input coercion → csv2json before the verb" }
+  ]
+}
