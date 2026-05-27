@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>goo — negotiation simulator</title>
+<!--
+  A simulator for goo's negotiation engine. The JS planner below is a DELIBERATELY
+  THIN MIRROR of crates/goo-engine/src/negotiation.rs + mime.rs (same function
+  names, same shapes). It self-checks on load against simulator/demo-plans.json —
+  the golden plans the REAL Rust engine produces (regenerate:
+  `cargo run --example dump_plans -p goo-engine`). A red banner means the JS
+  drifted from Rust. Canonical fixtures: simulator/{demo-registry,scenarios,
+  demo-plans}.json (Rust-checked by negotiation::demo_plans_match_fixtures);
+  the blocks at the bottom are a file:// fallback snapshot.
+-->
+<style>
+  :root{
+    --bg:#0b0e1a; --panel:#161b3a; --panel2:#1d2450; --ink:#e8ecff; --dim:#9aa3d4;
+    --faint:#646db0; --line:#2a3266; --acc:#7c6cff; --acc2:#36d6c3; --warn:#ffb454;
+    --ok:#46e08a; --bad:#ff6b81;
+    --t-free:#46e08a; --t-cheap:#36d6c3; --t-normal:#7c6cff; --t-lossy:#ffb454; --t-network:#ff6b9d;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1100px 650px at 82% -12%,#241a4d 0%,var(--bg) 55%) fixed,var(--bg);
+       color:var(--ink);font:15px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  a{color:var(--acc2)}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 20px 80px}
+  header h1{margin:0 0 4px;font-size:26px;letter-spacing:.2px}
+  header .sub{color:var(--dim);margin:0 0 6px}
+  header code,.mono{font-family:var(--mono)}
+  .tag{display:inline-block;font-size:11px;color:var(--faint);border:1px solid var(--line);border-radius:20px;padding:1px 9px;margin-left:6px;vertical-align:middle}
+  h2{font-size:15px;text-transform:uppercase;letter-spacing:.12em;color:var(--dim);margin:34px 0 12px;font-weight:600}
+  .banner{display:none;background:#3a1320;border:1px solid var(--bad);color:#ffd9df;padding:10px 14px;border-radius:8px;margin:14px 0;font-family:var(--mono);font-size:13px}
+  .banner.ok{display:block;background:#11331f;border-color:var(--ok);color:#bff5d4}
+  .banner.bad{display:block}
+  .grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+  @media(min-width:820px){.grid4{grid-template-columns:repeat(4,1fr)}}
+  .card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:12px;padding:13px}
+  .card .env{font-weight:600;font-size:13px}
+  .card .shows{color:var(--faint);font-size:11.5px;margin:2px 0 10px;min-height:28px}
+  .pipe{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+  .pill{font-family:var(--mono);font-size:11.5px;background:#0e1330;border:1px solid var(--line);border-radius:6px;padding:3px 7px;white-space:nowrap}
+  .pill.subj{border-color:var(--acc2)}
+  .pill.delivered{border-color:var(--ok);color:#d4ffe6;box-shadow:0 0 0 1px #1c5a36 inset}
+  .edge{display:inline-flex;flex-direction:column;align-items:center;gap:1px;font-family:var(--mono);font-size:10px;color:var(--dim)}
+  .edge .nm{padding:1px 6px;border-radius:5px;border:1px solid var(--line)}
+  .edge .arr{color:var(--faint);font-size:13px;line-height:1}
+  .edge.verb .nm{border-style:dashed;color:var(--ink)}
+  .t-free{border-color:var(--t-free)!important;color:var(--t-free)}
+  .t-cheap{border-color:var(--t-cheap)!important;color:var(--t-cheap)}
+  .t-normal{border-color:var(--t-normal)!important;color:var(--t-normal)}
+  .t-lossy{border-color:var(--t-lossy)!important;color:var(--t-lossy)}
+  .t-network{border-color:var(--t-network)!important;color:var(--t-network)}
+  .r415{font-family:var(--mono);font-size:12px;color:#ffd9df;background:#2a1018;border:1px solid var(--bad);border-radius:6px;padding:6px 9px}
+  .cost{color:var(--faint);font-size:11px;font-family:var(--mono);margin-top:7px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .controls{display:grid;gap:14px;grid-template-columns:1fr;margin-bottom:16px}
+  @media(min-width:720px){.controls{grid-template-columns:repeat(4,1fr)}}
+  label.ctl{display:block;font-size:12px;color:var(--dim);margin-bottom:5px;text-transform:uppercase;letter-spacing:.08em}
+  select,.seg{width:100%;background:#0e1330;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 9px;font:inherit}
+  .seg{display:flex;gap:0;padding:0;overflow:hidden}
+  .seg button{flex:1;background:transparent;color:var(--dim);border:0;border-right:1px solid var(--line);padding:8px 4px;font:12px var(--mono);cursor:pointer}
+  .seg button:last-child{border-right:0}
+  .seg button.on{background:var(--acc);color:#fff}
+  .accept{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 14px;color:var(--dim);font-size:12px}
+  .accept .ap{font-family:var(--mono);font-size:11px;background:#0e1330;border:1px solid var(--line);border-radius:20px;padding:2px 9px}
+  .accept .ap.r0{border-color:var(--acc2);color:var(--acc2)}
+  .planbox{background:#0c1126;border:1px solid var(--line);border-radius:10px;padding:16px;min-height:64px;display:flex;align-items:center}
+  .cmdline{font-family:var(--mono);font-size:13px;color:var(--ink);margin-bottom:12px}
+  .cmdline .flag{color:var(--acc2)}
+  details{margin-top:18px;border:1px solid var(--line);border-radius:10px;padding:0 14px;background:var(--panel)}
+  summary{cursor:pointer;padding:12px 0;color:var(--dim);font-size:13px;text-transform:uppercase;letter-spacing:.08em}
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;margin-bottom:14px}
+  th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--faint);font-weight:600}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;color:var(--dim);font-size:11px;margin-top:8px}
+  .legend span b{font-family:var(--mono)}
+  .foot{color:var(--faint);font-size:12px;margin-top:30px;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>goo — negotiation simulator <span class="tag" id="srcTag">loading…</span></h1>
+    <p class="sub">The same command plans differently by where it lands. Watch the engine route a
+       subject through type conversions to whatever the caller can present.</p>
+    <p class="sub" style="font-size:13px">This runs goo's actual planning algorithm
+       (a JS mirror of <code>negotiation.rs</code>, self-checked against the Rust engine's output).</p>
+  </header>
+
+  <div id="banner" class="banner"></div>
+
+  <h2>The four ways · <span class="mono" style="text-transform:none;color:var(--ink)">goo view photo.png</span></h2>
+  <div class="grid4" id="fourWays"></div>
+
+  <h2>Explore</h2>
+  <div class="panel">
+    <div class="controls">
+      <div><label class="ctl">verb</label><select id="cVerb"></select></div>
+      <div><label class="ctl">subject type</label><select id="cSubject"></select></div>
+      <div><label class="ctl">environment</label>
+        <div class="seg" id="cEnv">
+          <button data-tty="1" data-disp="0">tty</button>
+          <button data-tty="1" data-disp="1">cosmic-term</button>
+          <button data-tty="0" data-disp="1">desktop</button>
+          <button data-tty="0" data-disp="0">piped</button>
+        </div>
+      </div>
+      <div><label class="ctl">--as (override)</label><select id="cAs"></select></div>
+    </div>
+    <div class="cmdline" id="cmdline"></div>
+    <div class="accept" id="acceptRow"></div>
+    <div class="planbox" id="planBox"></div>
+    <div class="legend">
+      <span><b class="t-free">free</b></span><span><b class="t-cheap">cheap</b></span>
+      <span><b class="t-normal">normal</b></span><span><b class="t-lossy">lossy</b></span>
+      <span><b class="t-network">network</b></span>
+      <span style="color:var(--faint)">— dashed = the verb edge · green = delivered</span>
+    </div>
+  </div>
+
+  <details>
+    <summary>The demo registry the planner searches</summary>
+    <h3 style="color:var(--dim);font-size:12px;letter-spacing:.08em">CHANNELS (converters)</h3>
+    <table id="tChannels"></table>
+    <h3 style="color:var(--dim);font-size:12px;letter-spacing:.08em">VERBS</h3>
+    <table id="tVerbs"></table>
+  </details>
+
+  <p class="foot">
+    Not a shipped plugin set — a curated demo. Planning is real: input coercion, output
+    negotiation, and instrument selection all fall out of one weighted shortest-path
+    (two-layer Dijkstra) over a virtual converter graph, respecting the MIME subtype
+    lattice. The executor (actually running the converters) isn't built yet — this shows
+    the <em>plan</em>, the way <span class="mono">EXPLAIN</span> shows a query plan.
+    See <span class="mono">doc/design/negotiation.md</span>.
+  </p>
+</div>
+
+<script>
+"use strict";
+// =====================================================================
+//  Thin mirror of crates/goo-engine/src/mime.rs  (lattice)
+// =====================================================================
+function globMatch(pattern, text){                        // mime.rs glob_match
+  const seg = pattern.split('*');
+  if (seg.length === 1) return pattern === text;
+  const last = seg.length - 1;
+  let pos = 0;
+  for (let i = 0; i < seg.length; i++){
+    const s = seg[i];
+    if (s === '') continue;
+    const rest = text.slice(pos);
+    if (i === 0){ if (!rest.startsWith(s)) return false; pos += s.length; }
+    else if (i === last){ return rest.endsWith(s); }
+    else { const idx = rest.indexOf(s); if (idx < 0) return false; pos += idx + s.length; }
+  }
+  return true;
+}
+function mimeMatches(pattern, mime){                       // mime.rs mime_matches
+  if (!pattern || !mime) return false;
+  return globMatch(pattern, mime);
+}
+function suffixSupertype(mime){                            // mime.rs suffix_supertype
+  const slash = mime.indexOf('/'); if (slash < 0) return null;
+  const top = mime.slice(0, slash);
+  const rest = mime.slice(slash + 1).split(';')[0];
+  const plus = rest.lastIndexOf('+'); if (plus < 0) return null;
+  const suffix = rest.slice(plus + 1);
+  return suffix ? top + '/' + suffix : null;
+}
+function declaredSupertypes(sub, reg){                     // mime.rs declared_supertypes
+  const out = [];
+  for (const t of (reg.types || [])) if (t.name === sub && Array.isArray(t.is_a)) out.push(...t.is_a);
+  return out;
+}
+function isSubtype(sub, sup, reg, seen){                   // mime.rs is_subtype
+  seen = seen || new Set();
+  if (sub === sup) return true;
+  if (mimeMatches(sup, sub)) return true;
+  if (seen.has(sub)) return false;
+  seen.add(sub);
+  const sfx = suffixSupertype(sub);
+  if (sfx && isSubtype(sfx, sup, reg, seen)) return true;
+  for (const p of declaredSupertypes(sub, reg)) if (isSubtype(p, sup, reg, seen)) return true;
+  return false;
+}
+
+// =====================================================================
+//  Thin mirror of crates/goo-engine/src/negotiation.rs  (planner)
+// =====================================================================
+const TIER_W = { free:0, cheap:1, normal:4, lossy:16, network:32 };   // Tier::weight
+const tierWeight = t => (TIER_W[t] != null ? TIER_W[t] : TIER_W.normal);
+const RANK_PENALTY = 1000000;
+const capOk = (req, env) => (req || []).every(r => env.includes(r));
+
+function targetFromEnv(tty, display){                      // target_from_env
+  if (tty && display) return { accept:['text/x-ansi','text/plain','application/vnd.goo.surface'], env_caps:['pty','display'] };
+  if (tty)            return { accept:['text/x-ansi','text/plain'], env_caps:['pty'] };
+  if (display)        return { accept:['application/vnd.goo.surface','*/*'], env_caps:['display'] };
+  return { accept:['*/*'], env_caps:[] };
+}
+const withAccept = (t, asType) => ({ accept:[asType], env_caps:t.env_caps });
+
+function convertersFromRegistry(reg){                      // converters_from_registry
+  return (reg.channels || []).filter(c => c.name && c.emits && Array.isArray(c.accepts) && c.accepts.length)
+    .map(c => ({ name:c.name, accepts:c.accepts, emits:c.emits,
+                 cost:c.cost || 'normal', requires:c.requires || [], consumes:c.consumes || 'path' }));
+}
+function verbEdges(verb){                                  // verb_edges
+  const accepts = verb.accepts || [];
+  if (verb.kind === 'present') return [{ instrument:'', accepts, emits:null, cost:'free', requires:[] }];
+  if (Array.isArray(verb.instruments))
+    return verb.instruments.filter(i => i.name && i.emits)
+      .map(i => ({ instrument:i.name, accepts, emits:i.emits, cost:i.cost || 'normal', requires:i.requires || [] }));
+  return [{ instrument:'', accepts, emits: verb.emits || 'text/plain', cost:'normal', requires:[] }];
+}
+
+// Two-layer Dijkstra over the virtual graph (negotiation.rs plan + successors +
+// reconstruct). Node = "type\tA" | "type\tB" | "GOAL". Preference is primary
+// (rank penalty on the delivery edge), cost the tiebreaker.
+function planRoute(subjectType, vEdges, converters, accept, envCaps, reg){
+  const usable = converters.filter(c => capOk(c.requires, envCaps));
+  const verbs  = vEdges.filter(v => capOk(v.requires, envCaps));
+  const START = subjectType + '\tA';
+  const dist = { [START]: 0 };
+  const prev = {};                       // node -> {from, step, delivered}
+  const seen = {};
+
+  function successors(node){
+    const out = [];
+    if (node === 'GOAL') return out;
+    const ti = node.indexOf('\t');
+    const t = node.slice(0, ti), layer = node.slice(ti + 1);
+    for (const c of usable)               // within-layer converter edges
+      if (c.accepts.some(p => isSubtype(t, p, reg)))
+        out.push({ to: c.emits + '\t' + layer, cost: tierWeight(c.cost),
+                   step:{ kind:'convert', name:c.name, from:t, to:c.emits } });
+    if (layer === 'A'){                    // verb edges A→B
+      for (const v of verbs)
+        if (v.accepts.some(p => isSubtype(t, p, reg))){
+          const to = v.emits || t;         // identity for present
+          out.push({ to: to + '\tB', cost: tierWeight(v.cost),
+                     step:{ kind:'verb', name:v.instrument, from:t, to } });
+        }
+    } else {                               // delivery edge B→GOAL (best rank)
+      let rank = -1;
+      for (let i = 0; i < accept.length; i++) if (isSubtype(t, accept[i], reg)){ rank = i; break; }
+      if (rank >= 0) out.push({ to:'GOAL', cost: rank * RANK_PENALTY, step:null, delivered:t });
+    }
+    return out;
+  }
+
+  const pq = [[0, START]];
+  while (pq.length){
+    pq.sort((a, b) => a[0] - b[0]);        // tiny graph — naive PQ is fine
+    const [d, node] = pq.shift();
+    if (seen[node]) continue;
+    seen[node] = true;
+    if (node === 'GOAL') break;
+    for (const e of successors(node)){
+      const nd = d + e.cost;
+      if (dist[e.to] === undefined || nd < dist[e.to]){   // strict-less keeps first (slice order) on ties
+        dist[e.to] = nd;
+        prev[e.to] = { from: node, step: e.step, delivered: e.delivered };
+        pq.push([nd, e.to]);
+      }
+    }
+  }
+  if (dist['GOAL'] === undefined) return null;             // 415
+
+  const steps = []; let delivered = '';
+  for (let cur = 'GOAL'; prev[cur]; cur = prev[cur].from){
+    if (cur === 'GOAL') delivered = prev[cur].delivered;
+    else if (prev[cur].step) steps.push(prev[cur].step);
+  }
+  steps.reverse();
+  let rank = 0;
+  for (let i = 0; i < accept.length; i++) if (isSubtype(delivered, accept[i], reg)){ rank = i; break; }
+  return { steps, delivered, cost: dist['GOAL'] - rank * RANK_PENALTY };
+}
+function planRequest(subjectType, verb, target, reg){      // plan_request
+  return planRoute(subjectType, verbEdges(verb), convertersFromRegistry(reg),
+                   target.accept, target.env_caps, reg);
+}
+
+// =====================================================================
+//  Conformance self-check: JS planner vs the Rust-dumped golden plans.
+// =====================================================================
+function deepEqual(a, b){
+  if (a === b) return true;
+  if (a == null || b == null) return a === b;
+  if (typeof a !== 'object') return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every(k => deepEqual(a[k], b[k]));
+}
+function planForScenario(reg, sc){
+  const verb = reg.verbs.find(v => v.name === sc.verb);
+  let target = targetFromEnv(!!sc.env.tty, !!sc.env.display);
+  if (sc.as) target = withAccept(target, sc.as);
+  return planRequest(sc.subject, verb, target, reg);
+}
+function selfCheck(reg, scenarios, golden){
+  const fails = [];
+  for (const sc of scenarios.scenarios){
+    const got = planForScenario(reg, sc);          // {steps,delivered,cost} | null
+    if (!deepEqual(got, golden[sc.id] ?? null)) fails.push(sc.id);
+  }
+  return fails;
+}
+
+// =====================================================================
+//  Rendering
+// =====================================================================
+let REG, SCN, GOLD;
+
+function tierOfStep(step){
+  if (step.kind === 'convert'){
+    const c = (REG.channels || []).find(x => x.name === step.name);
+    return c ? (c.cost || 'normal') : 'normal';
+  }
+  // verb edge
+  const v = REG.verbs.find(x => (x.instruments || []).some(i => i.name === step.name) || (step.name === '' && x.kind === 'present'));
+  if (v && v.kind === 'present') return 'free';
+  if (v && v.instruments){ const i = v.instruments.find(i => i.name === step.name); return i ? (i.cost || 'normal') : 'normal'; }
+  return 'normal';
+}
+function pipeHTML(plan, subjectType){
+  if (plan === null)
+    return `<div class="r415">415 · no route — <b>${subjectType}</b> can't be presented here</div>`;
+  const start = plan.steps.length ? plan.steps[0].from : subjectType;
+  let h = `<div class="pipe"><span class="pill subj">${start}</span>`;
+  plan.steps.forEach((s, idx) => {
+    const tier = tierOfStep(s);
+    const cls = s.kind === 'verb' ? 'edge verb' : 'edge';
+    const label = s.kind === 'verb' ? (s.name || 'verb') : s.name;
+    const last = idx === plan.steps.length - 1;
+    h += `<span class="${cls}"><span class="nm t-${tier}">${label}</span><span class="arr">→</span></span>`;
+    h += `<span class="pill ${last ? 'delivered' : ''}">${s.to}</span>`;
+  });
+  h += `</div>`;
+  return h;
+}
+
+function renderFourWays(){
+  const box = document.getElementById('fourWays');
+  const envs = [
+    { id:'view-tty' }, { id:'view-cosmic' }, { id:'view-desktop' }, { id:'view-piped' }
+  ];
+  box.innerHTML = envs.map(e => {
+    const sc = SCN.scenarios.find(s => s.id === e.id);
+    const plan = planForScenario(REG, sc);
+    const cost = plan ? `cost ${plan.cost} · delivers ${plan.delivered}` : '415';
+    return `<div class="card">
+        <div class="env">${sc.title.split('·')[1].trim()}</div>
+        <div class="shows">${sc.shows}</div>
+        ${pipeHTML(plan, sc.subject)}
+        <div class="cost">${cost}</div>
+      </div>`;
+  }).join('');
+}
+
+function curEnv(){ const b = document.querySelector('#cEnv button.on'); return { tty:b.dataset.tty === '1', disp:b.dataset.disp === '1' }; }
+function renderExplore(){
+  const verbName = document.getElementById('cVerb').value;
+  const subject = document.getElementById('cSubject').value;
+  const asType = document.getElementById('cAs').value;
+  const { tty, disp } = curEnv();
+  const verb = REG.verbs.find(v => v.name === verbName);
+  let target = targetFromEnv(tty, disp);
+  if (asType) target = withAccept(target, asType);
+
+  document.getElementById('cmdline').innerHTML =
+    `$ goo <b>${verbName}</b> ${subject.startsWith('text/') ? "'…'" : 'file'} `
+    + `<span class="flag">@${subject}</span>`
+    + (asType ? ` <span class="flag">--as ${asType}</span>` : '');
+
+  document.getElementById('acceptRow').innerHTML =
+    `<span>Accept:</span>` + target.accept.map((a, i) => `<span class="ap ${i === 0 ? 'r0' : ''}">${a}</span>`).join('')
+    + (target.env_caps.length ? `<span style="color:var(--faint)">· caps {${target.env_caps.join(', ')}}</span>` : '');
+
+  const plan = planRequest(subject, verb, target, REG);
+  document.getElementById('planBox').innerHTML = pipeHTML(plan, subject);
+}
+
+function renderRegistry(){
+  document.getElementById('tChannels').innerHTML =
+    `<tr><th>name</th><th>accepts</th><th>emits</th><th>cost</th><th>requires</th></tr>` +
+    REG.channels.map(c => `<tr><td>${c.name}</td><td>${c.accepts.join(', ')}</td><td>${c.emits}</td>
+      <td class="t-${c.cost || 'normal'}">${c.cost || 'normal'}</td><td>${(c.requires || []).join(', ') || '—'}</td></tr>`).join('');
+  document.getElementById('tVerbs').innerHTML =
+    `<tr><th>name</th><th>kind</th><th>accepts</th><th>emits / instruments</th></tr>` +
+    REG.verbs.map(v => {
+      const out = v.kind === 'present' ? '(identity — present)'
+        : v.instruments ? v.instruments.map(i => `${i.name}→${i.emits}`).join(', ')
+        : (v.emits || 'text/plain');
+      return `<tr><td>${v.name}</td><td>${v.kind || 'verb'}</td><td>${v.accepts.join(', ')}</td><td>${out}</td></tr>`;
+    }).join('');
+}
+
+function populateControls(){
+  const subjects = ['image/png','image/svg+xml','video/mp4','audio/mpeg','text/plain','text/csv','application/json'];
+  document.getElementById('cVerb').innerHTML = REG.verbs.map(v => `<option>${v.name}</option>`).join('');
+  document.getElementById('cSubject').innerHTML = subjects.map(s => `<option ${s === 'image/png' ? 'selected' : ''}>${s}</option>`).join('');
+  document.getElementById('cAs').innerHTML = `<option value="">(auto — from environment)</option>` +
+    ['image/png','text/plain','application/vnd.goo.surface','application/pdf'].map(s => `<option>${s}</option>`).join('');
+  document.querySelectorAll('#cEnv button').forEach((b, i) => {
+    if (i === 0) b.classList.add('on');
+    b.onclick = () => { document.querySelectorAll('#cEnv button').forEach(x => x.classList.remove('on')); b.classList.add('on'); renderExplore(); };
+  });
+  ['cVerb','cSubject','cAs'].forEach(id => document.getElementById(id).onchange = renderExplore);
+}
+
+function boot(reg, scn, gold, source){
+  REG = reg; SCN = scn; GOLD = gold;
+  document.getElementById('srcTag').textContent = source;
+  const fails = selfCheck(REG, SCN, GOLD);
+  const banner = document.getElementById('banner');
+  if (fails.length){
+    banner.className = 'banner bad';
+    banner.textContent = `⚠ JS planner diverged from the Rust engine on: ${fails.join(', ')} — the JS mirror is out of date with negotiation.rs.`;
+  } else {
+    banner.className = 'banner ok';
+    banner.textContent = `✓ self-check passed — JS planner reproduces the Rust engine on all ${SCN.scenarios.length} scenarios.`;
+  }
+  populateControls();
+  renderFourWays();
+  renderExplore();
+  renderRegistry();
+}
+
+// fetch the canonical fixtures (when served over http); fall back to the
+// embedded snapshot for file:// double-click.
+async function load(){
+  try{
+    const [reg, scn, gold] = await Promise.all([
+      fetch('demo-registry.json').then(r => r.json()),
+      fetch('scenarios.json').then(r => r.json()),
+      fetch('demo-plans.json').then(r => r.json()),
+    ]);
+    boot(reg, scn, gold, 'live fixtures');
+  }catch(e){
+    const j = id => JSON.parse(document.getElementById(id).textContent);
+    boot(j('emb-reg'), j('emb-scn'), j('emb-plans'), 'embedded snapshot');
+  }
+}
+load();
+</script>
+
+<!-- file:// fallback snapshot of simulator/{demo-registry,scenarios,demo-plans}.json -->
+<script type="application/json" id="emb-reg">
+{"types":[{"name":"application/vnd.wayland.surface","is_a":["application/vnd.goo.surface"]},{"name":"application/vnd.x11.window","is_a":["application/vnd.goo.surface"]}],"channels":[{"name":"chafa","accepts":["image/*"],"emits":"text/x-ansi","cost":"lossy","consumes":"path"},{"name":"eog","accepts":["image/*"],"emits":"application/vnd.wayland.surface","cost":"normal","requires":["display"],"consumes":"path"},{"name":"mpv","accepts":["video/*","audio/*"],"emits":"application/vnd.wayland.surface","cost":"normal","requires":["display"],"consumes":"path"},{"name":"csv2json","accepts":["text/csv"],"emits":"application/json","cost":"cheap","consumes":"stream"}],"verbs":[{"name":"view","kind":"present","accepts":["image/*"]},{"name":"play","kind":"present","accepts":["video/*","audio/*"]},{"name":"keys","accepts":["application/json"],"emits":"text/plain"},{"name":"summarize","accepts":["text/*"],"instruments":[{"name":"fabric/inference","emits":"text/plain","cost":"network"},{"name":"fabric/assemble","emits":"application/vnd.goo.prompt","cost":"cheap"}]}]}
+</script>
+<script type="application/json" id="emb-scn">
+{"scenarios":[{"id":"view-tty","title":"view image · bare terminal","verb":"view","subject":"image/png","env":{"tty":true,"display":false},"shows":"output negotiation → chafa (image→ansi)"},{"id":"view-cosmic","title":"view image · cosmic-terminal","verb":"view","subject":"image/png","env":{"tty":true,"display":true},"shows":"preference: ansi chosen over the cheaper surface"},{"id":"view-desktop","title":"view image · desktop (no tty)","verb":"view","subject":"image/png","env":{"tty":false,"display":true},"shows":"GUI route → eog (image→surface)"},{"id":"view-piped","title":"view image · piped/redirected","verb":"view","subject":"image/png","env":{"tty":false,"display":false},"shows":"byte sink: identity, raw image bytes"},{"id":"view-as-pdf","title":"view image --as application/pdf","verb":"view","subject":"image/png","env":{"tty":true,"display":false},"as":"application/pdf","shows":"415: no converter reaches application/pdf"},{"id":"summarize-tty","title":"summarize text · bare terminal","verb":"summarize","subject":"text/plain","env":{"tty":true,"display":false},"shows":"Using: selection → fabric/inference (assemble's prompt can't reach a text sink)"},{"id":"keys-csv-tty","title":"keys of a CSV · bare terminal","verb":"keys","subject":"text/csv","env":{"tty":true,"display":false},"shows":"input coercion → csv2json before the verb"}]}
+</script>
+<script type="application/json" id="emb-plans">
+{"keys-csv-tty":{"cost":5,"delivered":"text/plain","steps":[{"from":"text/csv","kind":"convert","name":"csv2json","to":"application/json"},{"from":"application/json","kind":"verb","name":"","to":"text/plain"}]},"summarize-tty":{"cost":32,"delivered":"text/plain","steps":[{"from":"text/plain","kind":"verb","name":"fabric/inference","to":"text/plain"}]},"view-as-pdf":null,"view-cosmic":{"cost":16,"delivered":"text/x-ansi","steps":[{"from":"image/png","kind":"verb","name":"","to":"image/png"},{"from":"image/png","kind":"convert","name":"chafa","to":"text/x-ansi"}]},"view-desktop":{"cost":4,"delivered":"application/vnd.wayland.surface","steps":[{"from":"image/png","kind":"verb","name":"","to":"image/png"},{"from":"image/png","kind":"convert","name":"eog","to":"application/vnd.wayland.surface"}]},"view-piped":{"cost":0,"delivered":"image/png","steps":[{"from":"image/png","kind":"verb","name":"","to":"image/png"}]},"view-tty":{"cost":16,"delivered":"text/x-ansi","steps":[{"from":"image/png","kind":"verb","name":"","to":"image/png"},{"from":"image/png","kind":"convert","name":"chafa","to":"text/x-ansi"}]}}
+</script>
+</body>
+</html>
