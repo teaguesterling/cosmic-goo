@@ -63,6 +63,13 @@ EOF
     [ "$output" = "application/json" ]
 }
 
+@test "infer: a JSON document on stdin infers application/json" {
+    # The implicit chain (no positional) infers structure from stdin too.
+    run bash -c "printf '%s' '{\"k\":1}' | '$GOO' eat-json"
+    [ "$status" -eq 0 ]
+    [ "$output" = "application/json" ]
+}
+
 @test "infer: a non-JSON literal does not resolve for a json-only verb" {
     # Inference is selective — it only fires on a positive json signal, so a
     # plain word never reaches a json-only verb.

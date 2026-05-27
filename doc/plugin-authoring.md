@@ -119,6 +119,27 @@ accepts = ["text/*"]
 cmd = "tr a-z A-Z <<< {subject.text|q}"
 ```
 
+#### How a bare positional reaches your verb
+
+When the subject isn't an explicit address (`goo my-verb '<arg>'`, or piped on
+stdin), the engine **types the raw content and matches it against `accepts`**.
+Beyond plain text and native paths (a path is typed by libmagic via
+`resolve_file`), there's **structural inference**: content with a positive shape
+signal is offered as that type. Today JSON shape is recognized, so a verb with
+`accepts = ["application/json"]` resolves a literal —
+
+```toml
+[[verbs]]
+name = "json-pretty"
+accepts = ["application/json"]
+cmd = "jq . <<< {subject.text|q}"     # goo json-pretty '{\"k\":1}'  works
+```
+
+Inference is subtype-aware and only fires when the content *positively* looks
+like a type your verb accepts — a text-only verb never sees an inferred JSON
+type. (Structural inference is in the Rust engine; the bash reference types bare
+content by libmagic + glob only.)
+
 **Two-step verb** taking an object. Declare `object_type`; the object is then
 available as `{object.*}` in `cmd`, resolved the same way subjects are:
 
