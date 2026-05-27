@@ -18,6 +18,11 @@ description = "Inspect structured + non-text content: JSON, images, audio/video,
 name = "application/json"
 display = "JSON"
 kind = "content"
+# JSON *is* text — displayable/pageable as text/plain. The structured-suffix rule
+# only relates same-top-level types (application/x+json <: application/json), so
+# this cross-family supertype must be declared. Lets the negotiation engine
+# present JSON as text without a dedicated converter (Rust lattice; §negotiation).
+is_a = ["text/plain"]
 
 [[verbs]]
 name = "json-pretty"

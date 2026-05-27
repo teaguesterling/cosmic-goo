@@ -1,0 +1,82 @@
+name = "presentation"
+tier = "desktop"
+description = "Negotiation: presentation-surface types, coercion channels, and the view present verb"
+
+# This plugin feeds the negotiation engine (doc/design/negotiation.md): the
+# [[channels]] are coercion converters the planner auto-routes through, and the
+# surface [[types]] are what a {present} destination (a display) accepts. The
+# `view` verb is `kind = "present"` — the subject *is* the result; delivery is
+# the engine's job. Execution isn't CLI-wired yet, so `goo view x` reports that
+# and points at `goo --explain view x`, which shows the planned route today.
+
+# ---- presentation surface types ----
+# What a display accepts: a live compositor object, not bytes (negotiation §2.6).
+
+[[types]]
+name = "application/vnd.goo.surface"
+display = "display surface"
+kind = "surface"
+
+[[types]]
+name = "application/vnd.wayland.surface"
+display = "Wayland surface"
+kind = "surface"
+is_a = ["application/vnd.goo.surface"]
+
+[[types]]
+name = "application/vnd.x11.window"
+display = "X11 window"
+kind = "surface"
+is_a = ["application/vnd.goo.surface"]
+
+# ---- coercion channels (converters) ----
+# Specific handlers first; xdg-open is the catch-all fallback (it wins only when
+# no specific converter matches — earlier-listed converters win ties by order).
+# `cmd`s reference tools that may not be installed; that's fine for planning
+# (--explain never runs them). Execution (a later slice) degrades per-tool.
+
+[[channels]]
+name = "chafa"
+accepts = ["image/*"]
+emits = "text/x-ansi"
+cost = "lossy"                      # renders an image as ANSI — fidelity loss
+consumes = "path"
+cmd = "chafa {in.path|q}"
+
+[[channels]]
+name = "eog"
+accepts = ["image/*"]
+emits = "application/vnd.wayland.surface"
+cost = "normal"
+requires = ["display"]
+consumes = "path"
+cmd = "eog {in.path|q}"
+
+[[channels]]
+name = "cosmic-edit"
+accepts = ["text/*"]
+emits = "application/vnd.wayland.surface"
+cost = "normal"
+requires = ["display"]
+consumes = "path"
+cmd = "cosmic-edit {in.path|q}"
+
+[[channels]]
+name = "xdg-open"
+accepts = ["*/*"]                   # catch-all: a desktop opens almost anything
+emits = "application/vnd.wayland.surface"
+cost = "normal"
+requires = ["display"]
+consumes = "path"
+cmd = "xdg-open {in.path|q}"
+
+# ---- presentation verb ----
+# `view` an image: the subject is the result; the engine negotiates where it
+# lands (chafa→ansi on a tty, eog→surface on a desktop). No default_for, so GOO
+# dispatch on an image stays whatever the content plugin sets.
+
+[[verbs]]
+name = "view"
+kind = "present"
+description = "Present an image — inline (terminal) or in a viewer (desktop)"
+accepts = ["image/*"]
