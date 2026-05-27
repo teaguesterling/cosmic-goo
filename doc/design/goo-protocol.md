@@ -613,9 +613,11 @@ real.
 
 ### Status
 
-Designed-not-built. Negotiation proper is gated on **coercion** (§13 — `chafa` as
-an auto-routed `image→ansi` channel); the named-return-channel and kind ontology
-are a later refinement. The minimal *first* step that needs neither: a **selector
+Designed; the engine that realizes it is specified in
+[negotiation.md](negotiation.md) (a typed auto-plugging pipeline planner —
+two-layer Dijkstra over a converter graph; input coercion + output negotiation +
+`Using:` selection all fall out of one algorithm). The named-return-channel and
+kind ontology remain a later refinement. The minimal *first* step that needs neither: a **selector
 adverb whose default is `-`** (environment-computed → `terminal` / `gui` by the
 `isatty`/`$WAYLAND_DISPLAY` heuristic) — env-aware `view`/`play` today, promotable
 to full negotiation when coercion lands. This is the consumer that *motivates*
@@ -648,6 +650,7 @@ coercion on the **output** side, exactly as JSON motivated `infer_for` on the
   "send this JSON to a SQL table / an S3 bucket / a custom server" cleanly — **and**
   the output-side presentation negotiation of §12 (`chafa` as an `image→ansi`
   coercion channel, auto-routed for a tty origin). Two consumers, one mechanism.
-  Big; designed-not-built; the slot model is ready, the type system is partway.
+  The engine is specified in [negotiation.md](negotiation.md) and being built in
+  slices; the slot model is ready, the type system is partway.
   (Buffers — the materialization primitive that carries coercion intermediates
   and data-with-no-address — are now in §11.)
