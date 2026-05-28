@@ -18,7 +18,9 @@ Plugins are TOML files declaring any combination of types, sources, verbs, and a
 
 Authoritative current docs live in [`doc/`](doc/):
 
+- [`doc/quickstart.md`](doc/quickstart.md) — **start here**: goo's core values (address → verb → coerce → route) in 5 minutes
 - [`doc/index.md`](doc/index.md) — what cosmic-goo is, status, install
+- [`doc/tutorial.md`](doc/tutorial.md) — learn the CLI by example, in depth
 - [`doc/cli-reference.md`](doc/cli-reference.md) — `goo` command reference
 - [`doc/plugin-authoring.md`](doc/plugin-authoring.md) — how to write plugins
 - [`doc/examples/ms-natural-4000-bindings.md`](doc/examples/ms-natural-4000-bindings.md) — example MS Natural 4000 bindings

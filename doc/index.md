@@ -16,6 +16,9 @@ Plugins are TOML files declaring any combination of **types**, **sources**, **ve
 
 Not yet shipped: the pop-launcher meta-plugin for *inline* composition in `cosmic-launcher` (Phase 2), the scenes plugin (Phase 3), and the native libcosmic compose GUI (the current dialog is a shell-driven picker). See [`docs/vision/cosmic-goo-implementation-plan.md`](../docs/vision/cosmic-goo-implementation-plan.md) for the full plan and [`tutorial.md`](tutorial.md) to learn the CLI by example.
 
+**New here? Start with the [quickstart](quickstart.md)** — goo's core values
+(address → verb → coerce → route) in five minutes.
+
 ## Quick taste
 
 ```
