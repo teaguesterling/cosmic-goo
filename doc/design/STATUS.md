@@ -24,13 +24,14 @@ linked below; this is just "we've built up through here."
 | **`--using` run-path override** (#1) — pin the verb's `usage` channel, overriding the planner's pick (a constraint, validated) | **built** (Rust) | `plan_request_using`, `cmd_verb`; `execute.bats` |
 | **Type detection — registry-driven checkers + OS lattice + extension signal + `--explain` provenance** (slices 1–5) — `[[detectors]]`/`[[checkers]]` collections (parity); the `json` check declared in an embedded `core.toml` (`builtin`, behavior-preserving) with `infer_for` now registry-driven; **OS-MIME-DB importer** (opt-in `COSMIC_GOO_MIME_DIRS`) pulls shared-mime-info `subclasses`→`is_a` (svg→xml→text into `is_subtype`) + `globs2`→`extensions` as `[[types]]`; **extension signal** — a file's extension → declared type, authoritative over libmagic (`resolve_file`, Rust-only; `None`-path == libmagic); **`--explain` `subject:` line** annotates which signal chose the type (explicit/extension/checker/libmagic/content), typed via the run's own path (fixes a 2a/4 divergence) | **built** (Rust) | `registry.rs`, `address.rs`, `mime.rs`, `goo` bin; `mimedb.bats`, `extsignal.bats`, `explain.bats` |
 | **Type detection — remaining** — the signal *model* (weighted candidates the verb's `accepts` selects; `emits` types the handle not content; no privileged hardwired types): `emits` wiring (terminal-vs-container), the `cmd` runner (`input`/`ok`/`reads`), multi-candidate-for-files, the checker *name* in `--explain`, importer production default | **designed** | [detection.md](detection.md) |
-| **`--to`/`--on` resource destinations** — route to a named `goo://` resource (display/chat/clipboard); the run-path `From:` named-return-channel that lets `via` decompose | **designed** | [goo-protocol §12](goo-protocol.md); `claude-routing.toml` |
+| **`--to`/`-o` output routing (v1)** — the verb's result lands at a `{write}` destination instead of stdout: `--to <dest>`/`-o <file>`; v1 destinations **file + clipboard** (`address::write_to`, canonicalized via the addressing); `--to` ⇒ piped Accept (bytes, not a rendered surface); composes with `--using`/`--as`; no `--to` is byte-identical to stdout. Rust-only run-path | **built** (Rust) | `address.rs`, `selection.rs`, `goo` bin; `execute.bats` |
+| **`--to`/`--on` — remaining** — `--on` `{present}` surfaces (same slot, target capability decides); chat/contacts/buffers, multi-recipient, lenient resolution, `Log:`/`From:`, type-matched `emits↔accepts`, the declared `{write}`-domain framework | **designed** | [goo-protocol §12](goo-protocol.md); `claude-routing.toml` |
 | **One-context channel substitution** (unify usage `{subject.*}` and coercion `{in.path}`) + **mode-aware buffering** (stream/bytes, not always temp-file) | **designed** | [negotiation §2.3](negotiation.md), [§5](negotiation.md) |
 | **Output value model** — value (path/bytes/stream/ref/**live surface**) as first-class vs a marshalling-mode annotation | **designed** | [negotiation §2.1](negotiation.md) |
 
 Bash is frozen at the **pre-negotiation** behavior and is the reference for
 everything below the arc; the lattice/inference/negotiation are Rust-only, so
-their bats tests skip on bash (the suite is 278/278 on both engines).
+their bats tests skip on bash (the suite is 284/284 on both engines).
 
 ## The interface / protocol layer
 
@@ -48,6 +49,6 @@ their bats tests skip on bash (the suite is 278/278 on both engines).
 
 - **Engine + CLI** — the Rust `goo` is the default; bash is the reference (`make install` / `make install-bash`).
 - **Plugins** — 25 (~88 verbs, 17 sources), incl. non-text handle domains and content-inspection verbs.
-- **Tests** — bats conformance suite (278/278 both engines) + 147 engine unit tests.
+- **Tests** — bats conformance suite (284/284 both engines) + 148 engine unit tests.
 
 See [limitations.md](../limitations.md) for the user-facing roadmap.

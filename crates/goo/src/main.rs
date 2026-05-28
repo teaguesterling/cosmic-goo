@@ -128,6 +128,21 @@ fn parse_args(rest: &[String]) -> (Vec<String>, Value) {
     let mut i = 0;
     while i < rest.len() {
         let a = &rest[i];
+        // `-o FILE` / `-o=FILE` — sugar for `--to <file>` (route the result to a file).
+        if a == "-o" {
+            if let Some(v) = rest.get(i + 1) {
+                adverbs.insert("to".into(), json!(format!("goo://file/{v}")));
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(v) = a.strip_prefix("-o=") {
+            adverbs.insert("to".into(), json!(format!("goo://file/{v}")));
+            i += 1;
+            continue;
+        }
         if let Some(kv) = a.strip_prefix("--") {
             if let Some((name, value)) = kv.split_once('=') {
                 adverbs.insert(name.to_string(), json!(value));
@@ -359,11 +374,19 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
         }
     };
 
-    // Real environment → Accept profile (pinned by --as if given).
+    // Real environment → Accept profile (pinned by --as if given). With --to/-o the
+    // result lands at a {write} sink, which wants BYTES — so force the piped profile
+    // (else `view img --to out.png` would route image→chafa→ansi into the file).
     use std::io::IsTerminal;
-    let display = std::env::var("WAYLAND_DISPLAY").is_ok_and(|v| !v.is_empty())
-        || std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty());
-    let mut target = negotiation::target_from_env(std::io::stdout().is_terminal(), display);
+    let dest = adverbs.get("to").and_then(|v| v.as_str());
+    let (tty, display) = if dest.is_some() {
+        (false, false)
+    } else {
+        let disp = std::env::var("WAYLAND_DISPLAY").is_ok_and(|v| !v.is_empty())
+            || std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty());
+        (std::io::stdout().is_terminal(), disp)
+    };
+    let mut target = negotiation::target_from_env(tty, display);
     if let Some(as_t) = adverbs.get("as").and_then(|v| v.as_str()) {
         target = target.with_accept(as_t);
     }
@@ -392,9 +415,15 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
             let hint = route_missing_tools_hint(subject_type, verb, &target, reg, &missing);
             die(format!("415 · no route — can't route {subject_type} through '{verb_name}'{hint}"))
         }
-        Some(plan) => match exec::execute(&plan, &subject_path, verb, reg) {
-            Ok(code) => code,
-            Err(e) => die(format!("{verb_name}: {e}")),
+        Some(plan) => match dest {
+            None => match exec::execute(&plan, &subject_path, verb, reg) {
+                Ok(code) => code,
+                Err(e) => die(format!("{verb_name}: {e}")),
+            },
+            Some(d) => match exec::execute_capture(&plan, &subject_path, verb, reg) {
+                Ok(out) => route_result(d, out.as_bytes(), reg),
+                Err(e) => die(format!("{verb_name}: {e}")),
+            },
         },
     }
 }
@@ -507,7 +536,21 @@ fn exec_verb(
             }
         }
     }
-    bash_exec(&rendered.cmd)
+    // No `--to` → run with inherited stdout (byte-identical to before). With
+    // `--to`/`-o`, capture the result and route it to the destination instead.
+    match adverbs.get("to").and_then(|v| v.as_str()) {
+        None => bash_exec(&rendered.cmd),
+        Some(d) => route_result(d, bash_capture(&rendered.cmd).as_bytes(), reg),
+    }
+}
+
+/// Route a captured verb result to a `--to`/`-o` destination (file/clipboard), or
+/// die cleanly on a non-writable/failed destination. See goo-protocol §12.
+fn route_result(dest: &str, bytes: &[u8], reg: &Value) -> i32 {
+    match address::write_to(dest, bytes, reg) {
+        Ok(()) => 0,
+        Err(e) => die(format!("--to: {e}")),
+    }
 }
 
 /// True if any of `verb.accepts` accepts `text/plain` (subtype-aware).

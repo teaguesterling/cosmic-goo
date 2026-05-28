@@ -158,3 +158,59 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" == *"not a channel of 'say'"* ]]
 }
+
+# --- output routing: --to / -o (file + clipboard) ---
+
+# legacy path (echo-it: own cmd, no gap): --to captures + writes to the file.
+@test "execute: --to <file> routes a verb result to a file (legacy path)" {
+    run "$GOO" echo-it "$BATS_TEST_TMPDIR/sub.txt" --to "$BATS_TEST_TMPDIR/out.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]                                   # nothing on stdout
+    [ "$(cat "$BATS_TEST_TMPDIR/out.txt")" = "hello goo" ]
+}
+
+# -o is sugar for --to a file.
+@test "execute: -o <file> is sugar for --to a file" {
+    run "$GOO" echo-it "$BATS_TEST_TMPDIR/sub.txt" -o "$BATS_TEST_TMPDIR/o.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/o.txt")" = "hello goo" ]
+}
+
+# present/negotiated path + the Accept-piped pin: --to delivers the SUBJECT bytes
+# (identity, byte sink), not a rendered surface.
+@test "execute: --to delivers piped bytes from a present verb (identity)" {
+    run "$GOO" show "$BATS_TEST_TMPDIR/sub.txt" --to "$BATS_TEST_TMPDIR/p.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/p.txt")" = "hello goo" ]
+}
+
+# --as still composes with --to: route through `up`, then write the result.
+@test "execute: --as routes through a converter, --to writes the result" {
+    run "$GOO" show "$BATS_TEST_TMPDIR/sub.txt" --as=text/x-up --to "$BATS_TEST_TMPDIR/u.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/u.txt")" = "HELLO GOO" ]
+}
+
+# a non-writable destination errors cleanly (not a panic / not silent).
+@test "execute: --to a non-writable destination fails cleanly" {
+    run "$GOO" echo-it "$BATS_TEST_TMPDIR/sub.txt" --to 'goo://text/nope' </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not writable"* ]]
+}
+
+# --using (instrument) and --to (destination) are orthogonal slots — they compose.
+@test "execute: --using + --to compose (instrument picks channel, --to routes)" {
+    printf 'Hi' > "$BATS_TEST_TMPDIR/s2.txt"
+    run "$GOO" say "$BATS_TEST_TMPDIR/s2.txt" --using=quiet --to "$BATS_TEST_TMPDIR/q.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$(cat "$BATS_TEST_TMPDIR/q.txt")" = "hi" ]   # quiet = lowercase, then routed to the file
+}
+
+# clipboard destination (needs wl-copy + a compositor — tool-aware skip).
+@test "execute: --to ^ writes the result to the clipboard" {
+    command -v wl-copy >/dev/null || skip "wl-copy not installed"
+    command -v wl-paste >/dev/null || skip "wl-paste not installed"
+    run "$GOO" echo-it "$BATS_TEST_TMPDIR/sub.txt" --to '^' </dev/null
+    [ "$status" -eq 0 ] || skip "no wayland clipboard in this env"
+    [ "$(wl-paste --no-newline 2>/dev/null)" = "hello goo" ]
+}

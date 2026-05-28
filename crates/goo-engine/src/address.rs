@@ -179,6 +179,34 @@ pub fn resolve(raw: &str, reg: &Value, _verb: Option<&Value>) -> Result<Value, S
     }
 }
 
+/// Write `bytes` to a `{write}` destination — the output counterpart of [`resolve`].
+/// The dest is canonicalized through the same addressing as a subject (so `^`→clip
+/// and native paths→file come for free), then dispatched on the domain. v1: `file`
+/// (write the path) and `clip` (the clipboard); other domains error cleanly. See
+/// goo-protocol §12.
+pub fn write_to(dest: &str, bytes: &[u8], reg: &Value) -> Result<(), String> {
+    let uri = canonicalize(dest, reg);
+    let rest = uri
+        .strip_prefix("goo://")
+        .ok_or_else(|| format!("invalid destination '{dest}'"))?;
+    let (domain, path) = rest.split_once('/').unwrap_or((rest, ""));
+    match domain {
+        "file" => {
+            if path.is_empty() {
+                return Err("destination 'file' needs a path".into());
+            }
+            std::fs::write(abspath(path), bytes).map_err(|e| format!("write {path}: {e}"))
+        }
+        "clip" => {
+            if !path.is_empty() {
+                return Err(format!("named clipboard buffers ('^{path}') not yet supported"));
+            }
+            selection::set_clipboard(bytes)
+        }
+        other => Err(format!("destination not writable yet: goo://{other}/")),
+    }
+}
+
 /// The last path segment's extension, lowercased, including the dot
 /// (`data.tar.gz` → `.gz`, last only); dotfiles (`.bashrc`) and extensionless
 /// names → `None`. See detection.md (slice 4).
@@ -452,6 +480,18 @@ mod tests {
         assert_eq!(resolve_file(p, Some(&reg)).unwrap()["type"], json!("application/x-goo"));
         // Some(reg) with no matching extension still falls back to libmagic.
         assert_eq!(resolve_file(p, Some(&json!({}))).unwrap()["type"], json!(libmagic));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_to_file_and_unknown_domain() {
+        let dir = std::env::temp_dir().join(format!("goo-wt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("out.txt");
+        write_to(&format!("goo://file/{}", f.display()), b"hello dest", &json!({})).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "hello dest");
+        // a non-writable domain errors cleanly (not a panic)
+        assert!(write_to("goo://text/x", b"x", &json!({})).unwrap_err().contains("not writable"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
