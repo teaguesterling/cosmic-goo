@@ -117,12 +117,26 @@ works only if the registry encodes the relationships — either:
 - the lattice carries the **subtype chain** (`image/svg+xml is_a … is_a
   text/plain`) via a declared `is_a` relation.
 
-Neither is in the registry today (only `json → text/plain`; the `+xml` suffix rule
-is same-top-level only — `image/svg+xml` does **not** reach `text/plain` without
-an explicit declaration). So SVG is the *illustrative principle*; making goo
-actually treat one as both requires those declarations. The doc's promise is the
-**mechanism** (candidates + `accepts`-selection), not that any given type is
-pre-wired multiply.
+The mechanism is **declared subtype chains** in the registry (candidates +
+`accepts`-selection); the `+xml` suffix rule is same-top-level only, so a chain
+like `image/svg+xml → text/plain` must be *declared*, not inferred. The realization
+from surveying the OS: **freedesktop.org shared-mime-info is the largest single
+source of those declarations** on desktop systems — its `subclasses` file carries
+exactly `image/svg+xml → application/xml → text/plain` (and hundreds more), its
+`globs2` the extension map, its `aliases` the normalizations. So SVG-is-also-text
+becomes **real as soon as the OS-MIME-DB importer ships** (slice 3 — it parses
+shared-mime-info into `[[types]]` entries, same shape as a plugin contribution),
+not when someone hand-declares it. Off-desktop (containers, macOS) the importer
+yields nothing and it stays the *principle*, running on `core.toml` + plugins.
+
+**Critically, the OS DB enters at registry *load*, never inside `is_subtype`.**
+`is_subtype`/`mime_matches` stays **purely declarative** (registry `is_a` + suffix
++ glob) — consulting `/usr/share/mime/subclasses` at match time would make it
+machine-dependent and break the bash-frozen conformance contract. The importer
+*imports* those relationships as declared `is_a`; the matcher reads them the same
+way it reads a plugin's. (And shared-mime-info's `globs2` *priority* is a
+glob-disambiguation number, **not** a confidence tier — extension is uniformly
+`strong`; priority only breaks ties between competing globs.)
 
 ## Resolution — one procedure
 
@@ -292,8 +306,14 @@ each candidate with its signal: `application/geo+json (via geojson checker)`,
    with `builtin = "json"` (exact `looks_like_json`, behavior-preserving on the
    hot path), **not** as Rust referenced by name. `[[detectors]]`/`[[checkers]]`
    schema + the `cmd` runner (`input`/`ok`/`reads`) for plugin-added entries.
-3. **Extension-reader** — read `[[types]].extensions`; emit a `strong`,
-   authoritative candidate (bypasses gating).
+3. **OS-MIME-DB importer** (= the extension-reader + the lattice, sourced from the
+   OS). A registry-load *source* that parses shared-mime-info's `globs2` →
+   `[[types]].extensions`, `subclasses` → `is_a`, `aliases` → aliases — the same
+   contribution shape a plugin emits, so merge/override-by-name and the
+   declarative `is_subtype` work unchanged. Then the extension signal emits a
+   `strong`, authoritative candidate (bypasses gating). Hand-declared
+   `[[types]].extensions` remain as supplement/override. Conformance points at a
+   fixture DB; production at `/usr/share/mime` + `~/.local/share/mime`.
 4. Wire **handle `emits`** into the same model as the `certain` candidate, with
    the terminal-vs-container read (generic `emits` leaves room to refine).
 5. **`--explain`** annotates each candidate with its signal source.
