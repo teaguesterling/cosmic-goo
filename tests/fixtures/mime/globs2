@@ -1,0 +1,9 @@
+# Minimal shared-mime-info globs2 fixture for the OS-MIME-DB importer test.
+# Format: priority:type:glob[:flags]. Host-independent on purpose.
+50:image/svg+xml:*.svg
+50:application/json:*.json
+50:text/csv:*.csv
+# These must be SKIPPED by the importer (not clean *.ext):
+60:application/x-sharedlib:*.so.[0-9]*
+50:image/x-gzeps:*.eps.gz
+50:text/x-credits:credits

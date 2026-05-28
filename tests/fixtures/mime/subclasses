@@ -1,0 +1,5 @@
+# Minimal shared-mime-info subclasses fixture (subtype supertype per line).
+# The marquee chain: image/svg+xml → application/xml → text/plain.
+image/svg+xml application/xml
+application/xml text/plain
+text/csv text/plain

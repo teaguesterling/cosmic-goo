@@ -18,7 +18,7 @@
 //!     load order (first match wins), not keyed.
 
 use serde_json::{json, Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 const COLLECTIONS_BY_NAME: &[&str] = &["types", "sources", "verbs", "adverbs", "aliases", "channels", "detectors", "checkers"];
@@ -201,16 +201,112 @@ fn core_contribution() -> Value {
     contrib(Path::new("<core>/core.toml"), Path::new("<core>"), &parsed)
 }
 
-/// Assemble the full registry: the embedded core, then all discovered plugins
-/// (later wins by name, so plugins override core). No cache.
+/// Assemble the full registry: embedded core, the OS MIME DB (opt-in), then all
+/// discovered plugins (later wins by name, so plugins override both). No cache.
 pub fn load_all() -> Value {
     let mut reg = merge(&empty_registry(), &core_contribution());
+    if let Some(osmime) = os_mime_contribution() {
+        reg = merge(&reg, &osmime);
+    }
     for file in discover() {
         if let Some(c) = load_one(&file) {
             reg = merge(&reg, &c);
         }
     }
     reg
+}
+
+// ---- OS MIME DB importer (shared-mime-info → [[types]]); see detection.md ----
+//
+// Opt-in via `COSMIC_GOO_MIME_DIRS` (colon-separated mime dirs). **Unset = no
+// import** — so conformance is deterministic and the populated host /usr/share/mime
+// never leaks into tests. Rust-only; bash is the frozen reference. Production sets
+// the var (packaging); tests point it at a fixture.
+
+/// The OS MIME contribution, or `None` when `COSMIC_GOO_MIME_DIRS` is unset/empty.
+fn os_mime_contribution() -> Option<Value> {
+    let dirs: Vec<PathBuf> = std::env::var("COSMIC_GOO_MIME_DIRS")
+        .ok()?
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    if dirs.is_empty() {
+        return None;
+    }
+    Some(import_mime_dirs(&dirs))
+}
+
+/// Parse shared-mime-info `globs2` + `subclasses` from `dirs` into a `[[types]]`
+/// contribution (extensions + `is_a`, `_source`-tagged) — the same shape a plugin
+/// emits, so `merge` and the declarative `is_subtype` consume it unchanged. A
+/// missing dir/file is skipped (off-desktop yields nothing).
+pub fn import_mime_dirs(dirs: &[PathBuf]) -> Value {
+    // name -> (extensions, is_a supertypes)
+    let mut types: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
+    for d in dirs {
+        if let Ok(t) = std::fs::read_to_string(d.join("globs2")) {
+            for (ty, ext) in parse_globs2(&t) {
+                types.entry(ty).or_default().0.insert(ext);
+            }
+        }
+        if let Ok(t) = std::fs::read_to_string(d.join("subclasses")) {
+            for (sub, sup) in parse_subclasses(&t) {
+                types.entry(sub).or_default().1.insert(sup);
+            }
+        }
+    }
+    let arr: Vec<Value> = types
+        .into_iter()
+        .map(|(name, (exts, isa))| {
+            let mut o = Map::new();
+            o.insert("name".into(), json!(name));
+            if !exts.is_empty() {
+                o.insert("extensions".into(), json!(exts.into_iter().collect::<Vec<_>>()));
+            }
+            if !isa.is_empty() {
+                o.insert("is_a".into(), json!(isa.into_iter().collect::<Vec<_>>()));
+            }
+            o.insert("_source".into(), json!("shared-mime-info"));
+            Value::Object(o)
+        })
+        .collect();
+    json!({ "types": arr })
+}
+
+/// `globs2` lines (`priority:type:glob[:flags]`) → `(type, ".ext")`, taking only
+/// clean single extensions; multi-dot / glob-meta / bare names are skipped.
+fn parse_globs2(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut f = line.splitn(3, ':');
+        let (_prio, Some(ty), Some(rest)) = (f.next(), f.next(), f.next()) else { continue };
+        let glob = rest.split(':').next().unwrap_or(rest); // drop any trailing :flags
+        if let Some(ext) = glob.strip_prefix("*.") {
+            if !ext.is_empty()
+                && ext.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-'))
+            {
+                out.push((ty.to_string(), format!(".{ext}")));
+            }
+        }
+    }
+    out
+}
+
+/// `subclasses` lines (`subtype supertype`) → `(sub, super)`; skip blank/`#`.
+fn parse_subclasses(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            Some((it.next()?.to_string(), it.next()?.to_string()))
+        })
+        .collect()
 }
 
 /// Build a registry from a single in-memory plugin TOML, mirroring the real
@@ -293,6 +389,44 @@ mod tests {
             ch.iter().any(|c| c["name"] == json!("json") && c["builtin"] == json!("json")),
             "core.toml must seed the json checker: {ch:?}"
         );
+    }
+
+    // ---- OS MIME DB importer ----
+    fn mime_fixture() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/mime")
+    }
+
+    #[test]
+    fn os_mime_import_parses_globs_and_subclasses() {
+        let c = import_mime_dirs(&[mime_fixture()]);
+        let types = c["types"].as_array().unwrap();
+        let find = |n: &str| types.iter().find(|t| t["name"] == json!(n));
+        // svg: clean extension + is_a, source-tagged
+        let svg = find("image/svg+xml").expect("svg type imported");
+        assert!(svg["extensions"].as_array().unwrap().contains(&json!(".svg")));
+        assert!(svg["is_a"].as_array().unwrap().contains(&json!("application/xml")));
+        assert_eq!(svg["_source"], json!("shared-mime-info"));
+        // the chain link + a couple of globs
+        assert!(find("application/xml").unwrap()["is_a"].as_array().unwrap().contains(&json!("text/plain")));
+        assert!(find("application/json").unwrap()["extensions"].as_array().unwrap().contains(&json!(".json")));
+        // SKIPPED: glob-meta (*.so.[0-9]*), bare name (credits), multi-dot (*.eps.gz)
+        assert!(find("application/x-sharedlib").is_none(), "glob-meta must be skipped");
+        assert!(find("text/x-credits").is_none(), "bare name must be skipped");
+        assert!(find("image/x-gzeps").is_none(), "multi-dot must be skipped");
+    }
+
+    #[test]
+    fn imported_is_a_feeds_is_subtype_transitively() {
+        let reg = merge(&empty_registry(), &import_mime_dirs(&[mime_fixture()]));
+        // the marquee payoff: svg IS text, transitively, via the imported chain
+        assert!(crate::mime::is_subtype("image/svg+xml", "text/plain", &reg));
+        assert!(crate::mime::is_subtype("text/csv", "text/plain", &reg));
+    }
+
+    #[test]
+    fn os_mime_import_yields_nothing_when_dir_absent() {
+        let c = import_mime_dirs(&[std::path::PathBuf::from("/nonexistent/mime/xyz")]);
+        assert!(c["types"].as_array().unwrap().is_empty());
     }
 
     #[test]
