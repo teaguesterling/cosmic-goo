@@ -15,7 +15,7 @@ Detection is **not** "parse the bytes to figure out what they are." It's reading
 the **cheap signals that come *with* the subject** — each proposes a weighted
 `(type, tier)` candidate — and letting the verb's `accepts` re-rank them. A
 "sniffer" is just a **signal-reader**. Signals are wrong sometimes; *right enough*
-mostly; and wrongness is absorbed by the re-ranking, by `@type` (override), and by
+mostly; and wrongness is absorbed by the re-ranking, by `--as` (override), and by
 a `300` on a genuine tie.
 
 ### The ladder
@@ -23,14 +23,19 @@ a `300` on a genuine tie.
 ```
 signal              source                       tier      authoritative?
 ------              ------                       ----      --------------
-@type               the user (`@image/png`)      certain   yes
+--as <type>         the user (explicit override) certain   yes
 [[sources]] emits   the resolver (apps→app type) certain   yes
 extension           the path (`.json`, `.csv`)   strong    yes
 HTTP Content-Type   the response header          strong    yes   (deferred — no fetch yet)
-structural parse    `serde_json` parses          strong    n/a (proof)
-libmagic            magic bytes (`file`)         medium    no
-[future] cmd sniffer an external parser           weak      no    (deferred)
+structural parse    an `is_a` detector parses    strong    n/a (proof)
+libmagic            a `what_is` detector (magic) medium    no
+[future] cmd detector an external is_a/what_is    weak      no    (impl deferred; interface stubbed)
 ```
+
+(`--as` is the explicit input-type override — what `@` did in earlier drafts;
+`@` is reserved for user aliases. The output representation moves to `--to`, the
+output file to `-o`; that flag reassignment reworks goo-protocol §12 and lands
+with the `--to`/`--on` destination slice.)
 
 `certain` / `strong` / `medium` / `weak` are **discrete tiers**, mapped to a
 weight in one place (like converter cost `Tier`). A tier is a property of the
@@ -45,7 +50,7 @@ formats don't need the deferred external-parser tier.
 
 The single distinction that keeps detection honest:
 
-- **Authoritative** signals (`@type`, source `emits`, extension, Content-Type)
+- **Authoritative** signals (`--as`, source `emits`, extension, Content-Type)
   state ground truth — the user said so, the resolver said so, the filesystem/
   server said so. Their candidates **bypass gating**.
 - **Inferential** signals (libmagic on bytes, structural parse, future heuristics)
@@ -70,7 +75,7 @@ candidate. Don't make libmagic conditionally authoritative.
 2. Drop inferential candidates that fail gating for this verb.
 3. Re-rank by the verb's `accepts` (subtype-aware), then by tier.
 4. **Highest tier wins**; ties broken by signal order (extension > Content-Type >
-   structural > libmagic). `@type` always wins (it's the override).
+   structural > libmagic). `--as` always wins (the explicit override).
 5. A genuine same-tier conflict between *authoritative* signals (extension says
    `text/csv`, a Content-Type says `application/json`) is a `300` — **deferred**;
    v1 takes the higher-listed signal and documents it. (Most "conflicts" aren't:
@@ -88,23 +93,56 @@ generic `emits` leaves room for a more-specific signal to win." A source emittin
 a specific type (`apps` → `application/vnd.cos-cli.app`) is already `certain`;
 nothing refines it.
 
+## Detectors — the `is_a` / `what_is` interface
+
+An *inferential* signal (the part that actually inspects content) is produced by a
+**detector**, of one of two shapes. Defining the interface now — even though the
+external (`cmd`) implementation is deferred — is what makes structural-parse and
+custom-parse first-class rather than special-cased:
+
+- **`is_a` → bool** — "is this content `<type>`?" A predicate for a *specific*
+  target type. **Demand-driven**: the engine asks "is this `application/json`?"
+  only when something wants JSON — so an `is_a` detector is *inherently gated*
+  (it runs for the type a verb specifically wants). Structural-parse-JSON is an
+  `is_a`.
+- **`what_is` → mimetype** — "what is this?" An open classifier returning a type.
+  libmagic is a `what_is`.
+
+Declared in **domain config**, with cheap **guards** so a detector never runs
+needlessly:
+
+- **general-type guard** — only run for a coarse class (`text/*`), so the JSON
+  `is_a` never fires on image bytes.
+- **peek guard** — a cheap first-bytes look (`starts with '{' or '['`) before the
+  full `is_a` parse.
+
+The built-ins implement *the same interface* a future plugin detector will: a
+custom `cmd` detector is just an `is_a`/`what_is` shelled to an external parser
+(the `weak` tier). So "stub it in" = ship the interface + the built-ins on it; a
+plugin detector slots in later with **no new machinery** — that's why the `cmd`
+tier is "interface stubbed, impl deferred," not fully deferred.
+
 ## Mechanism
 
-- **Signal *types* are built-in** (Rust): extension-reader, libmagic, structural-
-  parse. libmagic and structural-parse are hardcoded (no reason to make libmagic
-  pluggable).
+- **Signal *types* are built-in** (Rust): extension-reader, the libmagic
+  `what_is`, the structural-parse `is_a`. libmagic and structural-parse are
+  hardcoded (no reason to make libmagic pluggable).
 - **Signal *data* is plugin-declared** where it makes sense: a `[[types]]` entry
-  declares `extensions = [".json", ".jsonl"]`, feeding the extension-reader. No
-  new section — extensions are data on the type the plugin already defines.
+  declares `extensions = [".json", ".jsonl"]`, feeding the extension-reader; a
+  `[[domains]]` entry declares its detectors + guards. No content-parsing logic
+  in TOML — just which built-in detector applies and its guards (until `cmd`
+  detectors land).
 - `infer_candidates` (today's JSON-shape inference) **is** the structural-parse
-  signal-reader under this model — refactored into it, not added alongside.
+  `is_a` under this model — refactored into it, not added alongside.
 - `--explain` annotates each candidate with its signal: `application/json (via .json extension)`.
 
 ## Deferred (with why)
 
 - **HTTP Content-Type** — needs goo to fetch the URL; no fetch path yet.
-- **External-parser sniffers** (`[[sniffers]]` with a `cmd`, the `weak` tier) —
-  for exotic types a built-in signal can't touch; earns its fork/exec only then.
+- **External-parser detectors** — a `cmd`-backed `is_a`/`what_is` (the `weak`
+  tier) for exotic types a built-in can't touch. The *interface* is defined now
+  (above); only the fork/exec implementation is deferred — it earns its cost
+  only when a built-in signal genuinely can't decide.
 - **Coercion-reachable sniffing** — typing bare CSV so a JSON verb can consume it
   *via* `csv2json`. v1 sniffs only for *directly* wanted types
   ([negotiation.md](negotiation.md) inference⨯coercion).
