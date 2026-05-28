@@ -292,8 +292,8 @@ The first executor (slice 4) runs a `Plan` hop by hop, with these pinned rules:
   *inferential* signals (libmagic/parse), not *authoritative* ones (extension);
   and **`emits` types the *handle*, not the content** — a `TEXT` column or
   `inode/file` is a *hint* the detectors refine. `infer_for`'s JSON-shape is the
-  structural-parse `is_a` under that model. External (`cmd`) detectors and HTTP
-  Content-Type are deferred there.
+  `json` checker under that model (detectors classify, checkers verify — both
+  declared, `cmd` primary). HTTP Content-Type is deferred there.
 - **value as first-class** (§2.1) — until splits/joins or buffer-identity force it.
 - **surface as a *source*** (§2.6) — a capture converter (`grim: surface → image/png`)
   would give surface types outgoing edges (screenshot a window, then route it);

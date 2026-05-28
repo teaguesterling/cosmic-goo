@@ -157,17 +157,17 @@ into the registry too. A raw token resolves through **two declared layers**:
 name  = "url"
 emits = "text/x-uri"
 shape = { match = "^[A-Za-z][A-Za-z0-9+.\\-]*://", weight = 1.0 }
-impl.builtin = "url"        # the RESOLVER primitive (a separate role; see below)
+builtin = "url"        # the RESOLVER primitive (a separate role; see below)
 [[domains]]
 name  = "file"
 emits = "inode/file"
 shape = { match = "^(\\./|\\.\\./|/|~/)", weight = 1.0 }
-impl.builtin = "file"
+builtin = "file"
 [[domains]]
 name  = "text"
 emits = "text/plain"
 shape = { match = "fallback" }   # catch-all, lowest priority
-impl.builtin = "text"
+builtin = "text"
 ```
 
 **`infer` becomes a declared dispatcher domain** (new in this slice — the named
@@ -190,10 +190,10 @@ is a bug this fixes.
 
 **Two narrow-native roles, two fields** — keep them distinct: `shape.match` (a
 **regex string** — or, later, a named matcher) decides *routing*; the domain's
-**resolver** (`impl.builtin` for the I/O primitives `file`/`clip`/`sel`/`stdin`, or
+**resolver** (`builtin` for the I/O primitives `file`/`clip`/`sel`/`stdin`, or
 `list_cmd`/`cmd` for data sources) decides *what resolution does*. Same discipline
 as detection's native registry: **v1 ships every shape rule as a regex — zero
-`impl.builtin` *matchers*** (the two predicates above are regex-shaped on purpose);
+`builtin` *matchers*** (the two predicates above are regex-shaped on purpose);
 a named matcher is added only if a future shape outgrows regex.
 
 ## Two axes: domain (role) vs MIME (content) — and where categories live
