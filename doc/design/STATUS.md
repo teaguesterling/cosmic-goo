@@ -19,10 +19,12 @@ linked below; this is just "we've built up through here."
 | **Real-verb input coercion** — `goo VERB X` negotiates when X's type isn't accepted (`json-keys data.csv` → csv2json → json-keys); no gap → unchanged legacy path; no route → 415 | **built** (Rust) | `exec.rs`, `cmd_verb`; `execute.bats` |
 | **Terminology** — reconciled to two: **`channel`** (the `{process}` resource) + **`Using:`** (the slot); "instrument" = the case-word; `via` = legacy (decomposes to `Using:`+`To:`). Verbs declare `usage = [<channel>…]` (the noun of the use-axis) | **built** (Rust + simulator) | goo-protocol §3 Terminology; `verb_edges` |
 | **Multi-instrument execution** — a `usage` verb's chosen channel `cmd` runs at the verb step, in the verb's context (`{subject.*}`/`{verb.*}`); usage verbs always negotiate | **built** (Rust) | `exec.rs`, `verbs::render_template_in_context`; `execute.bats` |
-| **`--using` / `--to` / `--on` run-path overrides** (pin the channel/destination, override the planner) | **designed** | [goo-protocol §12](goo-protocol.md); `claude-routing.toml` |
-| **One-context channel substitution** (unify usage `{subject.*}` and coercion `{in.path}` into one model) | **designed** | [negotiation §2.3](negotiation.md) |
-| **`--to`/`--on` destination override on the run path; mode-aware (non-temp-file) buffering** | **designed** | [negotiation §5](negotiation.md) |
-| **Coercion as built** (auto-route on a type gap; the planner *plans* it, nothing *runs* it yet) | **designed** | [negotiation](negotiation.md), [goo-protocol §13](goo-protocol.md) |
+| **Structural-inference gating** (#3) — a sniffed/inferred structured type wins only for a verb that *specifically* wants it (not a generic `text/*` verb) | **built** (Rust) | `mime::infer_for` |
+| **Tool-aware planner** (#2) — a channel declares `tool`; the planner routes around uninstalled tools, or 415s with an actionable "install: X" hint; `--explain` is tool-agnostic | **built** (Rust) | `negotiation::plan_request`, `channel_tools` |
+| **`--using` run-path override** (#1) — pin the verb's `usage` channel, overriding the planner's pick (a constraint, validated) | **built** (Rust) | `plan_request_using`, `cmd_verb`; `execute.bats` |
+| **Sniffers** — pluggable type detection (shell out to real parsers; the proper home for CSV/YAML/XML input typing), re-ranked under the gating rule | **designed** | [negotiation §7](negotiation.md) |
+| **`--to`/`--on` resource destinations** — route to a named `goo://` resource (display/chat/clipboard); the run-path `From:` named-return-channel that lets `via` decompose | **designed** | [goo-protocol §12](goo-protocol.md); `claude-routing.toml` |
+| **One-context channel substitution** (unify usage `{subject.*}` and coercion `{in.path}`) + **mode-aware buffering** (stream/bytes, not always temp-file) | **designed** | [negotiation §2.3](negotiation.md), [§5](negotiation.md) |
 | **Output value model** — value (path/bytes/stream/ref/**live surface**) as first-class vs a marshalling-mode annotation | **designed** | [negotiation §2.1](negotiation.md) |
 
 Bash is frozen at the **pre-negotiation** behavior and is the reference for
