@@ -36,6 +36,7 @@ their bats tests skip on bash (the suite is 250/250 on both engines).
 | Piece | State | Where |
 |---|---|---|
 | `goo://` addressing — domains, value/search, sigils, `?refine` | **built** | [addressing-and-protocol](addressing-and-protocol.md) |
+| **Declared shape-dispatch** — `infer` becomes a data-driven dispatcher; per-domain `shape.match` regexes + sigils-then-shape-then-`text` pipeline replace `canonicalize`'s hardwired rules; type via `emits` (retires `detect_content`'s `looks_like_uri`); deterministic pick (ties = load-time `validate` warning, not `300`); Rust-first, bash-parity-checked | **designed** | [addressing-and-protocol §shape-dispatch](addressing-and-protocol.md) |
 | GOO default-verb dispatch (`goo <addr>` runs the type's `default_for`) | **built** | `dispatch.rs` |
 | Content-dispatch `[[dispatch]]`, completion, filters, aliases | **built** | [plugin-authoring](../plugin-authoring.md) |
 | Presentation negotiation — `Accept:`/`From:`, `--as`/`--to`/`--on`/`--using`, inherited-channel default | **designed** | [goo-protocol §12](goo-protocol.md) |

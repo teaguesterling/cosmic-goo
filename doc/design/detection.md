@@ -5,6 +5,14 @@ half of "the domain *resolves*, the MIME *classifies*"
 ([addressing-and-protocol.md](addressing-and-protocol.md)), feeding inference +
 negotiation ([negotiation.md](negotiation.md), [goo-protocol §6](goo-protocol.md)).
 
+Its sibling is the **shape** layer — routing a raw *token* to a domain (`./x`→file,
+`https://x`→url) before any byte is read — which follows the same
+*no-privileged-hardwired-types* principle via declared shape rules
+([addressing-and-protocol §shape-dispatch](addressing-and-protocol.md)).
+`detect_content`'s old `looks_like_uri → text/x-uri` sniff retires *there*: shape
+routes URL-shaped tokens to `url` (which `emits text/x-uri`), leaving this layer to
+type only resolved bytes.
+
 > **Status: design.** This doesn't rewire the planner — it makes *uniform and
 > explicit* what's already half-built. `infer_for(verb, content)` already returns
 > weighted choices and #3 gating already discriminates specific-vs-generic; this

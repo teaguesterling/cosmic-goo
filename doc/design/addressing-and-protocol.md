@@ -136,6 +136,66 @@ empty authority route through `infer`; searching is always an explicit act.
 `file` path encoding: absolute by default, `~` = home, `.`/`..` = cwd-relative
 (context-dependent, may not exist).
 
+### Shape-dispatch is *declared*, not hardwired
+
+`infer`'s dispatch (`./~//`→file, `scheme://`→url, else text) is the last type
+decision still baked into Rust (`canonicalize`); `infer` isn't even a domain yet —
+the dispatch lives unnamed. Closing the *no-privileged-hardwired-types* principle
+([detection.md](detection.md)) for the addressing layer means lifting these rules
+into the registry too. A raw token resolves through **two declared layers**:
+
+1. **Sigils** — *prefix-strip* operations, evaluated **first**, in declared order,
+   **mutually exclusive**. Built-in `^`→clip, `+`→text, `:`→explicit-domain ship in
+   a core `[[sigils]]` (user aliases like `@` already live there). A sigil strips
+   its mark and routes the remainder.
+2. **Shape rules** — for an *un-sigiled* token, **whole-token predicates** declared
+   per value-domain, producing **weighted candidates**; `text` is the explicit
+   fallback.
+
+```toml
+[[domains]]
+name  = "url"
+emits = "text/x-uri"
+shape = { match = "^[A-Za-z][A-Za-z0-9+.\\-]*://", weight = 1.0 }
+impl.builtin = "url"        # the RESOLVER primitive (a separate role; see below)
+[[domains]]
+name  = "file"
+emits = "inode/file"
+shape = { match = "^(\\./|\\.\\./|/|~/)", weight = 1.0 }
+impl.builtin = "file"
+[[domains]]
+name  = "text"
+emits = "text/plain"
+shape = { match = "fallback" }   # catch-all, lowest priority
+impl.builtin = "text"
+```
+
+**`infer` becomes a declared dispatcher domain** (new in this slice — the named
+home for what `canonicalize` does): it matches the token against the value-domains'
+shape rules and picks the **highest-weight** candidate **deterministically**,
+`text` last. Addressing must choose **one** resolver to even begin — so there is
+**no `300` here**: a tie between two *non-fallback* rules is a `goo validate`
+**load-time warning**, not a runtime status. (This is where shape and *content*
+detection diverge: detection can keep candidates plural for an already-resolved
+subject and `300` on a true tie; shape has to pick the resolver itself.)
+
+**Type comes from the matched domain's `emits`** — `url`→`text/x-uri`,
+`file`→`inode/file`, `text`→`text/plain` — *not* a content sniff. This **retires
+`detect_content`'s hardwired `looks_like_uri → text/x-uri`**: the `url` shape rule +
+its `emits` does the job, and `detect_content` narrows to pure **content** typing
+([detection.md](detection.md)) on resolved bytes — the two layers stop overlapping.
+*Seam:* `+http://x` **forces** text via the sigil, so it stays `text/plain` even
+though URL-shaped — the correct meaning of `+`; today's `text/x-uri` for `+http://x`
+is a bug this fixes.
+
+**Two narrow-native roles, two fields** — keep them distinct: `shape.match` (a
+**regex string** — or, later, a named matcher) decides *routing*; the domain's
+**resolver** (`impl.builtin` for the I/O primitives `file`/`clip`/`sel`/`stdin`, or
+`list_cmd`/`cmd` for data sources) decides *what resolution does*. Same discipline
+as detection's native registry: **v1 ships every shape rule as a regex — zero
+`impl.builtin` *matchers*** (the two predicates above are regex-shaped on purpose);
+a named matcher is added only if a future shape outgrows regex.
+
 ## Two axes: domain (role) vs MIME (content) — and where categories live
 
 Two type-ish axes run through goo; keeping them distinct keeps the namespace clean.
@@ -257,12 +317,24 @@ built-in scheme-handlers. Adopting it is a multi-commit arc:
    value/search, kind-first domains);
 2. migrate plugins' `[[sources]]` → `[[domains]]`, shipping the built-in value
    domains (`url`/`file`/`text`/`clip`/`sel`/`stdin`) in a core plugin;
-3. re-green the Rust `address` tests + `tests/address.bats` + `cli.bats`;
-4. update docs (cli-reference, plugin-authoring) and the Rust scoping doc
+3. **declared shape-dispatch** (above) — the `infer` dispatcher + per-domain
+   `shape.match` regexes, retiring `canonicalize`'s hardwired rules and
+   `detect_content`'s `looks_like_uri`;
+4. re-green the Rust `address` tests + `tests/address.bats` + `cli.bats`;
+5. update docs (cli-reference, plugin-authoring) and the Rust scoping doc
    (`Address { domain, path, matrix, refine }`).
 
-**Behavior change to flag:** today `:source:input` is search; value-first /
+**bash parity — order matters.** Unlike content detection (Rust-only), the address
+layer is **shared**: `lib/address.sh` is the *frozen reference*. So the shape-rule
+registry lands in **Rust first**, with `lib/address.sh` keeping its hardwired ports
+**verbatim** and `address.bats`/`cli.bats` as the **parity check**; a later
+(optional — bash is frozen) slice has bash read the same declared rules. Don't
+refactor both engines at once.
+
+**Behavior changes to flag:** today `:source:input` is search; value-first /
 search-fallback subtly changes resolution semantics that existing habits depend on.
+And `+http://x` becomes `text/plain` (the sigil forces text) rather than today's
+`text/x-uri` — a fix, but a visible one.
 
 The payoff (xdg registration, OS handoff, auto-linkify, the HTTP daemon) compounds
 with a consumer — so adopt it alongside `goo-compose`/the launcher, not in a vacuum.
