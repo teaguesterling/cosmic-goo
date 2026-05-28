@@ -375,6 +375,51 @@ until then the override lives only in the model (the legacy `@type` form in
 **Deferred:** multi-candidate-for-files (verb-`accepts`-driven disambiguation);
 proper glob-priority tie-break; the CLI override flag.
 
+## Slice 5 — `--explain` annotates the signal source
+
+**The deeper deliverable is fixing a typing divergence.** `--explain` predates
+slices 2a/4 — it types via `detect_path`/`detect_content` *directly*, bypassing the
+extension signal and the checkers. So annotating what it computes today would
+*lie* (a `.json` file would read "via libmagic" while the run uses the extension).
+The fix: route `--explain` through the **same detection functions** the run uses,
+and report which one fired. *The annotation is the visible part; un-diverging the
+typing is the real work.*
+
+**Shared typing, caller-built values.** Extract `resolve_file`'s detection half
+into **`address::type_for_path(path, reg) -> (type, source)`** (declared extension
+→ `"extension"`, else libmagic → `"libmagic"`); `resolve_file` uses it for the type
+(its `Value` is unchanged — no `_type_source` field, since nothing reads it).
+Add **`mime::infer_for_with_source(content, verb, reg) -> Option<(type, "checker")>`**
+(a thin wrapper around `infer_for`). `--explain` keeps its **own** dispatcher — a
+debug tool types whatever path you hand it, so it must *not* narrow to the run's
+`is_explicit` rule — but each branch now calls the shared function:
+
+- `@type` → `("…", "explicit")`
+- an existing path → `type_for_path` → `"extension"` | `"libmagic"`
+- bare content → `infer_for_with_source` (`"checker"`) → else `detect_content`
+  (`"content"`)
+
+**Source vocabulary (coarse, named):** `explicit` · `emits` · `extension` ·
+`checker` · `libmagic` · `content`. The exact *checker name* (`via geojson
+checker`) is deferred — it needs `infer_for` to return the name, rippling to three
+call sites.
+
+**Output — a new `subject:` line** carries the annotation (today `--explain` shows
+the Accept profile + route but *no* subject line):
+
+```
+Accept: text/x-ansi  …
+subject: application/json (via extension)
+application/json →(json-keys)→ application/json   (cost 0)
+```
+
+The annotation sits on the *subject* line, not the route arrow (verb plumbing, not
+detection). Purely additive — existing `explain.bats` substring assertions are
+unaffected.
+
+**Deferred:** the checker *name*; `emits` provenance for `:domain` subjects (a
+one-line add when `--explain` grows domain-subject support).
+
 ## Deferred (with why)
 
 - **HTTP Content-Type** — needs goo to fetch the URL; no fetch path yet.
