@@ -255,9 +255,11 @@ it — hence `Using:`.)
 **Inference is one engine, used everywhere:** (a) resolve a bare subject, (b)
 decide whether a loose `--with <token>` is a handler (→ `Using:`) or a flag, (c)
 drive content-dispatch verb routing. Two layers feed it — **shape** (`./ ~/ /` →
-file, `scheme://` → url, else → text) and **content** (libmagic / `xdg-mime` →
-MIME). Inference may be uncertain → it returns **weighted choices**, and an
-ambiguous inference is just a `300` ("the file, or the literal text?").
+file, `scheme://` → url, else → text) and **content** — the MIME the **signal
+ladder** decides ([detection.md](detection.md): `@type`/source `emits`/extension/
+Content-Type/structural/libmagic, weighted, re-ranked by `accepts`). Inference may
+be uncertain → it returns **weighted choices**, and an ambiguous inference is just
+a `300` ("the file, or the literal text?").
 
 **A query subject denotes a set; resolution is a phase.** Cardinality lives in the
 matrix (engine-addressing namespace; keep the explicit `q=` key so other engine

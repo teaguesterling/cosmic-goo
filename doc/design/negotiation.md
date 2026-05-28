@@ -284,23 +284,15 @@ The first executor (slice 4) runs a `Plan` hop by hop, with these pinned rules:
 
 ## 7. What v1 does *not* model (deferred, with why)
 
-- **Sniffers — pluggable type detection** (the proper home for "more input
-  shapes"). Today the input-typing layer is hardcoded: `infer_for`'s JSON-shape
-  candidate + libmagic (`detect_path`/`detect_content`). A **sniffer** generalizes
-  these — a plugin that *examines content and proposes a typing* `(mime, weight)`,
-  re-ranked by the verb's `accepts` under the existing gating rule (a sniffed type
-  earns its seat only for a verb that *specifically* wants it, never a generic
-  `text/*` verb — the prerequisite shipped in the #3 gating fix). A sniffer can
-  **shell out to a real parser** (`mlr --icsv check`, a YAML loader, `file`),
-  so CSV/YAML/XML get *parse-strong* detection instead of the unsafe inline
-  heuristics Rust can't do reliably. It's a distinct role — not a verb (which
-  *acts*) nor a converter (which transforms *bytes*); a sniffer *re-labels the
-  type* by inspecting content. Likely a `[[sniffers]]` section feeding the
-  input-typing layer. **This is the real "real-world e2e" lever for piped
-  structured content** (a raw CSV stream → a CSV verb), gated behind a proper
-  design pass. (The CLI/simulator can't probe a sniffer that shells out the way
-  it can't probe PATH — sniffer detection is a CLI/daemon concern, not a
-  browser-simulator one.)
+- **Type detection — the signal ladder** ([detection.md](detection.md)). How a
+  subject gets its type: a confidence-ordered ladder of *cheap signals*
+  (`@type` → source `emits` → extension → Content-Type → structural-parse →
+  libmagic), each a weighted candidate, re-ranked by the verb's `accepts`. Cheap
+  signals (extension/libmagic) cover CSV/YAML with no parser; the §3 gating rule
+  applies only to *inferential* signals (libmagic/parse), not *authoritative*
+  ones (extension/source `emits`). `infer_for`'s JSON-shape is one signal-reader
+  under that model. External-parser sniffers (`[[sniffers]]` + `cmd`) and HTTP
+  Content-Type are deferred there.
 - **value as first-class** (§2.1) — until splits/joins or buffer-identity force it.
 - **surface as a *source*** (§2.6) — a capture converter (`grim: surface → image/png`)
   would give surface types outgoing edges (screenshot a window, then route it);
