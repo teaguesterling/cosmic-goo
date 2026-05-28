@@ -1,137 +1,178 @@
 # Type detection — the signal ladder
 
-How goo decides a subject's MIME type. This is the **classify** half of "the
-domain *resolves*, the MIME *classifies*" ([addressing-and-protocol.md](addressing-and-protocol.md)),
-and the input-typing layer that feeds inference + negotiation
-([negotiation.md](negotiation.md), [goo-protocol §6](goo-protocol.md)).
+How goo decides the **content type** a verb operates on. This is the *classify*
+half of "the domain *resolves*, the MIME *classifies*"
+([addressing-and-protocol.md](addressing-and-protocol.md)), feeding inference +
+negotiation ([negotiation.md](negotiation.md), [goo-protocol §6](goo-protocol.md)).
 
-> **Status: design.** Supersedes the "sniffers" bullet in negotiation §7. v1 is
-> built-in signal-readers + plugin-declared extension data; the heavier pieces
-> (external-parser sniffers, HTTP fetch) are deferred (last section).
+> **Status: design.** This doesn't rewire the planner — it makes *uniform and
+> explicit* what's already half-built. `infer_for(verb, content)` already returns
+> weighted choices and #3 gating already discriminates specific-vs-generic; this
+> doc puts every signal (extension, Content-Type, structural, libmagic, handle
+> `emits`) into that one candidate model and corrects how `emits` is read. v1 is
+> built-in detectors + plugin-declared extension data; external (`cmd`) detectors
+> and HTTP fetch are deferred (last section).
 
-## The model: weighted candidates from cheap signals
+## The model: "is this usable as what I need?", not "what is this?"
 
-Detection is **not** "parse the bytes to figure out what they are." It's reading
-the **cheap signals that come *with* the subject** — each proposes a weighted
-`(type, tier)` candidate — and letting the verb's `accepts` re-rank them. A
-"sniffer" is just a **signal-reader**. Signals are wrong sometimes; *right enough*
-mostly; and wrongness is absorbed by the re-ranking, by `--as` (override), and by
-a `300` on a genuine tie.
+The instinct is to *classify* a subject — compute its one true type, then route.
+That instinct breaks on real content. An SVG is, simultaneously and correctly,
+`image/svg+xml`, `text/xml`, and `text/plain` — there is no single right answer to
+"what is this." There *is* a right answer to **"is this an image I can render?"**
+(yes) and **"is this text I can grep?"** (yes), asked by *different verbs*, both
+true on the same bytes.
 
-### The ladder
+So detection produces **weighted candidates**, not a verdict, and the verb's
+`accepts` *selects* among them. Two detector shapes serve the two questions:
+
+- **`what_is` → mimetype** — an open classifier, for *unambiguous* content. A PNG
+  is just a PNG; libmagic answers and we're done.
+- **`is_a` → bool** — "is this `<type>`?", a predicate for a *specific* target.
+  This carries the contextual / multi-typed load: `is_a("image/svg+xml")` asked
+  by `view`, `is_a("text/plain")` asked by `grep` — both pass, the operation
+  picks the question. `is_a` is **demand-driven**, so it's inherently gated (it
+  runs only for a type a verb asked for) — which also *bounds* the cost of deep
+  inspection (see below).
+
+## The ladder
+
+Each signal proposes a `(type, tier)` candidate:
 
 ```
 signal              source                       tier      authoritative?
 ------              ------                       ----      --------------
---as <type>         the user (explicit override) certain   yes
-[[sources]] emits   the resolver (apps→app type) certain   yes
+explicit override   the user                     certain   yes   (flag spelling = flag-surface pass; currently @type)
+handle `emits`      the resolver                 certain   handle only — a HINT for content (see below)
 extension           the path (`.json`, `.csv`)   strong    yes
 HTTP Content-Type   the response header          strong    yes   (deferred — no fetch yet)
-structural parse    an `is_a` detector parses    strong    n/a (proof)
+structural parse    an `is_a` detector parses    strong    no    (inferential; high-confidence-when-positive)
 libmagic            a `what_is` detector (magic) medium    no
-[future] cmd detector an external is_a/what_is    weak      no    (impl deferred; interface stubbed)
+[future] cmd detector an external is_a/what_is    weak      no    (interface stubbed; impl deferred)
 ```
 
-(`--as` is the explicit input-type override — what `@` did in earlier drafts;
-`@` is reserved for user aliases. The output representation moves to `--to`, the
-output file to `-o`; that flag reassignment reworks goo-protocol §12 and lands
-with the `--to`/`--on` destination slice.)
+`certain` / `strong` / `medium` / `weak` are **discrete tiers** mapped to a weight
+in one place (like converter cost `Tier`). A tier is a property of the **signal**,
+not the match — extension is `strong` because *extensions are strong*. No numeric
+confidence scale.
 
-`certain` / `strong` / `medium` / `weak` are **discrete tiers**, mapped to a
-weight in one place (like converter cost `Tier`). A tier is a property of the
-**signal**, not the match — extension is `strong` because *extensions are
-strong*, not because a particular `.json` matched. No numeric confidence scale.
+Cheap signals cover what structural parsing can't: **CSV and YAML are detected by
+extension or libmagic — no parser.**
 
-The cheap signals cover what structural parsing can't: **CSV and YAML are
-detected by extension (`.csv`) or libmagic — no parser** — which is why those
-formats don't need the deferred external-parser tier.
+## `emits` types the handle, not the content
+
+The correction that motivated this rewrite. A `[[sources]] emits` declaration is
+authoritative — **about the handle**. For `apps`, the handle's value *is* its
+type (`application/vnd.cos-cli.app`): terminal, nothing to refine. But for `files`
+the handle is `inode/file`, and for a `database` column the handle is a
+text/blob-valued cell — and **the bytes inside are a different question.** A
+`TEXT` column can hold SVG, JSON, or CSV; the schema types the *column*, not the
+*value*.
+
+So `emits` is **content-authoritative only when it's terminal** (a specific,
+opaque type). When it's a **container** type — `inode/file`, or a generic
+`text/*`/`application/octet-stream` cell — it's a *hint*, and content detection
+refines it. This is the same rule as "refinement fires when `emits` is generic,"
+now stated with the container insight: a `TEXT` column is generic *with respect to
+its bytes* even though `text/plain` looks like a real MIME. **No new schema** —
+`emits` stays one declaration; this is purely how it's read for content questions.
 
 ## Authoritative vs inferential — and where gating applies
 
-The single distinction that keeps detection honest:
-
-- **Authoritative** signals (`--as`, source `emits`, extension, Content-Type)
-  state ground truth — the user said so, the resolver said so, the filesystem/
-  server said so. Their candidates **bypass gating**.
-- **Inferential** signals (libmagic on bytes, structural parse, future heuristics)
-  are *guessing*. Their candidates **go through the §3 gating rule**: a structured
+- **Authoritative** (the explicit override, *terminal* `emits`, extension,
+  Content-Type) state ground truth — candidates **bypass gating**.
+- **Inferential** (libmagic, structural parse, future `cmd` detectors) are
+  *guessing* — candidates go through the **#3 gating rule**: a structured
   candidate wins only for a verb that accepts it *specifically* (a pattern that
-  doesn't also accept `text/plain`), never a generic `text/*` verb.
+  doesn't also subsume `text/plain`), never a generic `text/*` verb.
 
-This resolves the asymmetry: a `.json` file handed to a `text/*` verb is correctly
-`application/json` (authoritative extension; `application/json is_a text/plain`,
-so the text verb consumes it) — gating doesn't fire. But a bare `{"k":1}` literal
-handed to a `text/*` verb stays `text/plain` (inferential structural-parse, gated
-out). Same JSON, different signal *nature*, correct outcome both ways.
+A `.json` file handed to a `text/*` verb is correctly `application/json`
+(authoritative extension; `application/json is_a text/plain`, so the text verb
+consumes it) — gating doesn't fire. A bare `{"k":1}` literal handed to a `text/*`
+verb stays `text/plain` (inferential structural-parse, gated out). Same JSON,
+different signal *nature*, correct both ways. (libmagic is *always* inferential —
+even on a path it reads magic bytes; when an extension is also present, the
+extension carries the authoritative load.)
 
-**libmagic is always inferential** — even on a file path it's reading magic bytes,
-i.e. guessing. When the file also has an extension, *extension* carries the
-authoritative load; libmagic is a corroborating (or conflicting) inferential
-candidate. Don't make libmagic conditionally authoritative.
+## Multi-membership is only as real as the lattice declares
 
-## Resolution
+The SVG "it's both an image and text" claim does **not** fall out for free. It
+works only if the registry encodes the relationships — either:
 
-1. Gather candidates from every applicable signal.
-2. Drop inferential candidates that fail gating for this verb.
-3. Re-rank by the verb's `accepts` (subtype-aware), then by tier.
-4. **Highest tier wins**; ties broken by signal order (extension > Content-Type >
-   structural > libmagic). `--as` always wins (the explicit override).
-5. A genuine same-tier conflict between *authoritative* signals (extension says
-   `text/csv`, a Content-Type says `application/json`) is a `300` — **deferred**;
-   v1 takes the higher-listed signal and documents it. (Most "conflicts" aren't:
-   extension `text/csv` + libmagic `text/plain` agree that it's text, libmagic
-   just less specific.)
+- detection produces **independent candidates** from different signals (libmagic
+  → `text/xml`, an `is_a("image/svg+xml")` probe → yes), so a `text/*` verb
+  matches the text candidate and `view` matches the image candidate; **or**
+- the lattice carries the **subtype chain** (`image/svg+xml is_a … is_a
+  text/plain`) via a declared `is_a`.
 
-## Where sniffing adds value (refinement falls out)
+Neither is in the registry today (only `json → text/plain`; the `+xml` suffix rule
+is same-top-level only — `image/svg+xml` does **not** reach `text/plain` without
+an explicit declaration). So SVG is the *illustrative principle*; making goo
+actually treat one as both requires those declarations. The doc's promise is the
+**mechanism** (candidates + `accepts`-selection), not that any given type is
+pre-wired multiply.
 
-A resolved entity already carries a `certain` type from its source's `emits`.
-**Sniffing only adds value when that `emits` is *generic*** — `files` emits
-`inode/file`, which extension/libmagic refine to `image/png` — or when there's
-**no source at all** (bare content). So the earlier "bare content vs entity
-refinement" scope question isn't a separate decision: refinement is simply "a
-generic `emits` leaves room for a more-specific signal to win." A source emitting
-a specific type (`apps` → `application/vnd.cos-cli.app`) is already `certain`;
-nothing refines it.
+## Resolution — one procedure
+
+Cheap signals run **eagerly**; `is_a` probes run **lazily**, triggered by the
+verb's `accepts`. (That's all "interleaving" means: cheap upfront, expensive
+on-demand — not detection calling the planner or vice-versa.)
+
+1. Gather authoritative candidates eagerly: explicit override, terminal handle
+   `emits`, extension, Content-Type (and libmagic if content is already
+   materialized).
+2. For each pattern in the verb's `accepts`, if no authoritative candidate
+   satisfies it, attempt the matching inferential `is_a` probe (guarded; #3-gated
+   for non-specific patterns).
+3. Keep only candidates whose type satisfies `accepts` (subtype-aware via the
+   lattice).
+4. Among those, prefer by tier (`certain` → `strong` → `medium` → `weak`), then a
+   signal-priority tiebreak.
+5. Equal tier **and** equal specificity → `300` (ambiguous — "the file, or the
+   literal?").
+
+Detection's job **ends** at "here are the candidates the verb could use." When a
+verb's `accepts` lists several patterns and the content matches more than one
+(`image/*, text/*` on an SVG), detection does **not** break that tie — the
+existing **planner's cost model** does (render-from-SVG-as-image vs -as-text →
+cost picks). That keeps detection small and avoids a second routing brain.
+
+**Materialization:** an `is_a` probe needs the content in hand — for a file a
+read, for a column the query you were already making to use the value, for a
+stream it composes with the executor's buffer/peek. The cheap authoritative
+signals (extension, Content-Type, `emits`) deliberately type *without* fetching;
+introspection is the on-demand fallback, so "cheap first" is also "fetch-last."
 
 ## Detectors — the `is_a` / `what_is` interface
 
-An *inferential* signal (the part that actually inspects content) is produced by a
-**detector**, of one of two shapes. Defining the interface now — even though the
-external (`cmd`) implementation is deferred — is what makes structural-parse and
-custom-parse first-class rather than special-cased:
-
-- **`is_a` → bool** — "is this content `<type>`?" A predicate for a *specific*
-  target type. **Demand-driven**: the engine asks "is this `application/json`?"
-  only when something wants JSON — so an `is_a` detector is *inherently gated*
-  (it runs for the type a verb specifically wants). Structural-parse-JSON is an
-  `is_a`.
-- **`what_is` → mimetype** — "what is this?" An open classifier returning a type.
-  libmagic is a `what_is`.
-
-Declared in **domain config**, with cheap **guards** so a detector never runs
-needlessly:
+Defining the interface now — even though the external `cmd` implementation is
+deferred — is what keeps structural-parse and custom-parse first-class instead of
+special-cased. A detector is an `is_a`→bool or a `what_is`→mime, with cheap
+**guards** so it never runs needlessly:
 
 - **general-type guard** — only run for a coarse class (`text/*`), so the JSON
   `is_a` never fires on image bytes.
-- **peek guard** — a cheap first-bytes look (`starts with '{' or '['`) before the
-  full `is_a` parse.
+- **peek guard** — a cheap first-bytes look before the full parse. (Guards are a
+  heuristic on a heuristic; a wrong guard is a *tolerated* false-negative, in
+  keeping with "right enough.")
 
-The built-ins implement *the same interface* a future plugin detector will: a
-custom `cmd` detector is just an `is_a`/`what_is` shelled to an external parser
-(the `weak` tier). So "stub it in" = ship the interface + the built-ins on it; a
-plugin detector slots in later with **no new machinery** — that's why the `cmd`
-tier is "interface stubbed, impl deferred," not fully deferred.
+The built-ins implement the *same* interface a future plugin detector will (an
+external `cmd` is just an `is_a`/`what_is` shelled out, the `weak` tier) — so the
+interface ships and only the fork/exec is deferred; a plugin detector slots in
+with **no new machinery**.
 
 ## Mechanism
 
-- **Signal *types* are built-in** (Rust): extension-reader, the libmagic
-  `what_is`, the structural-parse `is_a`. libmagic and structural-parse are
-  hardcoded (no reason to make libmagic pluggable).
-- **Signal *data* is plugin-declared** where it makes sense: a `[[types]]` entry
-  declares `extensions = [".json", ".jsonl"]`, feeding the extension-reader; a
-  `[[domains]]` entry declares its detectors + guards. No content-parsing logic
-  in TOML — just which built-in detector applies and its guards (until `cmd`
-  detectors land).
+- **Detector *types* are built-in** (Rust): extension-reader, the libmagic
+  `what_is`, the structural-parse `is_a`. They apply **generally**, gated by their
+  guards — **not** copy-declared per domain. (libmagic isn't pluggable; there's no
+  reason.)
+- **What a domain/source contributes** is *signal availability* (a path exposes an
+  extension; a response exposes a Content-Type) and its handle `emits` — plus,
+  later, an optional custom `cmd` detector. It does **not** re-declare the
+  built-ins.
+- **Signal data is plugin-declared** where it makes sense: a `[[types]]` entry
+  declares `extensions = [".json", ".jsonl"]`, feeding the extension-reader. No
+  new section — extensions are data on the type the plugin already defines.
 - `infer_candidates` (today's JSON-shape inference) **is** the structural-parse
   `is_a` under this model — refactored into it, not added alongside.
 - `--explain` annotates each candidate with its signal: `application/json (via .json extension)`.
@@ -139,24 +180,24 @@ tier is "interface stubbed, impl deferred," not fully deferred.
 ## Deferred (with why)
 
 - **HTTP Content-Type** — needs goo to fetch the URL; no fetch path yet.
-- **External-parser detectors** — a `cmd`-backed `is_a`/`what_is` (the `weak`
-  tier) for exotic types a built-in can't touch. The *interface* is defined now
-  (above); only the fork/exec implementation is deferred — it earns its cost
-  only when a built-in signal genuinely can't decide.
-- **Coercion-reachable sniffing** — typing bare CSV so a JSON verb can consume it
-  *via* `csv2json`. v1 sniffs only for *directly* wanted types
-  ([negotiation.md](negotiation.md) inference⨯coercion).
-- **Same-tier authoritative conflict → `300`** — v1 picks higher-listed.
-- **Context-demotion of a signal** (a `.json` extension whose libmagic disagrees
-  *and* parse fails dropping below `strong`) — v1 keeps extension `strong`.
+- **External (`cmd`) detectors** — the `weak` tier, for exotic types a built-in
+  can't decide. Interface defined above; only the fork/exec is deferred.
+- **Coercion-reachable detection** — typing bare CSV so a JSON verb can consume it
+  *via* `csv2json`. v1 probes only for *directly* wanted types.
+- **Same-tier-and-specificity conflict → `300`** — v1 may pick higher-listed.
+- **Context-demotion** (a `.json` extension whose libmagic disagrees *and* parse
+  fails dropping below `strong`) — v1 keeps extension `strong`.
+- **The flag surface** (the explicit-override spelling; `--as` in / `--to` out /
+  `-o` file) — decided in a consolidated CLI-surface pass, not here. detection.md
+  only asserts that the `certain` user-override *tier* exists.
 
 ## Build sequence
 
 1. **This doc** — the contract.
-2. Refactor `infer_candidates` → a **tiered signal-reader registry**; existing
-   JSON behavior preserved as the `structural-parse` signal.
+2. Refactor `infer_candidates` → a **tiered detector registry**; existing JSON
+   behavior preserved as the structural-parse `is_a`.
 3. **Extension-reader** — read `[[types]].extensions`; emit a `strong`,
    authoritative candidate (bypasses gating).
-4. Wire **`[[sources]] emits`** as the `certain`-tier candidate in the same model
-   (it's used already; make it consistent so `--explain`/`300` see it).
+4. Wire **handle `emits`** into the same model as the `certain` candidate, with
+   the terminal-vs-container read (generic `emits` leaves room to refine).
 5. **`--explain`** annotates each candidate with its signal source.

@@ -256,10 +256,11 @@ it — hence `Using:`.)
 decide whether a loose `--with <token>` is a handler (→ `Using:`) or a flag, (c)
 drive content-dispatch verb routing. Two layers feed it — **shape** (`./ ~/ /` →
 file, `scheme://` → url, else → text) and **content** — the MIME the **signal
-ladder** decides ([detection.md](detection.md): `@type`/source `emits`/extension/
-Content-Type/structural/libmagic, weighted, re-ranked by `accepts`). Inference may
-be uncertain → it returns **weighted choices**, and an ambiguous inference is just
-a `300` ("the file, or the literal text?").
+ladder** decides ([detection.md](detection.md): explicit override / handle
+`emits` / extension / Content-Type / structural / libmagic — weighted candidates
+the verb's `accepts` selects among, since `emits` types the *handle* not the
+content). Inference may be uncertain → it returns **weighted choices**, and an
+ambiguous inference is just a `300` ("the file, or the literal text?").
 
 **A query subject denotes a set; resolution is a phase.** Cardinality lives in the
 matrix (engine-addressing namespace; keep the explicit `q=` key so other engine
