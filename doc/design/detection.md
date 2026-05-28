@@ -330,6 +330,51 @@ is populated → an engine default would leak into tests). So turning the import
 of `COSMIC_GOO_MIME_DIRS` to the XDG hierarchy), tracked separately. Slice 3
 delivers the mechanism; it's live wherever the var is set.
 
+## Slice 4 — the extension signal (type a file by its extension)
+
+**What it does:** a file's extension → its declared type, looked up in
+`reg["types"][*].extensions` (populated by the slice-3 importer or a plugin). The
+extension is **authoritative** — it **beats libmagic** (a `.csv` file is `text/csv`
+even if libmagic hedges `text/plain`). This activates the extension half of the
+import: until now the imported `extensions` were staged and unread.
+
+**Signature:** `resolve_file(path, reg: Option<&Value>)`. `None` reproduces the
+bash-equivalent libmagic-only behavior **exactly** — the inertness is *type-enforced*,
+not contingent on an empty registry — and `address::resolve` passes `Some(reg)`. The
+final type drives the existing text-read decision, so an extension-typed file still
+reads its content correctly.
+
+**Lookup:** `type_for_extension(reg, ext)` lives in `registry.rs` (a *lookup* over
+the type table, not MIME logic — same module as the importer that produces the
+data). On the rare ambiguous extension (`globs2` maps `.json` to both
+`application/json` and `application/schema+json`), v1 prefers the **shorter type
+name** (length, then lexicographic) — a *documented* hack: shorter ≈ more general,
+the right default until glob-priority lands. Alphabetical-first was rejected (it
+beats `application/vnd.apache.arrow.file` with `application/x-arrow` by accident).
+v1 returns **one** type; verb-`accepts`-driven multi-candidate-for-files is the
+deferred signal-ladder-for-files refactor.
+
+**Extension extraction:** the last path segment's extension, lowercased, including
+the dot (`data.tar.gz` → `.gz`, last only — consistent with the importer punting on
+multi-extensions); dotfiles (`.bashrc`) have no extension → `None`.
+
+**bash + conformance.** Rust-only enhancement; `lib/address.sh` is untouched
+(frozen). The `reg = None` path is **byte-identical to libmagic** — a unit test
+asserts exactly that ("Rust-without-extension-data == bash"). No shipped plugin
+declares `extensions` and the importer is off in conformance, so the signal is
+inert across the suite. When a plugin eventually ships `extensions`, it's tested
+Rust-only (the `mimedb.bats` skip-probe pattern); `plugins.bats` fixture-file types
+stay libmagic-consistent so the both-engine run agrees.
+
+**Failure mode + recovery.** A PNG misnamed `.txt` types as `text/plain` — the
+design's stance (the extension is the filesystem's claim). The recovery is an
+explicit override whose CLI spelling is the deferred flag-surface pass (`--as`); so
+until then the override lives only in the model (the legacy `@type` form in
+`--explain`). Stated honestly: the escape hatch isn't shipped yet.
+
+**Deferred:** multi-candidate-for-files (verb-`accepts`-driven disambiguation);
+proper glob-priority tie-break; the CLI override flag.
+
 ## Deferred (with why)
 
 - **HTTP Content-Type** — needs goo to fetch the URL; no fetch path yet.
