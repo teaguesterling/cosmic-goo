@@ -179,8 +179,8 @@ JSON — which is exactly what makes it inherently #3-gated.
 [[checkers]]
 name   = "json"            # tier defaults to `strong`
 target = "application/json"
-guards = { peek = "{" }    # cheap skip — don't shell out unless bytes start with `{`
-cmd    = "jq -e ."
+guards = { peek = "{" }    # cheap skip — don't run unless bytes start with `{`
+cmd    = "jq -e ."         # shown for shape; core ships this `builtin` (see Promotion)
 ```
 
 A checker proves **arbitrarily specific** targets, including schema-bearing types —
@@ -232,12 +232,20 @@ when a real tool forces it** — never an `ok` expression language. `cmd` is a s
 string split into argv by the executor's shell-words convention — no separate
 `args`.
 
-**Promotion to native.** An entry ships with `cmd`; if a benchmark later shows the
-~5–10 ms fork matters, core (or a plugin) adds a `builtin = "…"` to the *same*
-entry — same `target`, `tier`, `input`, just a faster impl, no rewrite. That native
-registry **starts empty**. Today's `infer_candidates` JSON is the live example: it
-ships as the `json` checker with `cmd = "jq -e ."`, and could later gain
-`builtin = "serde-json"`.
+**Promotion to native.** A *plugin-added* entry ships with `cmd`; if a benchmark
+later shows the ~5–10 ms fork matters, core (or the plugin) adds a `builtin = "…"`
+to the *same* entry — same `target`, `tier`, `input`, just a faster impl, no
+rewrite. That speed-optimization registry **starts empty**.
+
+**Core entries can ship `builtin` from day one** when they're hot *and* their
+semantics must be exact — and the `json` checker is exactly that case. It runs on
+**every text subject**, so a fork per inference is a real cost; and `jq -e .` is
+*not* behavior-equivalent to today's `looks_like_json` (jq accepts bare scalars
+like `42`; `looks_like_json` requires an object/array). So `json` ships
+`builtin = "json"` (the existing `serde` `looks_like_json`, grandfathered — not a
+new optimization), giving exact, allocation-free typing on the hot path. `cmd`
+(`jq -e .`) remains the *primary* path for **plugin-added** checkers (csv, pdf,
+geojson), where fork cost is amortized and the tool *is* the spec.
 
 ## Mechanism — metadata readers vs content inspection
 
@@ -255,8 +263,9 @@ Two distinct things produce candidates, and only one of them inspects bytes:
   per domain.
 
 `infer_candidates` (today's hardwired JSON-shape inference) ships as the `json`
-`[[checkers]]` entry in `core.toml` — `cmd = "jq -e ."` (later optionally
-`builtin = "serde-json"`), **not** Rust referenced by name. `--explain` annotates
+`[[checkers]]` entry in `core.toml` with `builtin = "json"` — the existing `serde`
+`looks_like_json`, exact and hot-path (*not* `cmd = jq`, which differs on bare
+scalars), **not** Rust referenced by name. `--explain` annotates
 each candidate with its signal: `application/geo+json (via geojson checker)`,
 `image/png (via libmagic detector)`, `application/json (via .json extension)`.
 
@@ -280,8 +289,9 @@ each candidate with its signal: `application/geo+json (via geojson checker)`,
 1. **This doc** — the contract.
 2. Refactor `infer_candidates` → a **detector/checker registry loaded from plugin
    TOML**; the JSON check ships as the `json` `[[checkers]]` entry in `core.toml`
-   (`cmd = "jq -e ."`, behavior-preserving), **not** as Rust referenced by name.
-   `[[detectors]]`/`[[checkers]]` schema + the `cmd` runner (`input`/`ok`/`reads`).
+   with `builtin = "json"` (exact `looks_like_json`, behavior-preserving on the
+   hot path), **not** as Rust referenced by name. `[[detectors]]`/`[[checkers]]`
+   schema + the `cmd` runner (`input`/`ok`/`reads`) for plugin-added entries.
 3. **Extension-reader** — read `[[types]].extensions`; emit a `strong`,
    authoritative candidate (bypasses gating).
 4. Wire **handle `emits`** into the same model as the `certain` candidate, with
