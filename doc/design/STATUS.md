@@ -22,15 +22,15 @@ linked below; this is just "we've built up through here."
 | **Structural-inference gating** (#3) — a sniffed/inferred structured type wins only for a verb that *specifically* wants it (not a generic `text/*` verb) | **built** (Rust) | `mime::infer_for` |
 | **Tool-aware planner** (#2) — a channel declares `tool`; the planner routes around uninstalled tools, or 415s with an actionable "install: X" hint; `--explain` is tool-agnostic | **built** (Rust) | `negotiation::plan_request`, `channel_tools` |
 | **`--using` run-path override** (#1) — pin the verb's `usage` channel, overriding the planner's pick (a constraint, validated) | **built** (Rust) | `plan_request_using`, `cmd_verb`; `execute.bats` |
-| **Type detection — registry-driven checkers + OS lattice** (slices 1–3) — `[[detectors]]`/`[[checkers]]` collections (parity); the `json` check declared in an embedded `core.toml` (`builtin`, behavior-preserving) with `infer_for` now registry-driven; **OS-MIME-DB importer** (opt-in `COSMIC_GOO_MIME_DIRS`) pulls shared-mime-info `subclasses`→`is_a` (svg→xml→text into `is_subtype`) + `globs2`→`extensions` as `[[types]]` | **built** (Rust) | `registry.rs`, `mime.rs`; `mimedb.bats` |
-| **Type detection — remaining** — the signal *model* (weighted candidates the verb's `accepts` selects; `emits` types the handle not content; no privileged hardwired types): extension-**signal** consumer (read imported `extensions`), `emits` wiring (terminal-vs-container), `--explain` signal annotation, the `cmd` runner (`input`/`ok`/`reads`), importer production default | **designed** | [detection.md](detection.md) |
+| **Type detection — registry-driven checkers + OS lattice + extension signal** (slices 1–4) — `[[detectors]]`/`[[checkers]]` collections (parity); the `json` check declared in an embedded `core.toml` (`builtin`, behavior-preserving) with `infer_for` now registry-driven; **OS-MIME-DB importer** (opt-in `COSMIC_GOO_MIME_DIRS`) pulls shared-mime-info `subclasses`→`is_a` (svg→xml→text into `is_subtype`) + `globs2`→`extensions` as `[[types]]`; **extension signal** — a file's extension → declared type, authoritative over libmagic (`resolve_file`, Rust-only; `None`-path == libmagic) | **built** (Rust) | `registry.rs`, `address.rs`, `mime.rs`; `mimedb.bats`, `extsignal.bats` |
+| **Type detection — remaining** — the signal *model* (weighted candidates the verb's `accepts` selects; `emits` types the handle not content; no privileged hardwired types): `emits` wiring (terminal-vs-container), `--explain` signal annotation, the `cmd` runner (`input`/`ok`/`reads`), multi-candidate-for-files, importer production default | **designed** | [detection.md](detection.md) |
 | **`--to`/`--on` resource destinations** — route to a named `goo://` resource (display/chat/clipboard); the run-path `From:` named-return-channel that lets `via` decompose | **designed** | [goo-protocol §12](goo-protocol.md); `claude-routing.toml` |
 | **One-context channel substitution** (unify usage `{subject.*}` and coercion `{in.path}`) + **mode-aware buffering** (stream/bytes, not always temp-file) | **designed** | [negotiation §2.3](negotiation.md), [§5](negotiation.md) |
 | **Output value model** — value (path/bytes/stream/ref/**live surface**) as first-class vs a marshalling-mode annotation | **designed** | [negotiation §2.1](negotiation.md) |
 
 Bash is frozen at the **pre-negotiation** behavior and is the reference for
 everything below the arc; the lattice/inference/negotiation are Rust-only, so
-their bats tests skip on bash (the suite is 271/271 on both engines).
+their bats tests skip on bash (the suite is 273/273 on both engines).
 
 ## The interface / protocol layer
 
@@ -48,6 +48,6 @@ their bats tests skip on bash (the suite is 271/271 on both engines).
 
 - **Engine + CLI** — the Rust `goo` is the default; bash is the reference (`make install` / `make install-bash`).
 - **Plugins** — 25 (~88 verbs, 17 sources), incl. non-text handle domains and content-inspection verbs.
-- **Tests** — bats conformance suite (271/271 both engines) + 142 engine unit tests.
+- **Tests** — bats conformance suite (273/273 both engines) + 145 engine unit tests.
 
 See [limitations.md](../limitations.md) for the user-facing roadmap.

@@ -16,7 +16,7 @@
 //!   `:dom/path` → value · `:dom:query` → search · `^`/`^name` → clip ·
 //!   any other first char → user `[[sigils]]` alias.
 
-use crate::{mime, selection};
+use crate::{mime, registry, selection};
 use serde_json::{json, Value};
 use std::io::Read;
 use std::path::Path;
@@ -161,7 +161,7 @@ pub fn resolve(raw: &str, reg: &Value, _verb: Option<&Value>) -> Result<Value, S
 
     match domain {
         "text" => Ok(json!({ "type": mime::detect_content(q), "text": q })),
-        "file" => resolve_file(q),
+        "file" => resolve_file(q, Some(reg)),
         "clip" => {
             if !q.is_empty() {
                 return Err(format!("named clipboard buffers ('^{q}') not yet supported"));
@@ -179,12 +179,32 @@ pub fn resolve(raw: &str, reg: &Value, _verb: Option<&Value>) -> Result<Value, S
     }
 }
 
-fn resolve_file(path: &str) -> Result<Value, String> {
+/// The last path segment's extension, lowercased, including the dot
+/// (`data.tar.gz` → `.gz`, last only); dotfiles (`.bashrc`) and extensionless
+/// names → `None`. See detection.md (slice 4).
+fn path_extension(path: &str) -> Option<String> {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let dot = name.rfind('.')?;
+    if dot == 0 || dot + 1 == name.len() {
+        return None; // ".bashrc" (leading dot) or "foo." (trailing dot)
+    }
+    Some(name[dot..].to_ascii_lowercase())
+}
+
+fn resolve_file(path: &str, reg: Option<&Value>) -> Result<Value, String> {
     let abs = abspath(path);
     if !Path::new(&abs).exists() {
         return Err(format!("no such file: {abs}"));
     }
-    let mt = mime::detect_path(&abs)?;
+    // Extension signal (Rust-only enhancement): a declared extension is
+    // authoritative and beats libmagic. Inert when `reg` is None or has no match,
+    // so the None path is byte-identical to libmagic (== the bash reference).
+    let mt = match reg
+        .and_then(|r| path_extension(&abs).and_then(|e| registry::type_for_extension(r, &e).map(String::from)))
+    {
+        Some(t) => t,
+        None => mime::detect_path(&abs)?,
+    };
     let title = abs.rsplit('/').next().unwrap_or(&abs);
     let text = if mt.starts_with("text/") || mt == "application/json" || mt == "application/xml" {
         std::fs::read_to_string(&abs).unwrap_or_default()
@@ -386,6 +406,35 @@ mod tests {
         assert_eq!(resolve(&format!(":file/{p}"), &json!({}), None).unwrap()["text"], "file body here\n");
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    // ---- slice 4: the extension signal ----
+    #[test]
+    fn path_extension_extracts_last_lowercased() {
+        assert_eq!(path_extension("a/b/data.JSON").as_deref(), Some(".json"));
+        assert_eq!(path_extension("x.tar.gz").as_deref(), Some(".gz")); // last only
+        assert_eq!(path_extension("/p/.bashrc"), None); // dotfile
+        assert_eq!(path_extension("noext"), None);
+        assert_eq!(path_extension("trailing."), None);
+    }
+
+    #[test]
+    fn resolve_file_extension_beats_libmagic_none_path_is_libmagic() {
+        let dir = std::env::temp_dir().join(format!("goo-ext-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("sample.goo");
+        std::fs::write(&f, "plain words, not a known format\n").unwrap();
+        let p = f.to_str().unwrap();
+        // the conformance contract: the None path is byte-identical to libmagic.
+        let libmagic = mime::detect_path(p).unwrap();
+        assert_eq!(resolve_file(p, None).unwrap()["type"], json!(libmagic));
+        // a declared `.goo` extension is authoritative — it beats libmagic.
+        let reg = json!({ "types": [{ "name": "application/x-goo", "extensions": [".goo"] }] });
+        assert_eq!(resolve_file(p, Some(&reg)).unwrap()["type"], json!("application/x-goo"));
+        // Some(reg) with no matching extension still falls back to libmagic.
+        assert_eq!(resolve_file(p, Some(&json!({}))).unwrap()["type"], json!(libmagic));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn resolve_named_clip_unsupported() {
         assert!(resolve("^somebuffer", &things_reg(), None).unwrap_err().contains("not yet supported"));

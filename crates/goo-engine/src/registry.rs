@@ -297,6 +297,23 @@ fn parse_globs2(text: &str) -> Vec<(String, String)> {
     out
 }
 
+/// The declared type whose `extensions` contains `ext` (with the dot, e.g.
+/// `".json"`). On ambiguity (several types claim the extension — `globs2` maps
+/// `.json` to both `application/json` and `application/schema+json`) prefer the
+/// **shorter type name** (length, then lexicographic): shorter ≈ more general, the
+/// right default until a glob-priority tie-break lands. See detection.md (slice 4).
+pub fn type_for_extension<'a>(reg: &'a Value, ext: &str) -> Option<&'a str> {
+    reg.get("types")?
+        .as_array()?
+        .iter()
+        .filter_map(|t| {
+            let name = t.get("name")?.as_str()?;
+            let exts = t.get("extensions")?.as_array()?;
+            exts.iter().any(|e| e.as_str() == Some(ext)).then_some(name)
+        })
+        .min_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+}
+
 /// `subclasses` lines (`subtype supertype`) → `(sub, super)`; skip blank/`#`.
 fn parse_subclasses(text: &str) -> Vec<(String, String)> {
     text.lines()
@@ -427,6 +444,22 @@ mod tests {
     fn os_mime_import_yields_nothing_when_dir_absent() {
         let c = import_mime_dirs(&[std::path::PathBuf::from("/nonexistent/mime/xyz")]);
         assert!(c["types"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn type_for_extension_finds_and_disambiguates() {
+        let reg = json!({ "types": [
+            { "name": "application/json", "extensions": [".json"] },
+            { "name": "application/schema+json", "extensions": [".json"] },
+            { "name": "text/csv", "extensions": [".csv"] },
+        ]});
+        // unambiguous
+        assert_eq!(type_for_extension(&reg, ".csv"), Some("text/csv"));
+        // ambiguous .json → shorter name wins (application/json, not schema+json)
+        assert_eq!(type_for_extension(&reg, ".json"), Some("application/json"));
+        // no match / no types
+        assert_eq!(type_for_extension(&reg, ".nope"), None);
+        assert_eq!(type_for_extension(&json!({}), ".csv"), None);
     }
 
     #[test]
