@@ -279,6 +279,12 @@ pub fn infer_for(content: &str, verb: &Value, reg: &Value) -> Option<String> {
     best.map(|(m, _)| m)
 }
 
+/// [`infer_for`] plus the source label `--explain` annotates with — a positive
+/// match is always from a checker. See doc/design/detection.md (slice 5).
+pub fn infer_for_with_source(content: &str, verb: &Value, reg: &Value) -> Option<(String, &'static str)> {
+    infer_for(content, verb, reg).map(|t| (t, "checker"))
+}
+
 // ---- declared detectors / checkers (see doc/design/detection.md) ----
 //
 // A **detector** classifies content → a type; a **checker** verifies content
@@ -575,6 +581,15 @@ mod tests {
         // A verb specifically accepting json still gets it.
         let json_verb = j!({ "accepts": ["application/json"] });
         assert_eq!(infer_for(r#"{"k":1}"#, &json_verb, &reg).as_deref(), Some("application/json"));
+    }
+
+    #[test]
+    fn infer_for_with_source_labels_checker() {
+        let reg = json_reg();
+        let verb = j!({ "accepts": ["application/json"] });
+        let (t, src) = super::infer_for_with_source(r#"{"k":1}"#, &verb, &reg).unwrap();
+        assert_eq!((t.as_str(), src), ("application/json", "checker"));
+        assert!(super::infer_for_with_source("plain words", &verb, &reg).is_none());
     }
 
     // ---- detector / checker validators ----

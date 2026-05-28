@@ -234,13 +234,19 @@ fn cmd_explain(args: &[String]) -> i32 {
         None => return die(format!("explain: unknown verb '{verb_name}'")),
     };
 
-    let subject_type = if let Some(t) = type_override {
-        t.to_string()
+    // Type the subject the SAME WAY the run does — via the detection signals —
+    // and record which fired, so the annotation is truthful (not detect_path /
+    // detect_content directly, which would bypass the extension signal + checkers).
+    let (subject_type, type_source): (String, &str) = if let Some(t) = type_override {
+        (t.to_string(), "explicit")
     } else if let Some(s) = subj {
         if std::path::Path::new(s).exists() {
-            mime::detect_path(s).unwrap_or_else(|_| "application/octet-stream".into())
+            address::type_for_path(s, &reg)
+                .unwrap_or_else(|_| ("application/octet-stream".into(), "libmagic"))
+        } else if let Some((t, src)) = mime::infer_for_with_source(s, &verb, &reg) {
+            (t, src)
         } else {
-            mime::detect_content(s)
+            (mime::detect_content(s), "content")
         }
     } else {
         return die("explain: needs a subject — e.g. `@image/png` or a file path");
@@ -271,6 +277,7 @@ fn cmd_explain(args: &[String]) -> i32 {
         format!("   · caps {{{}}}", target.env_caps.join(", "))
     };
     println!("Accept: {}{}", target.accept.join("  "), caps);
+    println!("subject: {subject_type} (via {type_source})");
 
     // --explain is tool-AGNOSTIC: it shows the planned route regardless of which
     // converter tools are installed locally (a planning/debug view, not a

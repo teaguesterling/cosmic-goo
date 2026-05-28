@@ -48,3 +48,8 @@ EOF
     run "$GOO" eat-goo "$BATS_TEST_TMPDIR/other.txt" </dev/null
     [ "$status" -ne 0 ]
 }
+
+@test "extsignal: --explain annotates the extension source (slice 5)" {
+    run "$GOO" --explain eat-goo "$BATS_TEST_TMPDIR/sample.goo" </dev/null
+    [[ "$output" == *"subject: application/x-goo (via extension)"* ]]
+}

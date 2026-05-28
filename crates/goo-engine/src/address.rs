@@ -191,6 +191,28 @@ fn path_extension(path: &str) -> Option<String> {
     Some(name[dot..].to_ascii_lowercase())
 }
 
+/// Type of an existing absolute path + its provenance: a declared extension is
+/// authoritative (`"extension"`); else libmagic (`"libmagic"`). The detection half
+/// of [`resolve_file`], shared with `--explain`. See detection.md (slice 5).
+fn mime_of_abs(abs: &str, reg: &Value) -> Result<(String, &'static str), String> {
+    if let Some(ext) = path_extension(abs) {
+        if let Some(t) = registry::type_for_extension(reg, &ext) {
+            return Ok((t.to_string(), "extension"));
+        }
+    }
+    Ok((mime::detect_path(abs)?, "libmagic"))
+}
+
+/// Type + provenance for a user-given file path (abspath'd, existence-checked) —
+/// lets `--explain` type a file exactly as the run does. See detection.md (slice 5).
+pub fn type_for_path(path: &str, reg: &Value) -> Result<(String, &'static str), String> {
+    let abs = abspath(path);
+    if !Path::new(&abs).exists() {
+        return Err(format!("no such file: {abs}"));
+    }
+    mime_of_abs(&abs, reg)
+}
+
 fn resolve_file(path: &str, reg: Option<&Value>) -> Result<Value, String> {
     let abs = abspath(path);
     if !Path::new(&abs).exists() {
@@ -199,10 +221,8 @@ fn resolve_file(path: &str, reg: Option<&Value>) -> Result<Value, String> {
     // Extension signal (Rust-only enhancement): a declared extension is
     // authoritative and beats libmagic. Inert when `reg` is None or has no match,
     // so the None path is byte-identical to libmagic (== the bash reference).
-    let mt = match reg
-        .and_then(|r| path_extension(&abs).and_then(|e| registry::type_for_extension(r, &e).map(String::from)))
-    {
-        Some(t) => t,
+    let mt = match reg {
+        Some(r) => mime_of_abs(&abs, r)?.0,
         None => mime::detect_path(&abs)?,
     };
     let title = abs.rsplit('/').next().unwrap_or(&abs);
@@ -432,6 +452,22 @@ mod tests {
         assert_eq!(resolve_file(p, Some(&reg)).unwrap()["type"], json!("application/x-goo"));
         // Some(reg) with no matching extension still falls back to libmagic.
         assert_eq!(resolve_file(p, Some(&json!({}))).unwrap()["type"], json!(libmagic));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn type_for_path_reports_source() {
+        let dir = std::env::temp_dir().join(format!("goo-tfp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("sample.goo");
+        std::fs::write(&f, "words\n").unwrap();
+        let p = f.to_str().unwrap();
+        // no declared extension → libmagic source
+        assert_eq!(type_for_path(p, &json!({})).unwrap().1, "libmagic");
+        // declared extension → extension source (authoritative)
+        let reg = json!({ "types": [{ "name": "application/x-goo", "extensions": [".goo"] }] });
+        let (t, src) = type_for_path(p, &reg).unwrap();
+        assert_eq!((t.as_str(), src), ("application/x-goo", "extension"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

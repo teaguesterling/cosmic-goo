@@ -69,3 +69,25 @@ setup() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"unknown verb"* ]]
 }
+
+# --- slice 5: the subject line annotates the signal source ---
+@test "explain: @type subject is annotated 'via explicit'" {
+    run "$GOO" --explain view @image/png --explain-env tty </dev/null
+    [[ "$output" == *"subject: image/png (via explicit)"* ]]
+}
+
+@test "explain: a JSON literal is annotated 'via checker'" {
+    run "$GOO" --explain json-keys '{"k":1}' --explain-env piped </dev/null
+    [[ "$output" == *"subject: application/json (via checker)"* ]]
+}
+
+@test "explain: a bare word is annotated 'via content'" {
+    run "$GOO" --explain upper 'hello there' --explain-env piped </dev/null
+    [[ "$output" == *"(via content)"* ]]
+}
+
+@test "explain: a file with no declared extension is annotated 'via libmagic'" {
+    printf 'plain text body\n' > "$BATS_TEST_TMPDIR/s.txt"
+    run "$GOO" --explain upper "$BATS_TEST_TMPDIR/s.txt" --explain-env piped </dev/null
+    [[ "$output" == *"(via libmagic)"* ]]
+}
