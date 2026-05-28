@@ -1,0 +1,13 @@
+# Core declarations the engine guarantees are present — embedded into the binary
+# (include_str!) and seeded into the registry BEFORE discovered plugins, so a real
+# plugin overrides by name and tests get it without re-declaring. Kept minimal:
+# only what the OS MIME database can't provide. See doc/design/detection.md.
+name = "core"
+
+# Structural JSON: glob/magic can't *prove* a bare literal is JSON (and libmagic
+# is unreliable on short input), so this is ours. `builtin = "json"` is the exact
+# in-process `looks_like_json` (serde) — hot path (every text subject), no fork.
+[[checkers]]
+name = "json"
+target = "application/json"
+builtin = "json"

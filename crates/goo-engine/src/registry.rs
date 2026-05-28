@@ -190,9 +190,21 @@ pub fn merge(reg: &Value, new: &Value) -> Value {
     Value::Object(out)
 }
 
-/// Assemble the full registry from all discovered plugins (no cache).
+/// The embedded **core** plugin — declarations the engine guarantees are present
+/// (the structural checkers the OS MIME DB can't provide; see detection.md).
+/// Seeded before discovered plugins, so a real plugin overrides by name and tests
+/// get it without re-declaring. Always present — independent of the discovery dir.
+const CORE_TOML: &str = include_str!("../core.toml");
+
+fn core_contribution() -> Value {
+    let parsed: Value = toml::from_str(CORE_TOML).expect("embedded core.toml must parse");
+    contrib(Path::new("<core>/core.toml"), Path::new("<core>"), &parsed)
+}
+
+/// Assemble the full registry: the embedded core, then all discovered plugins
+/// (later wins by name, so plugins override core). No cache.
 pub fn load_all() -> Value {
-    let mut reg = empty_registry();
+    let mut reg = merge(&empty_registry(), &core_contribution());
     for file in discover() {
         if let Some(c) = load_one(&file) {
             reg = merge(&reg, &c);
@@ -268,6 +280,19 @@ mod tests {
         assert_eq!(ch[0]["name"], json!("json"));
         assert_eq!(ch[0]["target"], json!("application/json"));
         assert_eq!(ch[0]["_plugin"], json!("dtest"));
+    }
+
+    // The embedded core.toml is seeded into every load_all() registry — so the
+    // json checker is always present (production AND tests), independent of the
+    // discovery dir. (Behavior-preserving home for the old hardwired looks_like_json.)
+    #[test]
+    fn core_seed_carries_the_json_checker() {
+        let reg = merge(&empty_registry(), &core_contribution());
+        let ch = reg["checkers"].as_array().unwrap();
+        assert!(
+            ch.iter().any(|c| c["name"] == json!("json") && c["builtin"] == json!("json")),
+            "core.toml must seed the json checker: {ch:?}"
+        );
     }
 
     #[test]

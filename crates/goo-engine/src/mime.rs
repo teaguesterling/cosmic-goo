@@ -209,20 +209,46 @@ pub fn looks_like_json(content: &str) -> bool {
     (t.starts_with('{') || t.starts_with('[')) && serde_json::from_str::<Value>(t).is_ok()
 }
 
-/// Structural content inference: positive shape signals → `(mime, weight)`
-/// candidates, *additive* to `detect_content`'s no-context default. Each entry
-/// is a type the content positively looks like, weighted above the text/plain
-/// fallback so it wins when a verb accepts it. Empty for unstructured content
-/// (the common case) — which is why this never perturbs existing behavior.
-///
-/// Extend here (yaml/csv/xml shape) as consumers land; the re-ranking in
-/// [`infer_for`] is type-agnostic.
-pub fn infer_candidates(content: &str) -> Vec<(String, f64)> {
+/// Run the registry's declared `[[checkers]]` against `content`: each checker that
+/// *verifies* yields its `(target, weight)` candidate, *additive* to
+/// `detect_content`'s no-context default. Replaces the old hardwired JSON shape —
+/// the json check now ships as a declared checker (`core.toml`, `builtin = "json"`).
+/// Empty for unstructured content (the common case), so it never perturbs
+/// `detect_content`. Weight = the checker's tier (default `strong` = 2.0,
+/// preserving the prior json weight). See doc/design/detection.md.
+pub fn infer_candidates(content: &str, reg: &Value) -> Vec<(String, f64)> {
     let mut out = Vec::new();
-    if looks_like_json(content) {
-        out.push(("application/json".to_string(), 2.0));
+    let Some(checkers) = reg.get("checkers").and_then(Value::as_array) else { return out };
+    for c in checkers {
+        let Some(target) = c.get("target").and_then(Value::as_str) else { continue };
+        if run_checker(c, content) {
+            out.push((target.to_string(), tier_weight(c.get("tier").and_then(Value::as_str))));
+        }
     }
     out
+}
+
+/// Execute a checker's verdict on `content`. v1 implements the `builtin` impls
+/// inline; `cmd` checkers run via the cmd runner (slice 2b) — until then a declared
+/// `cmd` checker validates but is inert (skipped here).
+fn run_checker(c: &Value, content: &str) -> bool {
+    match c.get("builtin").and_then(Value::as_str) {
+        Some("json") => looks_like_json(content),
+        Some(_) => false, // unknown builtin (load-time validator rejects these)
+        None => false,    // cmd checker — slice 2b
+    }
+}
+
+/// Detection-tier → ranking weight. Absent = `strong` = 2.0, preserving the prior
+/// hardwired json weight (see [`DETECTION_TIERS`]).
+fn tier_weight(tier: Option<&str>) -> f64 {
+    match tier.unwrap_or("strong") {
+        "certain" => 3.0,
+        "strong" => 2.0,
+        "medium" => 1.0,
+        "weak" => 0.5,
+        _ => 2.0,
+    }
 }
 
 /// Context-sensitive inference: of the structural candidates `content` yields,
@@ -234,7 +260,7 @@ pub fn infer_candidates(content: &str) -> Vec<(String, f64)> {
 pub fn infer_for(content: &str, verb: &Value, reg: &Value) -> Option<String> {
     let accepts = verb.get("accepts").and_then(|a| a.as_array())?;
     let mut best: Option<(String, f64)> = None;
-    for (mime, w) in infer_candidates(content) {
+    for (mime, w) in infer_candidates(content, reg) {
         // A structural candidate earns its seat only when the verb is asking for
         // the structured representation *specifically* — an accept pattern that
         // matches the candidate but would NOT also accept plain text. This is the
@@ -477,6 +503,11 @@ mod tests {
     use super::{infer_candidates, infer_for, looks_like_json};
     use serde_json::json as j;
 
+    // A registry carrying just the core `json` checker — what `load_all()` seeds.
+    fn json_reg() -> serde_json::Value {
+        j!({ "checkers": [{ "name": "json", "target": "application/json", "builtin": "json" }] })
+    }
+
     #[test]
     fn json_shape_detects_objects_and_arrays() {
         assert!(looks_like_json(r#"{"k":1}"#));
@@ -489,18 +520,24 @@ mod tests {
     #[test]
     fn infer_candidates_is_empty_for_plain_text() {
         // The common case: no structural signal, so nothing perturbs detect_content.
-        assert!(infer_candidates("hello world").is_empty());
+        assert!(infer_candidates("hello world", &json_reg()).is_empty());
     }
 
     #[test]
     fn infer_candidates_offers_json_above_baseline() {
-        let c = infer_candidates(r#"{"k":1}"#);
+        let c = infer_candidates(r#"{"k":1}"#, &json_reg());
         assert_eq!(c, vec![("application/json".to_string(), 2.0)]);
     }
 
     #[test]
+    fn infer_candidates_empty_without_a_checker() {
+        // Registry-driven: no json checker declared ⇒ no candidate, even for json.
+        assert!(infer_candidates(r#"{"k":1}"#, &j!({})).is_empty());
+    }
+
+    #[test]
     fn infer_for_picks_json_when_verb_accepts_it() {
-        let reg = j!({});
+        let reg = json_reg();
         let verb = j!({ "accepts": ["application/json"] });
         assert_eq!(infer_for(r#"{"k":1}"#, &verb, &reg).as_deref(), Some("application/json"));
     }
@@ -508,14 +545,14 @@ mod tests {
     #[test]
     fn infer_for_declines_json_for_a_text_only_verb() {
         // Parity direction: a text-only verb never gets json from inference.
-        let reg = j!({});
+        let reg = json_reg();
         let verb = j!({ "accepts": ["text/*"] });
         assert_eq!(infer_for(r#"{"k":1}"#, &verb, &reg), None);
     }
 
     #[test]
     fn infer_for_declines_plain_text() {
-        let reg = j!({});
+        let reg = json_reg();
         let verb = j!({ "accepts": ["application/json"] });
         assert_eq!(infer_for("just words", &verb, &reg), None);
     }
@@ -526,7 +563,10 @@ mod tests {
     // hijack every generic text verb on structured-looking input.
     #[test]
     fn infer_for_gating_text_star_verb_gets_no_structured_candidate() {
-        let reg = j!({ "types": [{ "name": "application/json", "is_a": ["text/plain"] }] });
+        let reg = j!({
+            "types": [{ "name": "application/json", "is_a": ["text/plain"] }],
+            "checkers": [{ "name": "json", "target": "application/json", "builtin": "json" }],
+        });
         // sanity: json IS a subtype of text/* in this reg…
         assert!(is_subtype("application/json", "text/*", &reg));
         // …yet a text/* verb still declines the json candidate (gating).
