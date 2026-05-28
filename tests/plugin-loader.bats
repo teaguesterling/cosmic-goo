@@ -156,6 +156,34 @@ EOF
     echo "$output" | jq -e '.channels[0]._plugin == "chtest"' >/dev/null
 }
 
+# Parity guard for the [[detectors]]/[[checkers]] collections: the bash loader
+# must pass them through with provenance, byte-identically to the Rust engine's
+# registry (asserted by the same fixture + assertions in
+# crates/goo-engine/src/registry.rs `detectors_and_checkers_pass_through_with_provenance`).
+@test "plugin_load passes [[detectors]]/[[checkers]] through with provenance" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/dtest.toml" <<'EOF'
+name = "dtest"
+
+[[detectors]]
+name = "libmagic"
+cmd = "file --mime-type -b"
+
+[[checkers]]
+name = "json"
+target = "application/json"
+cmd = "jq -e ."
+EOF
+    run plugin_load "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/dtest.toml"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.detectors | length == 1' >/dev/null
+    echo "$output" | jq -e '.detectors[0].name == "libmagic"' >/dev/null
+    echo "$output" | jq -e '.detectors[0]._plugin == "dtest"' >/dev/null
+    echo "$output" | jq -e '.checkers | length == 1' >/dev/null
+    echo "$output" | jq -e '.checkers[0].name == "json"' >/dev/null
+    echo "$output" | jq -e '.checkers[0].target == "application/json"' >/dev/null
+    echo "$output" | jq -e '.checkers[0]._plugin == "dtest"' >/dev/null
+}
+
 @test "plugin_load fails clearly on missing file" {
     run plugin_load "$BATS_TEST_TMPDIR/does-not-exist.toml"
     [ "$status" -ne 0 ]

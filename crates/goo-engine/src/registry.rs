@@ -21,7 +21,7 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const COLLECTIONS_BY_NAME: &[&str] = &["types", "sources", "verbs", "adverbs", "aliases", "channels"];
+const COLLECTIONS_BY_NAME: &[&str] = &["types", "sources", "verbs", "adverbs", "aliases", "channels", "detectors", "checkers"];
 
 /// Plugin search dirs, lowest → highest precedence (later wins on name clash).
 pub fn dirs() -> Vec<PathBuf> {
@@ -145,6 +145,8 @@ pub fn contrib(file: &Path, dir: &Path, parsed: &Value) -> Value {
         "sigils":   with_provenance("sigils"),
         "aliases":  with_provenance("aliases"),
         "channels": with_provenance("channels"),
+        "detectors": with_provenance("detectors"),
+        "checkers": with_provenance("checkers"),
         "dispatch": with_provenance("dispatch"),
     })
 }
@@ -152,7 +154,8 @@ pub fn contrib(file: &Path, dir: &Path, parsed: &Value) -> Value {
 fn empty_registry() -> Value {
     json!({
         "plugins": [], "types": [], "sources": [], "verbs": [],
-        "adverbs": [], "sigils": [], "aliases": [], "channels": [], "dispatch": []
+        "adverbs": [], "sigils": [], "aliases": [], "channels": [],
+        "detectors": [], "checkers": [], "dispatch": []
     })
 }
 
@@ -242,6 +245,29 @@ mod tests {
         assert_eq!(ch[0]["name"], json!("chafa"));
         assert_eq!(ch[0]["emits"], json!("text/x-ansi"));
         assert_eq!(ch[0]["_plugin"], json!("chtest"));
+    }
+
+    // Parity guard for the [[detectors]]/[[checkers]] collections — same fixture +
+    // assertions as tests/plugin-loader.bats `plugin_load passes
+    // [[detectors]]/[[checkers]] through with provenance`.
+    #[test]
+    fn detectors_and_checkers_pass_through_with_provenance() {
+        let c = contrib_of(
+            "dtest",
+            "name=\"dtest\"\n\
+             [[detectors]]\nname=\"libmagic\"\ncmd=\"file --mime-type -b\"\n\
+             [[checkers]]\nname=\"json\"\ntarget=\"application/json\"\ncmd=\"jq -e .\"\n",
+        );
+        let reg = merge(&empty_registry(), &c);
+        let d = reg["detectors"].as_array().unwrap();
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0]["name"], json!("libmagic"));
+        assert_eq!(d[0]["_plugin"], json!("dtest"));
+        let ch = reg["checkers"].as_array().unwrap();
+        assert_eq!(ch.len(), 1);
+        assert_eq!(ch[0]["name"], json!("json"));
+        assert_eq!(ch[0]["target"], json!("application/json"));
+        assert_eq!(ch[0]["_plugin"], json!("dtest"));
     }
 
     #[test]

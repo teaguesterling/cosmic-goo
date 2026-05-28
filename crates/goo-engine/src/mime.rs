@@ -253,6 +253,69 @@ pub fn infer_for(content: &str, verb: &Value, reg: &Value) -> Option<String> {
     best.map(|(m, _)| m)
 }
 
+// ---- declared detectors / checkers (see doc/design/detection.md) ----
+//
+// A **detector** classifies content → a type; a **checker** verifies content
+// against a `target` type → yes/no. Both are registry entries (`[[detectors]]` /
+// `[[checkers]]`), declared not hardwired, implemented by `cmd` (primary) or a
+// named native `builtin`. These validators are the registry-load contract
+// (mirroring `negotiation::validate_channels`); the runner that *executes* them
+// lands in a later slice — until then these collections carry data with no
+// consumer, so the validators just keep malformed declarations out.
+
+/// Detection-confidence tiers — a signal's *nature* (does a yes mean yes?), not
+/// its impl, and distinct from converter **cost** tiers. Defaulted per kind
+/// (checker = `strong`, detector = `medium`).
+pub const DETECTION_TIERS: &[&str] = &["certain", "strong", "medium", "weak"];
+
+/// Validate `[[detectors]]` declarations. No-op until a plugin ships one.
+pub fn validate_detectors(reg: &Value) -> Vec<String> {
+    let mut errs = Vec::new();
+    let Some(arr) = reg.get("detectors").and_then(Value::as_array) else { return errs };
+    for d in arr {
+        let name = d.get("name").and_then(Value::as_str).unwrap_or("<unnamed>");
+        check_impl(d, "detector", name, &mut errs);
+        check_tier(d, "detector", name, &mut errs);
+    }
+    errs
+}
+
+/// Validate `[[checkers]]` declarations. A checker additionally needs a `target`
+/// type to verify against. No-op until a plugin ships one.
+pub fn validate_checkers(reg: &Value) -> Vec<String> {
+    let mut errs = Vec::new();
+    let Some(arr) = reg.get("checkers").and_then(Value::as_array) else { return errs };
+    for c in arr {
+        let name = c.get("name").and_then(Value::as_str).unwrap_or("<unnamed>");
+        if c.get("target").and_then(Value::as_str).filter(|s| !s.is_empty()).is_none() {
+            errs.push(format!("checker \"{name}\" needs a target type to verify"));
+        }
+        check_impl(c, "checker", name, &mut errs);
+        check_tier(c, "checker", name, &mut errs);
+    }
+    errs
+}
+
+/// Exactly one of `cmd` (shell) or `builtin` (named native primitive).
+fn check_impl(it: &Value, kind: &str, name: &str, errs: &mut Vec<String>) {
+    let has = |k: &str| it.get(k).and_then(Value::as_str).is_some_and(|s| !s.is_empty());
+    match (has("cmd"), has("builtin")) {
+        (false, false) => errs.push(format!("{kind} \"{name}\" needs a cmd or builtin impl")),
+        (true, true) => errs.push(format!("{kind} \"{name}\" has both cmd and builtin — pick one")),
+        _ => {}
+    }
+}
+
+fn check_tier(it: &Value, kind: &str, name: &str, errs: &mut Vec<String>) {
+    if let Some(t) = it.get("tier").and_then(Value::as_str) {
+        if !DETECTION_TIERS.contains(&t) {
+            errs.push(format!(
+                "{kind} \"{name}\" has unknown tier \"{t}\" (certain|strong|medium|weak)"
+            ));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::mime_matches;
@@ -472,5 +535,51 @@ mod tests {
         // A verb specifically accepting json still gets it.
         let json_verb = j!({ "accepts": ["application/json"] });
         assert_eq!(infer_for(r#"{"k":1}"#, &json_verb, &reg).as_deref(), Some("application/json"));
+    }
+
+    // ---- detector / checker validators ----
+    use super::{validate_checkers, validate_detectors};
+
+    #[test]
+    fn validators_pass_on_empty_or_absent() {
+        assert!(validate_detectors(&j!({})).is_empty());
+        assert!(validate_checkers(&j!({})).is_empty());
+        assert!(validate_detectors(&j!({ "detectors": [] })).is_empty());
+    }
+
+    #[test]
+    fn well_formed_detector_and_checker_validate() {
+        let reg = j!({
+            "detectors": [{ "name": "libmagic", "cmd": "file --mime-type -b" }],
+            "checkers":  [{ "name": "json", "target": "application/json", "cmd": "jq -e ." }],
+        });
+        assert!(validate_detectors(&reg).is_empty());
+        assert!(validate_checkers(&reg).is_empty());
+    }
+
+    #[test]
+    fn checker_without_target_is_flagged() {
+        let reg = j!({ "checkers": [{ "name": "json", "cmd": "jq -e ." }] });
+        let errs = validate_checkers(&reg);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("needs a target"), "{}", errs[0]);
+    }
+
+    #[test]
+    fn missing_or_double_impl_is_flagged() {
+        let no_impl = j!({ "detectors": [{ "name": "x" }] });
+        assert!(validate_detectors(&no_impl)[0].contains("cmd or builtin"));
+        let both = j!({ "checkers": [{ "name": "json", "target": "application/json",
+                                       "cmd": "jq -e .", "builtin": "serde-json" }] });
+        assert!(validate_checkers(&both)[0].contains("both cmd and builtin"));
+    }
+
+    #[test]
+    fn unknown_tier_is_flagged() {
+        let reg = j!({ "detectors": [{ "name": "x", "cmd": "c", "tier": "bogus" }] });
+        assert!(validate_detectors(&reg)[0].contains("unknown tier"));
+        // a valid tier is accepted
+        let ok = j!({ "detectors": [{ "name": "x", "cmd": "c", "tier": "medium" }] });
+        assert!(validate_detectors(&ok).is_empty());
     }
 }

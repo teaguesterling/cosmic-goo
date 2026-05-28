@@ -736,6 +736,14 @@ fn cmd_validate() -> i32 {
         errors += 1;
     }
 
+    // 9. Detectors / checkers (content typing): impl present (cmd xor builtin),
+    // known tier vocab, checker has a target (see doc/design/detection.md).
+    // No-op until a plugin ships them.
+    for msg in mime::validate_detectors(&reg).into_iter().chain(mime::validate_checkers(&reg)) {
+        err(msg);
+        errors += 1;
+    }
+
     if errors == 0 {
         let n = |k: &str| arr(k).len();
         println!(

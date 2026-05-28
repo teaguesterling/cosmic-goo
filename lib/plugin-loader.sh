@@ -106,6 +106,8 @@ plugin_load() {
             sigils:  ((.sigils  // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
             aliases: ((.aliases // []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
             channels:((.channels// []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
+            detectors:((.detectors// []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
+            checkers:((.checkers// []) | map(. + {_plugin: $pname, _plugin_dir: $dir})),
             dispatch:((.dispatch// []) | map(. + {_plugin: $pname, _plugin_dir: $dir}))
         }
     ' <<<"$plugin_json"
@@ -129,6 +131,8 @@ _plugin_merge() {
             sigils:  override_char($new.sigils; $reg.sigils),
             aliases: override($new.aliases; $reg.aliases),
             channels: override($new.channels; $reg.channels),
+            detectors: override($new.detectors; $reg.detectors),
+            checkers: override($new.checkers; $reg.checkers),
             # Dispatch rules are ordered, not keyed: first match wins, so we
             # concatenate in load order rather than override-by-name.
             dispatch: (($reg.dispatch // []) + ($new.dispatch // []))
@@ -186,7 +190,7 @@ plugin_load_all() {
         cat "$cache"
         return 0
     fi
-    local registry='{"plugins":[],"types":[],"sources":[],"verbs":[],"adverbs":[],"sigils":[],"aliases":[],"channels":[],"dispatch":[]}'
+    local registry='{"plugins":[],"types":[],"sources":[],"verbs":[],"adverbs":[],"sigils":[],"aliases":[],"channels":[],"detectors":[],"checkers":[],"dispatch":[]}'
     local file contrib
     while IFS= read -r file; do
         if contrib=$(plugin_load "$file"); then
