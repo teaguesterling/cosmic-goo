@@ -283,12 +283,61 @@ scalars), **not** Rust referenced by name. `--explain` annotates
 each candidate with its signal: `application/geo+json (via geojson checker)`,
 `image/png (via libmagic detector)`, `application/json (via .json extension)`.
 
+## Slice 3 — the OS-MIME-DB importer (extensions + the lattice, from the OS)
+
+**Opt-in contract (the load-bearing sentence):** the importer reads
+`COSMIC_GOO_MIME_DIRS` (colon-separated mime dirs). **Unset = no import.** Production
+sets it; tests don't — so conformance is deterministic with *zero* per-test
+changes. Opt-in, not opt-out, on purpose: a missed isolation defaults to *off*, not
+to the populated host `/usr/share/mime`.
+
+**Reads.** For each dir in `COSMIC_GOO_MIME_DIRS`, the derived flat caches
+`<dir>/globs2` and `<dir>/subclasses`. A missing dir/file is skipped (portability —
+off-desktop simply yields nothing). Production points the var at the XDG hierarchy
+(`$XDG_DATA_HOME/mime`, `$XDG_DATA_DIRS`/mime, `/usr/share/mime`).
+
+**Parses.**
+- `globs2` (`priority:type:glob[:flags]`) → `extensions`, taking **only clean single
+  extensions** (`^\*\.[A-Za-z0-9_+-]+$`); multi-dot (`*.eps.gz`), glob-meta
+  (`*.so.[0-9]*`), and bare names (`credits`) are skipped silently (not malformed,
+  just not what we consume). `priority` is glob-disambiguation — kept for a future
+  tie-break, **not** a tier (extension is uniformly `strong`).
+- `subclasses` (`subtype supertype`, two columns) → `is_a`; whitespace-split, skip
+  blank/`#`.
+
+**Produces.** A `[[types]]` contribution — *the same shape a plugin emits* — one
+entry per type carrying `extensions` and/or `is_a` and `_source =
+"shared-mime-info"`, merged **before** discovered plugins (a plugin's `[[types]]`
+overrides by name). `is_subtype` consumes the imported `is_a` **immediately** (so
+`image/svg+xml → application/xml → text/plain` works at once — confirmed in the OS
+`subclasses`); `extensions` are staged for the extension signal (a later slice),
+which reads declared `extensions` regardless of source — no special path.
+
+**Fixture + test.** The test points `COSMIC_GOO_MIME_DIRS` at `tests/fixtures/mime/`
+with a minimal `subclasses` (`image/svg+xml application/xml` + `application/xml
+text/plain`) and `globs2` (`50:image/svg+xml:*.svg` + `50:application/json:*.json`),
+and asserts the imported types carry the right `is_a`/`extensions` — host-independent.
+
+**Conformance + bash.** Rust-only (bash is the frozen reference; it doesn't gain
+the OS lattice). Conformance runs on both engines with `COSMIC_GOO_MIME_DIRS` unset
+→ no import → `is_subtype` agrees across engines. The importer's own tests skip on
+bash, as negotiation's do.
+
+**Production default — deferred to packaging.** No shell wrapper fronts the Rust
+binary today, and the engine can't safely default the var (host `/usr/share/mime`
+is populated → an engine default would leak into tests). So turning the importer
+*on by default* is a packaging step (a thin `goo` wrapper or an install-time export
+of `COSMIC_GOO_MIME_DIRS` to the XDG hierarchy), tracked separately. Slice 3
+delivers the mechanism; it's live wherever the var is set.
+
 ## Deferred (with why)
 
 - **HTTP Content-Type** — needs goo to fetch the URL; no fetch path yet.
 - **The native `builtin` registry** — added only on *measured* need; the schema
   slot exists for forward-compat but ships empty (`cmd` everywhere first). (`cmd`
   detectors/checkers themselves are **not** deferred — they're primary.)
+- **shared-mime-info `aliases`** (`application/acrobat → application/pdf`) — not
+  imported, not modeled (no consumer yet); and glob `priority` as a tie-breaker.
 - **Coercion-reachable detection** — typing bare CSV so a JSON verb can consume it
   *via* `csv2json`. v1 probes only for *directly* wanted types.
 - **Same-tier-and-specificity conflict → `300`** — v1 may pick higher-listed.
@@ -306,14 +355,11 @@ each candidate with its signal: `application/geo+json (via geojson checker)`,
    with `builtin = "json"` (exact `looks_like_json`, behavior-preserving on the
    hot path), **not** as Rust referenced by name. `[[detectors]]`/`[[checkers]]`
    schema + the `cmd` runner (`input`/`ok`/`reads`) for plugin-added entries.
-3. **OS-MIME-DB importer** (= the extension-reader + the lattice, sourced from the
-   OS). A registry-load *source* that parses shared-mime-info's `globs2` →
-   `[[types]].extensions`, `subclasses` → `is_a`, `aliases` → aliases — the same
-   contribution shape a plugin emits, so merge/override-by-name and the
-   declarative `is_subtype` work unchanged. Then the extension signal emits a
-   `strong`, authoritative candidate (bypasses gating). Hand-declared
-   `[[types]].extensions` remain as supplement/override. Conformance points at a
-   fixture DB; production at `/usr/share/mime` + `~/.local/share/mime`.
+3. **OS-MIME-DB importer** — see the dedicated section above. A registry-load
+   *source* (opt-in via `COSMIC_GOO_MIME_DIRS`) that parses shared-mime-info's
+   `globs2` → `[[types]].extensions` and `subclasses` → `is_a`, same contribution
+   shape as a plugin, so merge/override and the declarative `is_subtype` work
+   unchanged. `is_a` lands immediately; `extensions` stage for the extension signal.
 4. Wire **handle `emits`** into the same model as the `certain` candidate, with
    the terminal-vs-container read (generic `emits` leaves room to refine).
 5. **`--explain`** annotates each candidate with its signal source.
