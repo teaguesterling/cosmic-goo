@@ -62,6 +62,27 @@ accepts = ["text/*"]
 emits = "text/x-shout"
 cost = "normal"
 cmd = "printf '%s%s' {subject.text|q} {verb.suffix|q}"
+
+# A verb with two usage channels — exercises #1 (--using pins one). A usage
+# channel reads {subject.*} (verb context), not {in.path}.
+[[verbs]]
+name = "say"
+accepts = ["text/*"]
+usage = ["loud", "quiet"]
+
+[[channels]]
+name = "loud"
+accepts = ["text/*"]
+emits = "text/x-said"
+cost = "cheap"
+cmd = "tr a-z A-Z < {subject.metadata.path|q}"
+
+[[channels]]
+name = "quiet"
+accepts = ["text/*"]
+emits = "text/x-said"
+cost = "normal"
+cmd = "tr A-Z a-z < {subject.metadata.path|q}"
 EOF
     printf 'hello goo' > "$BATS_TEST_TMPDIR/sub.txt"
 
@@ -118,4 +139,22 @@ EOF
     run "$GOO" yell "$BATS_TEST_TMPDIR/y.txt" </dev/null
     [ "$status" -eq 0 ]
     [ "$output" = "hi!!!" ]
+}
+
+# 1: the planner picks the cheapest usage channel by default; --using pins one.
+@test "execute: --using pins the usage channel (overrides the planner)" {
+    printf 'Hi' > "$BATS_TEST_TMPDIR/s.txt"
+    run "$GOO" say "$BATS_TEST_TMPDIR/s.txt" </dev/null          # cheapest = loud
+    [ "$status" -eq 0 ]
+    [ "$output" = "HI" ]
+    run "$GOO" say "$BATS_TEST_TMPDIR/s.txt" --using=quiet </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "hi" ]
+}
+
+@test "execute: --using with a non-channel fails cleanly" {
+    printf 'Hi' > "$BATS_TEST_TMPDIR/s.txt"
+    run "$GOO" say "$BATS_TEST_TMPDIR/s.txt" --using=bogus </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not a channel of 'say'"* ]]
 }

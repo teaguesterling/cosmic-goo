@@ -165,8 +165,9 @@ USAGE
     goo compose                          Build a sentence (scripted via GOO_COMPOSE_ANSWERS)
     goo plugins                          List loaded plugins
     goo validate                         Validate all loaded plugins
+    goo <verb> … [--using CHANNEL]       --using pins the channel that performs a verb
     goo --explain <verb> [@TYPE|subj]    Show the negotiation plan (route/415) — read-only
-                                         [--as TYPE] [--explain-env tty|cosmic|desktop|piped]
+                                         [--as TYPE] [--using CHANNEL] [--explain-env tty|cosmic|desktop|piped]
 
 SUBJECT INFERENCE
     If no positional is given, the subject falls back in order:
@@ -194,8 +195,8 @@ use goo_engine::shell::{bash_capture, bash_exec};
 /// piped` overrides the detected environment (default: isatty + $WAYLAND_DISPLAY).
 fn cmd_explain(args: &[String]) -> i32 {
     let reg = registry::load_all();
-    let (mut verb_name, mut subj, mut type_override, mut as_type, mut env_ovr) =
-        (None, None, None, None, None);
+    let (mut verb_name, mut subj, mut type_override, mut as_type, mut env_ovr, mut using) =
+        (None, None, None, None, None, None);
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
@@ -203,6 +204,11 @@ fn cmd_explain(args: &[String]) -> i32 {
             as_type = Some(v);
         } else if a == "--as" {
             as_type = args.get(i + 1).map(String::as_str);
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--using=") {
+            using = Some(v);
+        } else if a == "--using" {
+            using = args.get(i + 1).map(String::as_str);
             i += 1;
         } else if let Some(v) = a.strip_prefix("--explain-env=") {
             env_ovr = Some(v);
@@ -272,7 +278,7 @@ fn cmd_explain(args: &[String]) -> i32 {
     // execution (exec_negotiated) prunes by real availability.
     let (avail, missing) = channel_tools(&reg);
     let all_tools: Vec<String> = avail.into_iter().chain(missing).collect();
-    match negotiation::plan_request(&subject_type, &verb, &target, &reg, &all_tools) {
+    match negotiation::plan_request_using(&subject_type, &verb, &target, &reg, &all_tools, using) {
         None => {
             println!("415 · no route — {subject_type} can't be presented here (verb: {verb_name})");
             1
@@ -355,8 +361,23 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
         target = target.with_accept(as_t);
     }
 
+    // `--using=<channel>` pins the verb's instrument (override the planner). It's
+    // a constraint: validate it's actually one of the verb's `usage` channels for
+    // a clean error, then force the route through it.
+    let using = adverbs.get("using").and_then(|v| v.as_str());
+    if let Some(u) = using {
+        match verb.get("usage").and_then(|v| v.as_array()) {
+            None => return die(format!("--using: '{verb_name}' isn't implemented by channels (it has no `usage`)")),
+            Some(arr) if !arr.iter().any(|c| c.as_str() == Some(u)) => {
+                let opts: Vec<&str> = arr.iter().filter_map(|c| c.as_str()).collect();
+                return die(format!("--using '{u}': not a channel of '{verb_name}' (one of: {})", opts.join(", ")));
+            }
+            Some(_) => {}
+        }
+    }
+
     let (available, missing) = channel_tools(reg);
-    match negotiation::plan_request(subject_type, verb, &target, reg, &available) {
+    match negotiation::plan_request_using(subject_type, verb, &target, reg, &available, using) {
         None => {
             // No route with the installed tools. If a route *would* exist with
             // everything installed, name the missing tools *on that route* — so

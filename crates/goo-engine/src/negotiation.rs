@@ -299,6 +299,23 @@ pub fn verb_edges(verb: &Value, reg: &Value) -> Vec<VerbEdge> {
 /// prunes channels whose tool is declared but absent — routing around an
 /// uninstalled tool, or to a 415).
 pub fn plan_request(subject_type: &str, verb: &Value, target: &Target, reg: &Value, available_tools: &[String]) -> Option<Plan> {
+    plan_request_using(subject_type, verb, target, reg, available_tools, None)
+}
+
+/// As [`plan_request`], but with an optional `--using` pin: when `Some(channel)`,
+/// the verb is forced through that one `usage` channel (the planner's other
+/// candidate channels are dropped). A *constraint*, not a hint — if the pinned
+/// channel has no route, the result is `None` (a 415), never a fallback. (The
+/// CLI validates that the channel is actually one of the verb's `usage` before
+/// calling, for a clean error.)
+pub fn plan_request_using(
+    subject_type: &str,
+    verb: &Value,
+    target: &Target,
+    reg: &Value,
+    available_tools: &[String],
+    using: Option<&str>,
+) -> Option<Plan> {
     let convs: Vec<Converter> = converters_from_registry(reg)
         .into_iter()
         .filter(|c| tool_present(&c.tool, available_tools))
@@ -306,6 +323,7 @@ pub fn plan_request(subject_type: &str, verb: &Value, target: &Target, reg: &Val
     let edges: Vec<VerbEdge> = verb_edges(verb, reg)
         .into_iter()
         .filter(|e| usage_tool_present(e, reg, available_tools))
+        .filter(|e| using.is_none_or(|u| e.instrument == u))
         .collect();
     plan(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg)
 }
@@ -881,5 +899,25 @@ mod tests {
         assert!(plan_request("text/csv", &verb, &target, &reg, &["mlr".into()]).is_some());
         // mlr absent → the only csv→json channel is pruned → no route (415).
         assert!(plan_request("text/csv", &verb, &target, &reg, &[]).is_none());
+    }
+
+    // #1: --using pins the verb's usage channel, overriding the planner's pick.
+    #[test]
+    fn plan_request_using_pins_the_channel() {
+        let reg = j!({ "channels": [
+            { "name": "a", "accepts": ["text/*"], "emits": "text/x-a", "cost": "cheap", "cmd": "x" },
+            { "name": "b", "accepts": ["text/*"], "emits": "text/x-b", "cost": "normal", "cmd": "y" },
+        ]});
+        let verb = j!({ "name": "say", "accepts": ["text/*"], "usage": ["a", "b"] });
+        let target = Target { accept: owned(&["*/*"]), env_caps: vec![] };
+        // unpinned → cheapest channel (a)
+        let p = plan_request_using("text/plain", &verb, &target, &reg, &[], None).unwrap();
+        assert_eq!(p.steps[0].kind, StepKind::Verb("a".into()));
+        // pin b → b wins despite being costlier (constraint, not a hint)
+        let pb = plan_request_using("text/plain", &verb, &target, &reg, &[], Some("b")).unwrap();
+        assert_eq!(pb.steps[0].kind, StepKind::Verb("b".into()));
+        // pin a channel not in `usage` → no edge → no route (the CLI pre-validates
+        // for a friendlier message; the planner just yields None).
+        assert!(plan_request_using("text/plain", &verb, &target, &reg, &[], Some("z")).is_none());
     }
 }
