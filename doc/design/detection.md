@@ -9,9 +9,10 @@ negotiation ([negotiation.md](negotiation.md), [goo-protocol §6](goo-protocol.m
 > explicit* what's already half-built. `infer_for(verb, content)` already returns
 > weighted choices and #3 gating already discriminates specific-vs-generic; this
 > doc puts every signal (extension, Content-Type, structural, libmagic, handle
-> `emits`) into that one candidate model and corrects how `emits` is read. v1 is
-> built-in detectors + plugin-declared extension data; external (`cmd`) detectors
-> and HTTP fetch are deferred (last section).
+> `emits`) into that one candidate model and corrects how `emits` is read.
+> Detectors are **declared** in a shipped `core.toml` (`impl.cmd` primary — *no
+> privileged hardwired types*); the native `impl.builtin` speed registry and HTTP
+> fetch are deferred (last section).
 
 ## The model: "is this usable as what I need?", not "what is this?"
 
@@ -47,13 +48,15 @@ extension           the path (`.json`, `.csv`)   strong    yes
 HTTP Content-Type   the response header          strong    yes   (deferred — no fetch yet)
 structural parse    an `is_a` detector parses    strong    no    (inferential; high-confidence-when-positive)
 libmagic            a `what_is` detector (magic) medium    no
-[future] cmd detector an external is_a/what_is    weak      no    (interface stubbed; impl deferred)
 ```
 
-`certain` / `strong` / `medium` / `weak` are **discrete tiers** mapped to a weight
-in one place (like converter cost `Tier`). A tier is a property of the **signal**,
-not the match — extension is `strong` because *extensions are strong*. No numeric
-confidence scale.
+`certain` / `strong` / `medium` (/`weak`, reserved for genuinely-fuzzy signals —
+none today) are **discrete tiers** mapped to a weight in one place (like converter
+cost `Tier`). A tier is a property of the signal's **nature** — *does a yes mean
+yes?* — **not its implementation**: an `is_a` parse-success is `strong` whether the
+parser is in-process `serde` or a shelled `jq -e .`. So there is no "`cmd` tier";
+`cmd` is an *impl* (next section), and a `cmd`-backed detector lands at whatever
+tier its signal warrants. No numeric confidence scale.
 
 Cheap signals cover what structural parsing can't: **CSV and YAML are detected by
 extension or libmagic — no parser.**
@@ -142,12 +145,33 @@ stream it composes with the executor's buffer/peek. The cheap authoritative
 signals (extension, Content-Type, `emits`) deliberately type *without* fetching;
 introspection is the on-demand fallback, so "cheap first" is also "fetch-last."
 
-## Detectors — the `is_a` / `what_is` interface
+## Detectors — declared, not hardwired
 
-Defining the interface now — even though the external `cmd` implementation is
-deferred — is what keeps structural-parse and custom-parse first-class instead of
-special-cased. A detector is an `is_a`→bool or a `what_is`→mime, with cheap
-**guards** so it never runs needlessly:
+**No content detector is privileged.** The two that were baked into Rust —
+libmagic and JSON-structural-parse — are exactly what the `is_a`/`what_is`
+interface exists to express, and the `valid_when via shell jq` work is already the
+project's precedent that *a content check is a shelled command*. So detectors are
+**declared** like everything else, in a shipped `core.toml`:
+
+```toml
+[[detectors]]
+name     = "json-structural"
+shape    = "is_a"
+target   = "application/json"
+tier     = "strong"
+guards   = { general_type = "text/*", peek = "{" }
+impl.cmd = "jq -e . < {in.path}"        # exit 0 ⇒ is_a(application/json)
+
+[[detectors]]
+name     = "libmagic"
+shape    = "what_is"
+tier     = "medium"
+impl.cmd = "file --mime-type -b {in.path}"
+```
+
+Two shapes: **`is_a`→bool** (a predicate for a specific `target`; demand-driven,
+so inherently #3-gated) and **`what_is`→mime** (an open classifier, for
+unambiguous content). Cheap **guards** keep a detector from running needlessly:
 
 - **general-type guard** — only run for a coarse class (`text/*`), so the JSON
   `is_a` never fires on image bytes.
@@ -155,33 +179,41 @@ special-cased. A detector is an `is_a`→bool or a `what_is`→mime, with cheap
   heuristic on a heuristic; a wrong guard is a *tolerated* false-negative, in
   keeping with "right enough.")
 
-The built-ins implement the *same* interface a future plugin detector will (an
-external `cmd` is just an `is_a`/`what_is` shelled out, the `weak` tier) — so the
-interface ships and only the fork/exec is deferred; a plugin detector slots in
-with **no new machinery**.
+**Implementation is `impl.cmd` or `impl.builtin`, and `cmd` is primary.** A
+plugin adds a detector with `impl.cmd` alone — **no Rust**. `impl.builtin = "…"`
+references a narrow set of engine-provided native primitives (`serde-json`, a
+libmagic FFI) purely as a *speed* opt-in; that native registry **starts empty**
+and gains an entry only when a benchmark shows the ~5–10 ms fork actually matters
+(detection runs ~once per subject in a CLI — usually invisible). Tier is set by
+the detector's *signal nature*, not by which impl it uses.
 
-## Mechanism
+## Mechanism — metadata readers vs content detectors
 
-- **Detector *types* are built-in** (Rust): extension-reader, the libmagic
-  `what_is`, the structural-parse `is_a`. They apply **generally**, gated by their
-  guards — **not** copy-declared per domain. (libmagic isn't pluggable; there's no
-  reason.)
-- **What a domain/source contributes** is *signal availability* (a path exposes an
-  extension; a response exposes a Content-Type) and its handle `emits` — plus,
-  later, an optional custom `cmd` detector. It does **not** re-declare the
-  built-ins.
-- **Signal data is plugin-declared** where it makes sense: a `[[types]]` entry
-  declares `extensions = [".json", ".jsonl"]`, feeding the extension-reader. No
-  new section — extensions are data on the type the plugin already defines.
-- `infer_candidates` (today's JSON-shape inference) **is** the structural-parse
-  `is_a` under this model — refactored into it, not added alongside.
-- `--explain` annotates each candidate with its signal: `application/json (via .json extension)`.
+Two distinct things produce candidates, and only one of them is a "detector":
+
+- **Metadata readers** (extension, Content-Type, handle `emits`) — the engine
+  *extracts* these from the resolved handle; their type **data** is already
+  plugin-declared (`[[types]].extensions`, the response header, `[[sources]]
+  emits`). Authoritative; trivial; not a `[[detectors]]` entry. What a
+  domain/source contributes here is *signal availability* — a path exposes an
+  extension, a response a Content-Type — not detector logic.
+- **Content detectors** (`[[detectors]]`, above) — inspect bytes; inferential;
+  declared, `impl.cmd`/`impl.builtin`. libmagic and JSON-structural live here.
+  They apply **generally**, gated by their guards — **not** copy-declared per
+  domain.
+
+`infer_candidates` (today's hardwired JSON-shape inference) ships as the
+`json-structural` `[[detectors]]` entry in `core.toml` — preserving current
+behavior via `impl.builtin = "serde-json"` (or `impl.cmd = "jq -e ."`), **not** as
+Rust referenced by name. `--explain` annotates each candidate with its signal:
+`application/json (via json-structural detector)`.
 
 ## Deferred (with why)
 
 - **HTTP Content-Type** — needs goo to fetch the URL; no fetch path yet.
-- **External (`cmd`) detectors** — the `weak` tier, for exotic types a built-in
-  can't decide. Interface defined above; only the fork/exec is deferred.
+- **The native `impl.builtin` registry** — added only on *measured* need; the
+  schema slot exists for forward-compat but ships empty (`cmd` impls everywhere
+  first). (`cmd` detectors themselves are **not** deferred — they're primary.)
 - **Coercion-reachable detection** — typing bare CSV so a JSON verb can consume it
   *via* `csv2json`. v1 probes only for *directly* wanted types.
 - **Same-tier-and-specificity conflict → `300`** — v1 may pick higher-listed.
@@ -194,8 +226,10 @@ with **no new machinery**.
 ## Build sequence
 
 1. **This doc** — the contract.
-2. Refactor `infer_candidates` → a **tiered detector registry**; existing JSON
-   behavior preserved as the structural-parse `is_a`.
+2. Refactor `infer_candidates` → a **detector registry loaded from plugin TOML**;
+   the JSON-shape `is_a` ships as a `[[detectors]]` entry in `core.toml`
+   (`impl.builtin = "serde-json"` preserves today's behavior), **not** as Rust
+   referenced by name. `[[detectors]]` schema + `impl.cmd` runner.
 3. **Extension-reader** — read `[[types]].extensions`; emit a `strong`,
    authoritative candidate (bypasses gating).
 4. Wire **handle `emits`** into the same model as the `certain` candidate, with
