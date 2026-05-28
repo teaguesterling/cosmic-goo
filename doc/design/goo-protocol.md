@@ -594,6 +594,37 @@ firefox at the marshalling boundary (§11)**. "to a file" and "on a display" are
 one slot; the *target's capability* (and any named instrument) decide what
 crossing the boundary means.
 
+### Slice 1 implementation — `--to`/`-o` (file + clipboard)
+
+The first cut of `To:` — enough to close the arc (address → verb → coerce →
+**route**). **Purely additive:** `--to`/`-o` are new; `--as` (Accept) is unchanged,
+and the deferred `--as`-as-input reshuffle is unrelated to this slice.
+
+- **`--to <dest>`** sends the verb's *result* to a `{write}` destination instead of
+  stdout; **`-o <file>`** = `--to <file>`. No `--to` → stdout, **byte-identical to
+  today** (a pinned conformance contract, both exec paths).
+- **Destinations v1: file + clipboard.** One function, `write_to(dest, bytes, reg)`,
+  canonicalizes the destination through the *existing* addressing
+  (`address::canonicalize` — so `^`→clip and native paths→file come for free) and
+  dispatches on the domain: `file` → `fs::write(abspath)`, `clip` → `wl-copy` (a new
+  `selection::set_clipboard`), anything else → a clean *"not a writable destination
+  yet."* The declared `{write}`-domain framework arrives with destination #3.
+- **Capture-then-route, one join point.** When `--to` is set, both exec paths use
+  `execute_capture` → `write_to`; with no `--to`, the existing inherit-stdout
+  (`execute`) / `println!` paths are untouched — no duplicated `--to` branches.
+- **`--to` ⇒ Accept = piped.** A sink wants *bytes*, not a presented surface — so
+  setting `--to` forces the piped Accept profile (`target_from_env(false, false)`).
+  Without this, `goo view image.png --to out.png` would route `image→chafa→ansi` and
+  write ansi *text* to the file. (The `{present}` `--on`-a-surface case, where the
+  target itself renders, is part of the deferred `--on` work.)
+- **Rust-only** run-path feature (bash frozen); `--to` bats tests skip on bash, like
+  `execute.bats`. v1 clipboard write is **text-shaped** (image-to-clipboard via
+  `wl-copy --type` deferred).
+
+**Deferred:** `--on` (a `{present}` surface — same slot, the target's capability
+decides); chat/contacts/buffers; multi-recipient; lenient entity resolution;
+`Log:`/`From:`; type-matched `emits↔accepts`; the declared `{write}`-domain framework.
+
 ### `From:` — when the caller is more than its inherited channel
 
 Two things `Accept:` alone can't express, and only these earn the full origin
