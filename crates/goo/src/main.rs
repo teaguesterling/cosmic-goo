@@ -374,20 +374,7 @@ fn cmd_explain(args: &[String]) -> i32 {
             1
         }
         Some(plan) => {
-            let start = plan.steps.first().map(|s| s.from.clone()).unwrap_or_else(|| subject_type.clone());
-            let mut line = start;
-            for s in &plan.steps {
-                match &s.kind {
-                    negotiation::StepKind::Convert(name) => {
-                        line.push_str(&format!(" →[{name}: {}]→ {}", channel_tier(&reg, name), s.to));
-                    }
-                    negotiation::StepKind::Verb(inst) => {
-                        let label = if inst.is_empty() { verb_name } else { inst.as_str() };
-                        line.push_str(&format!(" →({label})→ {}", s.to));
-                    }
-                }
-            }
-            println!("{line}   (cost {})", plan.cost);
+            println!("{}   (cost {})", render_route(&plan, &subject_type, verb_name, &reg), plan.cost);
             0
         }
     }
@@ -488,9 +475,14 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
     let (available, missing) = channel_tools(reg);
     match negotiation::plan_request_using_bounded(subject_type, verb, &target, reg, &available, using, hops) {
         None => {
-            // No route with the installed tools. If a route *would* exist with
-            // everything installed, name the missing tools *on that route* — so
-            // the hint is actionable ("install: mlr"), not every uninstalled tool.
+            // Teaching 415 first: would a deeper budget have found a route (with the
+            // tools you have)? If so, show it and the flag that unlocks it.
+            if let Some(msg) = deeper_route_hint(subject_type, verb, &target, reg, &available, hops) {
+                return die(msg);
+            }
+            // Else: if a route *would* exist with everything installed, name the
+            // missing tools *on that route* — actionable ("install: mlr"), not every
+            // uninstalled tool.
             let hint = route_missing_tools_hint(subject_type, verb, &target, reg, &missing, hops);
             die(format!("415 · no route — can't route {subject_type} through '{verb_name}'{hint}"))
         }
@@ -505,6 +497,25 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
             },
         },
     }
+}
+
+/// Render a plan as a one-line route — `from →[conv: tier]→ … →(verb)→ to` — for
+/// `--explain` and the teaching 415. `fallback_start` types the head when the plan
+/// has no steps (shouldn't happen, but keeps it total).
+fn render_route(plan: &negotiation::Plan, fallback_start: &str, verb_name: &str, reg: &Value) -> String {
+    let mut line = plan.steps.first().map(|s| s.from.clone()).unwrap_or_else(|| fallback_start.to_string());
+    for s in &plan.steps {
+        match &s.kind {
+            negotiation::StepKind::Convert(name) => {
+                line.push_str(&format!(" →[{name}: {}]→ {}", channel_tier(reg, name), s.to));
+            }
+            negotiation::StepKind::Verb(inst) => {
+                let label = if inst.is_empty() { verb_name } else { inst.as_str() };
+                line.push_str(&format!(" →({label})→ {}", s.to));
+            }
+        }
+    }
+    line
 }
 
 /// The declared cost tier of a channel, for `--explain` display.
@@ -525,6 +536,47 @@ fn channel_tool(reg: &Value, name: &str) -> Option<String> {
         .and_then(|c| c.get("tool").and_then(|t| t.as_str()))
         .filter(|s| !s.is_empty())
         .map(String::from)
+}
+
+/// How deep the teaching 415 re-searches — deep enough to find any realistic
+/// route, bounded so a 415 stays fast on a large converter graph (§4.1).
+const TEACH_HOPS: u8 = 8;
+
+/// Teaching 415 (§4.1): the run found no route within the user's hop budget. Re-search
+/// at a deep-but-bounded budget (with the *installed* tools, so the suggestion is
+/// runnable) and, if a route exists, return a multi-line message that shows it and
+/// names the flag that would allow it — `--hops N` when the extra depth is input
+/// coercion, `--force` when it's >1 output hop (which `--hops` doesn't raise).
+/// `None` = no route even deep, so it's a genuine 415 (the tool hint handles the
+/// missing-tool case, and a route needing both more hops *and* a tool falls through
+/// to the plain 415 — an acceptable corner).
+fn deeper_route_hint(subject_type: &str, verb: &Value, target: &negotiation::Target, reg: &Value, available: &[String], current: negotiation::Hops) -> Option<String> {
+    let deep = negotiation::Hops { a: TEACH_HOPS, b: TEACH_HOPS };
+    let plan = negotiation::plan_request_using_bounded(subject_type, verb, target, reg, available, None, deep)?;
+    // Count converter hops on each side of the verb edge.
+    let (mut a_hops, mut b_hops, mut seen_verb) = (0u8, 0u8, false);
+    for s in &plan.steps {
+        match &s.kind {
+            negotiation::StepKind::Verb(_) => seen_verb = true,
+            negotiation::StepKind::Convert(_) if !seen_verb => a_hops += 1,
+            negotiation::StepKind::Convert(_) => b_hops += 1,
+        }
+    }
+    // Not actually a depth problem (route fits the current budget) — let the caller
+    // fall through to its other hints. Guards against a spurious teach.
+    if a_hops <= current.a && b_hops <= current.b {
+        return None;
+    }
+    let verb_name = verb.get("name").and_then(|n| n.as_str()).unwrap_or("");
+    let route = render_route(&plan, subject_type, verb_name, reg);
+    // Name the axis that's actually blocked and the flag that raises it. `--hops`
+    // only lifts layer A; an output chain >1 hop needs `--force` (§4.1).
+    let (intro, suggestion) = if b_hops > current.b.max(1) {
+        ("no route within the output-coercion budget".to_string(), "with --force".to_string())
+    } else {
+        (format!("no route within {} input hop(s)", current.a), format!("with --hops {a_hops} (or --force)"))
+    };
+    Some(format!("415 · {intro} — a deeper route exists:\n    {route}\n  allow it {suggestion}"))
 }
 
 /// For a 415 where tool-pruning may be the cause: re-plan tool-agnostically (as
