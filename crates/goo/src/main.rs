@@ -231,6 +231,7 @@ USAGE
     goo <verb> … [--hops N | --force]    allow deeper auto-coercion (default: 1 hop in, 1 out)
     goo --explain <verb> [@TYPE|subj]    Show the negotiation plan (route/415) — read-only
                                          [--as TYPE] [--using CHANNEL] [--explain-env tty|cosmic|desktop|piped]
+                                         [--explain-with route|steps|shell] (default: adaptive)
 
 GLOBAL
     -c, --config <file|dir>              merge an extra plugin config (repeatable; highest precedence)
@@ -254,16 +255,21 @@ EXAMPLES
 
 use goo_engine::shell::{bash_capture, bash_capture_bytes, bash_exec};
 
-/// `goo --explain VERB [SUBJECT|@TYPE] [--as TYPE] [--explain-env ENV]` — the
-/// negotiation plan explainer (goo-debug). Read-only: shows the Accept profile
-/// and the planned route (or a 415), never runs anything. `@<mime>` asserts the
-/// subject type virtually (no file needed); `--explain-env tty|cosmic|desktop|
-/// piped` overrides the detected environment (default: isatty + $WAYLAND_DISPLAY).
+/// `goo --explain VERB [SUBJECT|@TYPE] [--as TYPE] [--explain-env ENV]
+/// [--explain-with MODE]` — the negotiation plan explainer (goo-debug). Read-only:
+/// shows the Accept profile and the planned route (or a 415), never runs anything.
+/// `@<mime>` asserts the subject type virtually (no file needed); `--explain-env
+/// tty|cosmic|desktop|piped` overrides the detected environment (default: isatty +
+/// $WAYLAND_DISPLAY). The route line is richly rendered on a TTY (cost by color;
+/// lossy/network edges marked). `--explain-with route|steps|shell` picks the detail
+/// view (default: adaptive — `shell` commands for a ≤2-hop route, annotated `steps`
+/// beyond).
 fn cmd_explain(args: &[String]) -> i32 {
     let reg = registry::load_all();
     let (mut verb_name, mut subj, mut type_override, mut as_type, mut env_ovr, mut using) =
         (None, None, None, None, None, None);
     let (mut hops_flag, mut force): (Option<&str>, bool) = (None, false);
+    let mut explain_with: Option<&str> = None;
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
@@ -276,6 +282,11 @@ fn cmd_explain(args: &[String]) -> i32 {
             using = Some(v);
         } else if a == "--using" {
             using = args.get(i + 1).map(String::as_str);
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--explain-with=") {
+            explain_with = Some(v);
+        } else if a == "--explain-with" {
+            explain_with = args.get(i + 1).map(String::as_str);
             i += 1;
         } else if let Some(v) = a.strip_prefix("--hops=") {
             hops_flag = Some(v);
@@ -374,7 +385,24 @@ fn cmd_explain(args: &[String]) -> i32 {
             1
         }
         Some(plan) => {
-            println!("{}   (cost {})", render_route(&plan, &subject_type, verb_name, &reg), plan.cost);
+            println!("{}   (cost {})", render_route(&plan, &subject_type, verb_name, &reg, use_color()), plan.cost);
+            // Detail view (§ user request): `--explain-with steps|shell|route`, with
+            // an adaptive default — a runnable-ish `shell` block for simple routes
+            // (≤2 converter hops), annotated `steps` beyond. Understanding scales
+            // with route length; a full command for a deep route is less useful.
+            let conv_hops = plan.steps.iter().filter(|s| matches!(s.kind, negotiation::StepKind::Convert(_))).count();
+            let subj_path = subj.filter(|s| std::path::Path::new(s).exists());
+            let block = match explain_with {
+                Some("route") => String::new(),
+                Some("steps") => render_steps(&plan, &verb, verb_name, &reg),
+                Some("shell") => render_shell(&plan, &verb, &reg, subj_path),
+                Some(other) => return die(format!("explain: unknown --explain-with '{other}' (route|steps|shell)")),
+                None if conv_hops <= 2 => render_shell(&plan, &verb, &reg, subj_path),
+                None => render_steps(&plan, &verb, verb_name, &reg),
+            };
+            if !block.is_empty() {
+                println!("{block}");
+            }
             0
         }
     }
@@ -501,21 +529,140 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
 
 /// Render a plan as a one-line route — `from →[conv: tier]→ … →(verb)→ to` — for
 /// `--explain` and the teaching 415. `fallback_start` types the head when the plan
-/// has no steps (shouldn't happen, but keeps it total).
-fn render_route(plan: &negotiation::Plan, fallback_start: &str, verb_name: &str, reg: &Value) -> String {
+/// has no steps (shouldn't happen, but keeps it total). `color` emits ANSI styling
+/// (auto-on in a TTY via [`use_color`]); the teaching 415 passes `false` (stderr).
+///
+/// Cost is shown by *color*, not inline text — converter names are dim, and only
+/// `lossy`/`network` edges carry a `(tier)` marker (kept even in plain mode, since
+/// those are the edges that matter; `cheap`/`normal`/`free` are noise).
+fn render_route(plan: &negotiation::Plan, fallback_start: &str, verb_name: &str, reg: &Value, color: bool) -> String {
     let mut line = plan.steps.first().map(|s| s.from.clone()).unwrap_or_else(|| fallback_start.to_string());
     for s in &plan.steps {
         match &s.kind {
             negotiation::StepKind::Convert(name) => {
-                line.push_str(&format!(" →[{name}: {}]→ {}", channel_tier(reg, name), s.to));
+                let tier = channel_tier(reg, name);
+                let notable = tier == "lossy" || tier == "network";
+                let marker = if notable { format!(" ({tier})") } else { String::new() };
+                if color {
+                    let arrow = format!("{}→{C_RESET}", tier_color(&tier));
+                    let body = format!("{C_DIM}{name}{C_RESET}{}{marker}{}", tier_color(&tier), C_RESET);
+                    line.push_str(&format!(" {arrow} {body} {arrow} {}", s.to));
+                } else {
+                    line.push_str(&format!(" → {name}{marker} → {}", s.to));
+                }
             }
             negotiation::StepKind::Verb(inst) => {
                 let label = if inst.is_empty() { verb_name } else { inst.as_str() };
-                line.push_str(&format!(" →({label})→ {}", s.to));
+                if color {
+                    line.push_str(&format!(" → {C_DIM}({label}){C_RESET} → {}", s.to));
+                } else {
+                    line.push_str(&format!(" → ({label}) → {}", s.to));
+                }
             }
         }
     }
     line
+}
+
+// Hand-rolled ANSI (the scope is ~4 codes — not worth a dep). `use_color` gates them.
+const C_RESET: &str = "\x1b[0m";
+const C_DIM: &str = "\x1b[2m";
+const C_YELLOW: &str = "\x1b[33m"; // lossy
+const C_MAGENTA: &str = "\x1b[35m"; // network
+
+/// The accent color for a cost tier — only `lossy`/`network` stand out; the rest
+/// render at the terminal default (empty prefix).
+fn tier_color(tier: &str) -> &'static str {
+    match tier {
+        "lossy" => C_YELLOW,
+        "network" => C_MAGENTA,
+        _ => "",
+    }
+}
+
+/// Whether to emit ANSI styling: a real terminal, `NO_COLOR` unset, `TERM` not
+/// `dumb`. The single gate — callers pass the bool into renderers rather than
+/// re-probing. Piped/redirected stdout (incl. the bats suite) ⇒ plain.
+fn use_color() -> bool {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    if std::env::var("TERM").as_deref() == Ok("dumb") {
+        return false;
+    }
+    std::io::stdout().is_terminal()
+}
+
+/// The cmd template a plan step runs: a converter's channel `cmd`, the verb's own
+/// `cmd` (plain verb), or the chosen usage channel's `cmd` (instrument). `None`
+/// when none is declared (e.g. a `present` identity verb).
+fn step_cmd(step: &negotiation::Step, verb: &Value, reg: &Value) -> Option<String> {
+    let channel_cmd = |name: &str| -> Option<String> {
+        reg.get("channels")
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|c| c.get("name").and_then(Value::as_str) == Some(name))
+            .and_then(|c| c.get("cmd").and_then(Value::as_str))
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+    };
+    match &step.kind {
+        negotiation::StepKind::Convert(name) => channel_cmd(name),
+        negotiation::StepKind::Verb(inst) if !inst.is_empty() => channel_cmd(inst),
+        negotiation::StepKind::Verb(_) => verb.get("cmd").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from),
+    }
+}
+
+/// `--explain-with steps`: an annotated per-step list — each type transition plus
+/// the exact `cmd` *template* goo runs (placeholders intact, so the plumbing is
+/// visible). The "what happens & how" view.
+fn render_steps(plan: &negotiation::Plan, verb: &Value, verb_name: &str, reg: &Value) -> String {
+    let mut out = String::new();
+    for (i, s) in plan.steps.iter().enumerate() {
+        let label = match &s.kind {
+            negotiation::StepKind::Convert(name) => name.clone(),
+            negotiation::StepKind::Verb(inst) if inst.is_empty() => format!("{verb_name} (verb)"),
+            negotiation::StepKind::Verb(inst) => format!("{inst} (verb)"),
+        };
+        out.push_str(&format!("  {}. {label}: {} → {}\n", i + 1, s.from, s.to));
+        if let Some(cmd) = step_cmd(s, verb, reg) {
+            out.push_str(&format!("       {cmd}\n"));
+        }
+    }
+    out.trim_end().to_string()
+}
+
+/// `--explain-with shell`: the commands goo runs, in order, with the subject
+/// substituted into the input-reading placeholders when a real file is known
+/// (else placeholders stay literal — honest for a virtual `@type` subject). NOT a
+/// reconstructed one-liner: goo feeds each step the previous step's output, so the
+/// commands are shown per-line with their `# from → to` data flow, not piped.
+fn render_shell(plan: &negotiation::Plan, verb: &Value, reg: &Value, subj_path: Option<&str>) -> String {
+    let mut out = String::from("  commands (in run order — each step reads the previous step's output):\n");
+    // Only the *first* cmd-bearing step reads the subject; substitute the real path
+    // there. Later steps' `{in.path}` is the prior step's output (a temp file goo
+    // threads) — left literal rather than dishonestly re-pointed at the subject.
+    let mut first = true;
+    for s in &plan.steps {
+        let Some(cmd) = step_cmd(s, verb, reg) else { continue };
+        out.push_str(&format!("    # {} → {}\n", s.from, s.to));
+        let rendered = if first { substitute_subject(&cmd, subj_path) } else { cmd };
+        out.push_str(&format!("    {rendered}\n"));
+        first = false;
+    }
+    out.trim_end().to_string()
+}
+
+/// Fill the subject path into the input placeholders for the `shell` view. Only
+/// path placeholders, and only when a real file is known; everything else (incl.
+/// `{subject.text}` for a virtual subject) is left literal rather than blanked.
+fn substitute_subject(cmd: &str, subj_path: Option<&str>) -> String {
+    let Some(p) = subj_path else { return cmd.to_string() };
+    let q = format!("'{}'", p.replace('\'', "'\\''"));
+    cmd.replace("{in.path|q}", &q)
+        .replace("{in.path}", p)
+        .replace("{subject.metadata.path|q}", &q)
+        .replace("{subject.metadata.path}", p)
 }
 
 /// The declared cost tier of a channel, for `--explain` display.
@@ -568,7 +715,7 @@ fn deeper_route_hint(subject_type: &str, verb: &Value, target: &negotiation::Tar
         return None;
     }
     let verb_name = verb.get("name").and_then(|n| n.as_str()).unwrap_or("");
-    let route = render_route(&plan, subject_type, verb_name, reg);
+    let route = render_route(&plan, subject_type, verb_name, reg, false);
     // Name the axis that's actually blocked and the flag that raises it. `--hops`
     // only lifts layer A; an output chain >1 hop needs `--force` (§4.1).
     let (intro, suggestion) = if b_hops > current.b.max(1) {

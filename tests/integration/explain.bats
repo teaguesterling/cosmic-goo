@@ -91,3 +91,47 @@ setup() {
     run "$GOO" --explain upper "$BATS_TEST_TMPDIR/s.txt" --explain-env piped </dev/null
     [[ "$output" == *"(via libmagic)"* ]]
 }
+
+# --- rich rendering: cost by color/marker, not inline ':cheap' noise ---
+@test "explain: a lossy edge is marked '(lossy)', no inline ':cheap'" {
+    run "$GOO" --explain view @image/png --explain-env tty </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"chafa (lossy)"* ]]   # the edge that matters is flagged
+    [[ "$output" != *": cheap"* ]]         # cheap/normal tiers dropped from the line
+}
+
+# --- detail modes: --explain-with route|steps|shell + adaptive default ---
+@test "explain: --explain-with steps lists numbered steps with the cmd template" {
+    run "$GOO" --explain json-keys @text/csv --explain-env tty --explain-with steps </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1."* ]]              # numbered
+    [[ "$output" == *"csv2json"* ]]        # the coercion step
+    [[ "$output" == *"{in.path"* ]]        # the literal cmd template (plumbing visible)
+}
+
+@test "explain: --explain-with shell shows the commands block" {
+    run "$GOO" --explain view @image/png --explain-env tty --explain-with shell </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"commands"* ]]
+    [[ "$output" == *"chafa"* ]]
+}
+
+@test "explain: --explain-with route is the one-liner only (no detail block)" {
+    run "$GOO" --explain view @image/png --explain-env tty --explain-with route </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"text/x-ansi"* ]]     # the route line is still there
+    [[ "$output" != *"commands"* ]]        # …but no shell block
+    [[ "$output" != *"1."* ]]              # …and no steps block
+}
+
+@test "explain: adaptive default shows a detail block for a simple route" {
+    run "$GOO" --explain view @image/png --explain-env tty </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"commands"* ]]        # ≤2 hops → the shell block by default
+}
+
+@test "explain: an unknown --explain-with mode fails cleanly" {
+    run "$GOO" --explain view @image/png --explain-env tty --explain-with bogus </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"unknown --explain-with"* ]]
+}
