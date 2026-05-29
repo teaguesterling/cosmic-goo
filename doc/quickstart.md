@@ -51,6 +51,9 @@ things you reach for, or the full `goo://` form:
 | `:apps/firefox` | the Firefox app · `goo://apps/firefox` |
 | `:ssh-hosts/prod`, `:tmux`, `:processes` | a source entity (17 sources ship) |
 
+A relative file needs the leading `./` (or `~/`, or an absolute path): `goo
+json-keys ./data.json`. A bare `data.json` is read as *literal text*, not a file.
+
 ```
 $ goo upper ^                       # uppercase whatever's on the clipboard
 $ goo activate firefox              # focus the app  (operate on a running app — jq can't)
@@ -67,7 +70,7 @@ and goo routes it through a converter first. `goo --explain` shows that route (i
 your debug lens — *what would happen, and why*):
 
 ```
-$ goo --explain json-keys people.csv
+$ goo --explain json-keys ./people.csv
 subject: text/csv (via libmagic)
 text/csv →[csv2json: cheap]→ application/json →(json-keys)→ text/plain
 ```
@@ -75,7 +78,7 @@ text/csv →[csv2json: cheap]→ application/json →(json-keys)→ text/plain
 With the converter's tool (`mlr`) installed, it just runs:
 
 ```
-$ goo json-keys people.csv
+$ goo json-keys ./people.csv
 age
 name
 ```
@@ -84,7 +87,7 @@ name
 error:
 
 ```
-$ goo json-keys people.csv
+$ goo json-keys ./people.csv
 goo: 415 · no route — can't route text/csv through 'json-keys' — install: mlr
 ```
 
@@ -97,7 +100,7 @@ By default the result prints to stdout (pipe it like any tool). Or send it
 somewhere: **`-o <file>`** writes a file, **`--to ^`** puts it on the clipboard.
 
 ```
-$ goo json-pretty data.json -o pretty.json     # format → a file
+$ goo json-pretty ./data.json -o pretty.json    # format → a file
 $ goo upper "ship it" --to ^                    # → the clipboard
 ```
 
@@ -130,16 +133,13 @@ reference: [`plugin-authoring.md`](plugin-authoring.md).
 
 ## 5. Instruments — *what performs* a verb (`--using`, preview)
 
-A verb can be performed by different **instruments**. The mechanism ships today —
-`--using` pins one, and it composes with `--to`:
-
-```
-$ goo say "hi" --using quiet --to result.txt   # pick the instrument, route the result
-```
-
-What's *coming* is the headline instrument — **`fabric`** ("summarize this *via* the
-LLM tool"), being decomposed out of the legacy `--via` adverb. So `--using` works;
-its most interesting demo is still landing.
+A verb can be performed by different **instruments** — `goo <verb> X --using
+<channel>` pins which one, and it composes with `--to` (instrument and destination
+are orthogonal slots). The mechanism ships and is tested. But **no built-in verb
+offers an instrument *choice* yet**, so there's nothing to demo it with on a stock
+install — the headline instrument, **`fabric`** ("summarize this *via* the LLM
+tool"), is still being decomposed out of the legacy `--via` adverb. So treat
+`--using` as wired-and-waiting: real, but without its first shipped instrument.
 
 ---
 
