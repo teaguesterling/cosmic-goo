@@ -213,6 +213,14 @@ EOF
     [ "$(cat "$BATS_TEST_TMPDIR/q.txt")" = "hi" ]   # quiet = lowercase, then routed to the file
 }
 
+# wart #2: piped stdout delivers bytes even when $WAYLAND_DISPLAY is set — the
+# coercion path must NOT route to a surface when someone's reading the pipe.
+@test "execute: piped stdout delivers bytes even with a display set" {
+    run env WAYLAND_DISPLAY=wayland-test DISPLAY=:99 "$GOO" revit "$BATS_TEST_TMPDIR/sub.txt" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "OOG OLLEH" ]   # coerced text → up → rev, delivered to the pipe (not a surface)
+}
+
 # bytes mode: --to routes BINARY intact (no utf8-lossy inflation).
 @test "execute: --to preserves raw binary bytes (no utf8 corruption)" {
     run "$GOO" rawbytes "$BATS_TEST_TMPDIR/sub.txt" --to "$BATS_TEST_TMPDIR/raw.bin" </dev/null

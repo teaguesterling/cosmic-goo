@@ -417,9 +417,16 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
     let (tty, display) = if dest.is_some() {
         (false, false)
     } else {
-        let disp = std::env::var("WAYLAND_DISPLAY").is_ok_and(|v| !v.is_empty())
-            || std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty());
-        (std::io::stdout().is_terminal(), disp)
+        // A desktop surface is only a viable destination when stdout is a TTY
+        // (interactive). When stdout is piped/redirected, the destination IS the
+        // pipe → deliver bytes, regardless of $WAYLAND_DISPLAY — else
+        // `goo yaml data.csv | less` would route to a surface and the pipe gets
+        // nothing. (A GUI launcher requests a surface explicitly, not via this.)
+        let tty = std::io::stdout().is_terminal();
+        let disp = tty
+            && (std::env::var("WAYLAND_DISPLAY").is_ok_and(|v| !v.is_empty())
+                || std::env::var("DISPLAY").is_ok_and(|v| !v.is_empty()));
+        (tty, disp)
     };
     let mut target = negotiation::target_from_env(tty, display);
     if let Some(as_t) = adverbs.get("as").and_then(|v| v.as_str()) {
