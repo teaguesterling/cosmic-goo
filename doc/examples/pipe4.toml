@@ -1,0 +1,51 @@
+# A four-hop chain that proves goo executes a LONG pipe end-to-end.
+#
+# HONESTY NOTE: text/x-up / -rev / -b64 / -tagged are SYNTHETIC, non-standard
+# (`x-`) types invented purely to force the chain — uppercasing or reversing text
+# doesn't actually change its content *type* (it's still text/plain). Each channel
+# is one-directional, so the planner has exactly ONE route and must chain all four.
+# This demonstrates the executor/planner on a long pipe — NOT real-world coercion.
+# For real coercion across real types, see duckdb-formats.toml (csv/json/parquet)
+# and goo-demo.toml (csv→json→yaml). And note: with a rich graph of real formats
+# the planner finds SHORT optimal paths — forcing 4 hops takes a contrivance like
+# this one. Every transform is visible in the output, so you can read off all four.
+#
+#   goo -c doc/examples/pipe4.toml pipe4 +hello
+#   text/plain →[upper]→ x-up →[reverse]→ x-rev →[base64]→ x-b64 →[tag]→ x-tagged
+#   "hello"    → HELLO    → OLLEH      → T0xMRUg=     → <<<T0xMRUg=>>>
+#
+# `goo --explain pipe4 +hello` shows the discovered four-hop route.
+name = "pipe4"
+
+[[channels]]
+name = "p-upper"
+accepts = ["text/plain"]
+emits = "text/x-up"
+cost = "cheap"
+cmd = "tr a-z A-Z < {in.path|q}"
+
+[[channels]]
+name = "p-reverse"
+accepts = ["text/x-up"]
+emits = "text/x-rev"
+cost = "cheap"
+cmd = "rev < {in.path|q}"
+
+[[channels]]
+name = "p-base64"
+accepts = ["text/x-rev"]
+emits = "text/x-b64"
+cost = "cheap"
+cmd = "base64 < {in.path|q}"
+
+[[channels]]
+name = "p-tag"
+accepts = ["text/x-b64"]
+emits = "text/x-tagged"
+cost = "cheap"
+cmd = "sed 's/^/<<</; s/$/>>>/' < {in.path|q}"
+
+[[verbs]]
+name = "pipe4"
+accepts = ["text/x-tagged"]
+cmd = "cat -- {subject.metadata.path|q}"

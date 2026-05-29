@@ -1,0 +1,70 @@
+# Universal data-format coercion via DuckDB — one tool, a whole graph of edges.
+# Each channel is the user's pattern:
+#   duckdb -s "COPY (FROM read_<src>('<file>')) TO '/dev/stdout' (FORMAT <dst>)"
+# CSV ↔ JSON ↔ Parquet (Parquet is binary — it flows intact thanks to bytes-mode
+# capture). `tool = "duckdb"` so the planner prunes/install-hints when it's absent.
+# Load with:  goo -c doc/examples/duckdb-formats.toml <verb> <file>
+#
+# With this loaded, ANY verb that wants JSON can be fed a CSV or a Parquet, and
+# the planner finds the conversion — `goo json-keys data.parquet` just works.
+name = "duckdb-formats"
+
+[[types]]
+name = "text/csv"
+extensions = [".csv"]
+
+[[types]]
+name = "application/vnd.apache.parquet"
+display = "Parquet"
+extensions = [".parquet", ".pq"]
+
+# ── CSV ↔ JSON ──
+[[channels]]
+name = "ddb-csv-json"
+accepts = ["text/csv"]
+emits = "application/json"
+cost = "cheap"
+tool = "duckdb"
+cmd = "duckdb -s \"COPY (FROM read_csv('{in.path}')) TO '/dev/stdout' (FORMAT json, ARRAY true)\""
+
+[[channels]]
+name = "ddb-json-csv"
+accepts = ["application/json"]
+emits = "text/csv"
+cost = "cheap"
+tool = "duckdb"
+cmd = "duckdb -s \"COPY (FROM read_json('{in.path}')) TO '/dev/stdout' (FORMAT csv)\""
+
+# ── CSV ↔ Parquet (binary) ──
+[[channels]]
+name = "ddb-csv-parquet"
+accepts = ["text/csv"]
+emits = "application/vnd.apache.parquet"
+cost = "cheap"
+tool = "duckdb"
+cmd = "duckdb -s \"COPY (FROM read_csv('{in.path}')) TO '/dev/stdout' (FORMAT parquet)\""
+
+[[channels]]
+name = "ddb-parquet-csv"
+accepts = ["application/vnd.apache.parquet"]
+emits = "text/csv"
+cost = "cheap"
+tool = "duckdb"
+cmd = "duckdb -s \"COPY (FROM read_parquet('{in.path}')) TO '/dev/stdout' (FORMAT csv)\""
+
+# ── JSON ↔ Parquet (binary) ──
+[[channels]]
+name = "ddb-json-parquet"
+accepts = ["application/json"]
+emits = "application/vnd.apache.parquet"
+cost = "cheap"
+tool = "duckdb"
+cmd = "duckdb -s \"COPY (FROM read_json('{in.path}')) TO '/dev/stdout' (FORMAT parquet)\""
+
+[[channels]]
+name = "ddb-parquet-json"
+accepts = ["application/vnd.apache.parquet"]
+emits = "application/json"
+cost = "cheap"
+tool = "duckdb"
+cmd = "duckdb -s \"COPY (FROM read_parquet('{in.path}')) TO '/dev/stdout' (FORMAT json, ARRAY true)\""
