@@ -28,14 +28,14 @@ cmd = "cat {subject.metadata.path|q}"
 EOF
 
     # Skip unless this engine has --explain (bash doesn't; it also can't import).
-    run "$GOO" --explain eat-text @text/plain </dev/null
+    run "$GOO" --explain eat-text =text/plain </dev/null
     if ! echo "$output" | grep -q "Accept:"; then
         skip "engine has no --explain / OS-MIME importer"
     fi
 }
 
 @test "mimedb: imported subclasses let a text verb accept image/svg+xml" {
-    run env COSMIC_GOO_MIME_DIRS="$MIME_FIXTURE" "$GOO" --explain eat-text @image/svg+xml </dev/null
+    run env COSMIC_GOO_MIME_DIRS="$MIME_FIXTURE" "$GOO" --explain eat-text =image/svg+xml </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"eat-text"* ]]
     [[ "$output" == *"text/plain"* ]]
@@ -43,11 +43,11 @@ EOF
 }
 
 @test "mimedb: opt-in — without COSMIC_GOO_MIME_DIRS, svg is not text (415)" {
-    run "$GOO" --explain eat-text @image/svg+xml </dev/null   # var unset → no import
+    run "$GOO" --explain eat-text =image/svg+xml </dev/null   # var unset → no import
     [[ "$output" == *"415"* ]]
 }
 
 @test "mimedb: a missing mime dir imports nothing (still 415)" {
-    run env COSMIC_GOO_MIME_DIRS="$BATS_TEST_TMPDIR/nope" "$GOO" --explain eat-text @image/svg+xml </dev/null
+    run env COSMIC_GOO_MIME_DIRS="$BATS_TEST_TMPDIR/nope" "$GOO" --explain eat-text =image/svg+xml </dev/null
     [[ "$output" == *"415"* ]]
 }

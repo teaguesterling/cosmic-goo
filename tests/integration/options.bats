@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# `goo options <subject | @TYPE>` — the OPTIONS discovery surface (goo-protocol §7).
+# `goo options <subject | =TYPE>` — the OPTIONS discovery surface (goo-protocol §7).
 # Emits JSON: applicable verbs + per-verb slots (Using:/With:/object_type) —
 # the single shape the compose-gui's verb-pick, completion, and (later) the daemon
 # all consume. Read-only. Rust-only (exposes `Using:` channels; bash has none).
@@ -18,14 +18,14 @@ setup() {
     mkdir -p "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$HOME"
 
     # Skip unless this engine ships `goo options` (bash doesn't).
-    run "$GOO" options @text/markdown </dev/null
+    run "$GOO" options =text/markdown </dev/null
     if ! echo "$output" | grep -q '"schema_version"'; then
         skip "engine has no `goo options`"
     fi
 }
 
-@test "options: @TYPE prints a JSON view with allow + schema_version" {
-    run "$GOO" options @text/markdown </dev/null
+@test "options: =TYPE prints a JSON view with allow + schema_version" {
+    run "$GOO" options =text/markdown </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *'"schema_version": "0.1"'* ]]
     [[ "$output" == *'"stable": false'* ]]
@@ -35,7 +35,7 @@ setup() {
 }
 
 @test "options: with-slots populate from a verb's uses_adverbs (critique/via)" {
-    run "$GOO" options @text/markdown </dev/null
+    run "$GOO" options =text/markdown </dev/null
     [ "$status" -eq 0 ]
     # critique → uses `via` (a selector adverb with real choices in claude-routing.toml)
     [[ "$output" == *'"critique"'* ]]
@@ -46,7 +46,7 @@ setup() {
 }
 
 @test "options: think exposes BOTH via and depth (multi-adverb verb)" {
-    run "$GOO" options @text/markdown </dev/null
+    run "$GOO" options =text/markdown </dev/null
     [ "$status" -eq 0 ]
     # `think` uses_adverbs = ["via", "depth"]; both must appear in its `with`.
     [[ "$output" == *'"think"'* ]]
@@ -58,7 +58,7 @@ setup() {
 # prompt, description). This is the contract the daemon-as-transport will wrap;
 # it must hold against the real registry, not just the unit-test fixture.
 @test "options: never leaks verb internals (no cmd / prompt in the output)" {
-    run "$GOO" options @text/markdown </dev/null
+    run "$GOO" options =text/markdown </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" != *'"cmd"'* ]]
     [[ "$output" != *'"prompt"'* ]]
@@ -67,7 +67,7 @@ setup() {
 
 # Image subject → image verbs only; the text verbs are absent from `allow`.
 @test "options: allow is type-scoped (image subject → image verbs)" {
-    run "$GOO" options @image/png </dev/null
+    run "$GOO" options =image/png </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" != *'"critique"'* ]]    # text-only, not for images
     [[ "$output" != *'"trim"'* ]]

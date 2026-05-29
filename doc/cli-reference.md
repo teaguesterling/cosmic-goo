@@ -7,14 +7,14 @@ goo                                      # no args: prints this usage (a true CL
 goo <verb> [POSITIONAL ...] [--FLAG=VALUE ...]
 goo <verb> <subject> [--as TYPE] [--to DEST | -o FILE] [--using CHANNEL] [--hops N | --force]
 goo <address>                            # no verb: resolve the address, run its type's default verb
-goo --explain <verb> [@TYPE|subject] …   # show the negotiation plan (route / 415) — never executes
+goo --explain <verb> [=TYPE|subject] …   # show the negotiation plan (route / 415) — never executes
 goo -c <file|dir> <verb> …               # merge an extra plugin config for this run (repeatable)
 goo list <source>
 goo describe <verb>
 goo plugins
 goo validate
 goo compose                              # build a sentence (scripted via GOO_COMPOSE_ANSWERS)
-goo options <subject|@TYPE>              # JSON: applicable verbs + their slots (discovery; unstable v1)
+goo options <subject|=TYPE>              # JSON: applicable verbs + their slots (discovery; unstable v1)
 goo --help | -h | help
 ```
 
@@ -104,7 +104,7 @@ echo "https://example.com" | goo dispatch   # no rule → text/x-uri default ver
 
 Rules live in plugin TOML (see [plugin authoring](plugin-authoring.md#content-dispatch)); none ship by default — dispatch only does what your config tells it to. `goo validate` checks every rule has a `matches` and a `verb` that exists.
 
-### `goo options <subject | @TYPE>`
+### `goo options <subject | =TYPE>`
 
 The OPTIONS discovery surface ([goo-protocol §7](design/goo-protocol.md)): the verbs
 applicable to the subject and, per verb, the slots a caller can fill — `Using:`
@@ -152,6 +152,7 @@ A subject argument can take several forms. They all resolve through one model: e
 | `:dom:query?k=v` | …refined by field (case-insensitive substring; `*` optional) | `goo activate :app:firefox?title=*Claude*` |
 | `:dom` | the domain's first/default item | `goo summarize :clip` |
 | `^` / `^name` | clipboard / named buffer (built-in) | `goo summarize ^` |
+| `=<mime>` | **virtual-type assertion** (subject is *just* that type — no content, no id) | `goo options =text/markdown` |
 | `goo://dom/path` | the canonical URI directly (machines/IPC) | `goo summarize 'goo://file//abs/x.md'` |
 
 **One canonical form:** everything rewrites to `goo://<domain>/<path>[;q=<query>][?refine]`. A **value** (`goo://app/firefox`, sigil `:app/firefox`) is the **exact** id; a **search** (`goo://app/;q=firefox`, sigil `:app:firefox`) is **fuzzy** over the domain's items. Resolution is strict — the form says which you mean. The built-in **value domains** `text` / `file` / `clip` / `sel` / `stdin` / `url` cover the non-source subjects; every other domain is a `[[sources]]` entry (by `name` or `prefix`).
@@ -306,10 +307,11 @@ prints `— install: <tool>` naming the tools on the would-be route.
 
 A read-only view of what goo *would* do: the Accept profile, the typed subject (and
 which signal chose the type), and the planned route — or the `415`. It never runs
-anything, and `@<mime>` lets you assert a subject type virtually (no file needed).
+anything, and `=<mime>` (or `:type/<mime>`, or `goo://type/<mime>`) lets you assert
+a subject type virtually (no file needed).
 
 ```
-goo --explain <verb> [@TYPE | <subject>] [flags]
+goo --explain <verb> [=TYPE | <subject>] [flags]
 ```
 
 | Flag | Meaning |

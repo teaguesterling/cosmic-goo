@@ -224,14 +224,14 @@ USAGE
     goo list <source>                    Emit source items as JSON
     goo describe <verb>                  Show verb details
     goo dispatch <input>                 Classify content and route to a verb
-    goo options <subject|@TYPE>          Applicable verbs + their slots, as JSON (discovery; unstable v1)
+    goo options <subject|=TYPE>          Applicable verbs + their slots, as JSON (discovery; unstable v1)
     goo compose                          Build a sentence (scripted via GOO_COMPOSE_ANSWERS)
     goo plugins                          List loaded plugins
     goo validate                         Validate all loaded plugins
     goo <verb> … [--using CHANNEL]       --using pins the channel that performs a verb
     goo <verb> … [--to DEST | -o FILE]   route the result to a file / clipboard (^) instead of stdout
     goo <verb> … [--hops N | --force]    allow deeper auto-coercion (default: 1 hop in, 1 out)
-    goo --explain <verb> [@TYPE|subj]    Show the negotiation plan (route/415) — read-only
+    goo --explain <verb> [=TYPE|subj]    Show the negotiation plan (route/415) — read-only
                                          [--as TYPE] [--using CHANNEL] [--explain-env tty|cosmic|desktop|piped]
                                          [--explain-with route|steps|shell] (default: adaptive)
                                          [--paths [--max-hops C] [--format text|mermaid]]  all routes A→B
@@ -258,10 +258,11 @@ EXAMPLES
 
 use goo_engine::shell::{bash_capture, bash_capture_bytes, bash_exec};
 
-/// `goo --explain VERB [SUBJECT|@TYPE] [--as TYPE] [--explain-env ENV]
+/// `goo --explain VERB [SUBJECT|=TYPE] [--as TYPE] [--explain-env ENV]
 /// [--explain-with MODE]` — the negotiation plan explainer (goo-debug). Read-only:
 /// shows the Accept profile and the planned route (or a 415), never runs anything.
-/// `@<mime>` asserts the subject type virtually (no file needed); `--explain-env
+/// `=<mime>` asserts the subject type virtually (no file needed), via the built-in
+/// `=` sigil shipped in `core.toml`; `--explain-env
 /// tty|cosmic|desktop|piped` overrides the detected environment (default: isatty +
 /// $WAYLAND_DISPLAY). The route line is richly rendered on a TTY (cost by color;
 /// lossy/network edges marked). `--explain-with route|steps|shell` picks the detail
@@ -270,8 +271,8 @@ use goo_engine::shell::{bash_capture, bash_capture_bytes, bash_exec};
 /// A→B (the route-graph debugger) instead of the single chosen plan.
 fn cmd_explain(args: &[String]) -> i32 {
     let reg = registry::load_all();
-    let (mut verb_name, mut subj, mut type_override, mut as_type, mut env_ovr, mut using) =
-        (None, None, None, None, None, None);
+    let (mut verb_name, mut subj, mut as_type, mut env_ovr, mut using): (Option<&str>, Option<&str>, Option<&str>, Option<&str>, Option<&str>) =
+        (None, None, None, None, None);
     let (mut hops_flag, mut force): (Option<&str>, bool) = (None, false);
     let mut explain_with: Option<&str> = None;
     let (mut paths, mut max_hops_flag, mut format_flag): (bool, Option<&str>, Option<&str>) = (false, None, None);
@@ -317,8 +318,6 @@ fn cmd_explain(args: &[String]) -> i32 {
         } else if a == "--explain-env" {
             env_ovr = args.get(i + 1).map(String::as_str);
             i += 1;
-        } else if let Some(t) = a.strip_prefix('@') {
-            type_override = Some(t); // @<mime> — assert the subject type virtually
         } else if verb_name.is_none() {
             verb_name = Some(a);
         } else if subj.is_none() {
@@ -329,20 +328,30 @@ fn cmd_explain(args: &[String]) -> i32 {
 
     let verb_name = match verb_name {
         Some(v) => v,
-        None => return die("explain: usage: goo --explain VERB [@TYPE|subject] [--as TYPE] [--explain-env tty|cosmic|desktop|piped]"),
+        None => return die("explain: usage: goo --explain VERB [=TYPE|subject] [--as TYPE] [--explain-env tty|cosmic|desktop|piped]"),
     };
     let verb = match reg["verbs"].as_array().and_then(|a| a.iter().find(|v| v["name"].as_str() == Some(verb_name))) {
         Some(v) => v.clone(),
         None => return die(format!("explain: unknown verb '{verb_name}'")),
     };
 
-    // Type the subject the SAME WAY the run does — via the detection signals —
-    // and record which fired, so the annotation is truthful (not detect_path /
-    // detect_content directly, which would bypass the extension signal + checkers).
-    let (subject_type, type_source): (String, &str) = if let Some(t) = type_override {
-        (t.to_string(), "explicit")
-    } else if let Some(s) = subj {
-        if std::path::Path::new(s).exists() {
+    // Type the subject the SAME WAY the run does — via the detection signals — and
+    // record which fired, so the annotation is truthful. The narrow exception:
+    // when the subject is a *type-domain* address (`=<mime>` / `:type/<mime>` /
+    // `goo://type/<mime>`), the user has *explicitly asserted* the type — route
+    // through `address::resolve` and label `explicit`. Every other shape (file
+    // paths, URLs, sigil-+/^, bare text) keeps its provenance: extension, libmagic,
+    // checker, content.
+    let (subject_type, type_source): (String, &str) = if let Some(s) = subj {
+        if address::canonicalize(s, &reg).starts_with("goo://type/") {
+            match address::resolve(s, &reg, None) {
+                Ok(subject) => (
+                    subject.get("type").and_then(Value::as_str).unwrap_or("application/octet-stream").to_string(),
+                    "explicit",
+                ),
+                Err(e) => return die(e.replace("address: ", "")),
+            }
+        } else if std::path::Path::new(s).exists() {
             address::type_for_path(s, &reg)
                 .unwrap_or_else(|_| ("application/octet-stream".into(), "libmagic"))
         } else if let Some((t, src)) = mime::infer_for_with_source(s, &verb, &reg) {
@@ -351,7 +360,7 @@ fn cmd_explain(args: &[String]) -> i32 {
             (mime::detect_content(s), "content")
         }
     } else {
-        return die("explain: needs a subject — e.g. `@image/png` or a file path");
+        return die("explain: needs a subject — e.g. `=image/png` or a file path");
     };
 
     let (tty, display) = match env_ovr {
@@ -445,7 +454,7 @@ fn cmd_explain(args: &[String]) -> i32 {
     }
 }
 
-/// `goo options <subject | @TYPE>` — the OPTIONS discovery surface (goo-protocol
+/// `goo options <subject | =TYPE>` — the OPTIONS discovery surface (goo-protocol
 /// §7): the verbs applicable to the subject and, per verb, the slots a caller can
 /// fill (`Using:` instruments, `With:` adverbs + their choices, `object_type`).
 /// Emits JSON — the single composable surface the compose-gui's verb-pick,
@@ -455,18 +464,16 @@ fn cmd_explain(args: &[String]) -> i32 {
 fn cmd_options(args: &[String]) -> i32 {
     let reg = registry::load_all();
     let Some(arg) = args.iter().find(|a| !a.starts_with('-')) else {
-        return die("options: usage: goo options <subject | @TYPE>");
+        return die("options: usage: goo options <subject | =TYPE>");
     };
-    // Mirror --explain's subject handling: `@<mime>` asserts the type virtually
-    // (valid_when predicates needing .text/.metadata won't fire); otherwise resolve
-    // the address to a full subject so valid_when filtering is accurate.
-    let subject = if let Some(t) = arg.strip_prefix('@') {
-        json!({ "type": t })
-    } else {
-        match address::resolve(arg, &reg, None) {
-            Ok(s) => s,
-            Err(e) => return die(e.replace("address: ", "")),
-        }
+    // Everything goes through the addressing layer — explicit forms (`=<mime>`,
+    // `:type/<mime>`, `goo://…`, sigils, native shapes) and bare content alike. The
+    // `=` sigil (`core.toml`) rewrites `=text/markdown` → `goo://type/text/markdown`,
+    // which resolves to a virtual subject `{type: "text/markdown"}` — same shape
+    // the old `@<mime>` produced, now canonical.
+    let subject = match address::resolve(arg, &reg, None) {
+        Ok(s) => s,
+        Err(e) => return die(e.replace("address: ", "")),
     };
     let view = options::options_for(&reg, &subject);
     match serde_json::to_string_pretty(&view) {

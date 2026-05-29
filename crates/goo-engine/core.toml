@@ -11,3 +11,13 @@ name = "core"
 name = "json"
 target = "application/json"
 builtin = "json"
+
+# Virtual-type sigil: `=<mime>` rewrites to `goo://type/<mime>`, which the address
+# layer resolves to a subject `{type: "<mime>"}`. Used by `--explain` / `goo options`
+# to preview a plan or discovery surface for a hypothetical subject of that type,
+# without needing a real file. Loaded as a built-in; a user plugin can override `=`
+# (last-loaded wins) — but the `type` value-domain stays available via `:type/<mime>`.
+[[sigils]]
+char = "="
+expands = "goo://type/"
+description = "virtual-type assertion (=text/markdown, =image/png, …)"

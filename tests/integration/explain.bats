@@ -17,14 +17,14 @@ setup() {
     mkdir -p "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$HOME"
 
     # Skip unless this engine has --explain (bash doesn't).
-    run "$GOO" --explain view @image/png --explain-env tty </dev/null
+    run "$GOO" --explain view =image/png --explain-env tty </dev/null
     if ! echo "$output" | grep -q "Accept:"; then
         skip "engine has no --explain"
     fi
 }
 
 @test "explain: view image on a tty → chafa (image→ansi)" {
-    run "$GOO" --explain view @image/png --explain-env tty </dev/null
+    run "$GOO" --explain view =image/png --explain-env tty </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"Accept: text/x-ansi"* ]]
     [[ "$output" == *"chafa"* ]]
@@ -32,47 +32,47 @@ setup() {
 }
 
 @test "explain: view image on a desktop → eog (image→surface)" {
-    run "$GOO" --explain view @image/png --explain-env desktop </dev/null
+    run "$GOO" --explain view =image/png --explain-env desktop </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"eog"* ]]
     [[ "$output" == *"surface"* ]]
 }
 
 @test "explain: view image piped → raw bytes (identity)" {
-    run "$GOO" --explain view @image/png --explain-env piped </dev/null
+    run "$GOO" --explain view =image/png --explain-env piped </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"(cost 0)"* ]]
 }
 
 @test "explain: view a JSON subject → 415 (view doesn't accept it, no route)" {
-    run "$GOO" --explain view @application/json --explain-env tty </dev/null
+    run "$GOO" --explain view =application/json --explain-env tty </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" == *"415"* ]]
 }
 
 @test "explain: input coercion — json-keys on a CSV → csv2json first" {
-    run "$GOO" --explain json-keys @text/csv --explain-env tty </dev/null
+    run "$GOO" --explain json-keys =text/csv --explain-env tty </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"csv2json"* ]]
     [[ "$output" == *"application/json"* ]]
 }
 
 @test "explain: --as pins the Accept (image as bytes on a tty)" {
-    run "$GOO" --explain view @image/png --explain-env tty --as image/png </dev/null
+    run "$GOO" --explain view =image/png --explain-env tty --as image/png </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"Accept: image/png"* ]]
     [[ "$output" == *"(cost 0)"* ]]   # identity: view emits image/png, already accepted
 }
 
 @test "explain: unknown verb fails cleanly" {
-    run "$GOO" --explain nope @image/png --explain-env tty </dev/null
+    run "$GOO" --explain nope =image/png --explain-env tty </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" == *"unknown verb"* ]]
 }
 
 # --- slice 5: the subject line annotates the signal source ---
-@test "explain: @type subject is annotated 'via explicit'" {
-    run "$GOO" --explain view @image/png --explain-env tty </dev/null
+@test "explain: =type subject is annotated 'via explicit'" {
+    run "$GOO" --explain view =image/png --explain-env tty </dev/null
     [[ "$output" == *"subject: image/png (via explicit)"* ]]
 }
 
@@ -94,7 +94,7 @@ setup() {
 
 # --- rich rendering: cost by color/marker, not inline ':cheap' noise ---
 @test "explain: a lossy edge is marked '(lossy)', no inline ':cheap'" {
-    run "$GOO" --explain view @image/png --explain-env tty </dev/null
+    run "$GOO" --explain view =image/png --explain-env tty </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"chafa (lossy)"* ]]   # the edge that matters is flagged
     [[ "$output" != *": cheap"* ]]         # cheap/normal tiers dropped from the line
@@ -102,7 +102,7 @@ setup() {
 
 # --- detail modes: --explain-with route|steps|shell + adaptive default ---
 @test "explain: --explain-with steps lists numbered steps with the cmd template" {
-    run "$GOO" --explain json-keys @text/csv --explain-env tty --explain-with steps </dev/null
+    run "$GOO" --explain json-keys =text/csv --explain-env tty --explain-with steps </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"1."* ]]              # numbered
     [[ "$output" == *"csv2json"* ]]        # the coercion step
@@ -110,14 +110,14 @@ setup() {
 }
 
 @test "explain: --explain-with shell shows the commands block" {
-    run "$GOO" --explain view @image/png --explain-env tty --explain-with shell </dev/null
+    run "$GOO" --explain view =image/png --explain-env tty --explain-with shell </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"commands"* ]]
     [[ "$output" == *"chafa"* ]]
 }
 
 @test "explain: --explain-with route is the one-liner only (no detail block)" {
-    run "$GOO" --explain view @image/png --explain-env tty --explain-with route </dev/null
+    run "$GOO" --explain view =image/png --explain-env tty --explain-with route </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"text/x-ansi"* ]]     # the route line is still there
     [[ "$output" != *"commands"* ]]        # …but no shell block
@@ -125,20 +125,20 @@ setup() {
 }
 
 @test "explain: adaptive default shows a detail block for a simple route" {
-    run "$GOO" --explain view @image/png --explain-env tty </dev/null
+    run "$GOO" --explain view =image/png --explain-env tty </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"commands"* ]]        # ≤2 hops → the shell block by default
 }
 
 @test "explain: an unknown --explain-with mode fails cleanly" {
-    run "$GOO" --explain view @image/png --explain-env tty --explain-with bogus </dev/null
+    run "$GOO" --explain view =image/png --explain-env tty --explain-with bogus </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" == *"unknown --explain-with"* ]]
 }
 
 # --- --paths: enumerate all routes A→B (§4.2) ---
 @test "explain: --paths lists multiple routes (image on cosmic → chafa + eog)" {
-    run "$GOO" --explain view @image/png --explain-env cosmic --paths </dev/null
+    run "$GOO" --explain view =image/png --explain-env cosmic --paths </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"route(s)"* ]]
     [[ "$output" == *"chafa"* ]]   # image → ansi
@@ -147,13 +147,13 @@ setup() {
 
 @test "explain: --paths --max-hops bounds the depth" {
     # ≤1 hop keeps the direct chafa/eog routes, drops the chafa→cosmic-edit chain.
-    run "$GOO" --explain view @image/png --explain-env cosmic --paths --max-hops 1 </dev/null
+    run "$GOO" --explain view =image/png --explain-env cosmic --paths --max-hops 1 </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" != *"cosmic-edit"* ]]   # the 2-hop route is pruned
 }
 
 @test "explain: --paths --format mermaid emits a graph LR with shared nodes" {
-    run "$GOO" --explain view @image/png --explain-env cosmic --paths --format mermaid </dev/null
+    run "$GOO" --explain view =image/png --explain-env cosmic --paths --format mermaid </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"graph LR"* ]]
     [[ "$output" == *"-->"* ]]
@@ -161,13 +161,13 @@ setup() {
 }
 
 @test "explain: --paths with no route → 415" {
-    run "$GOO" --explain view @application/json --explain-env tty --paths </dev/null
+    run "$GOO" --explain view =application/json --explain-env tty --paths </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" == *"415"* ]]
 }
 
 @test "explain: --paths --format bogus fails cleanly" {
-    run "$GOO" --explain view @image/png --explain-env cosmic --paths --format bogus </dev/null
+    run "$GOO" --explain view =image/png --explain-env cosmic --paths --format bogus </dev/null
     [ "$status" -ne 0 ]
     [[ "$output" == *"unknown --format"* ]]
 }

@@ -8,12 +8,14 @@
 //! Resolution is **strict**: the syntax says which you mean, no fuzzy fallback.
 //!
 //! Built-in **value domains** resolved here: `text` / `file` / `clip` / `sel` /
-//! `stdin` / `url`. Every other domain is a registry **source** (`[[sources]]`,
-//! matched by `name` *or* `prefix`) — value = exact id, search = fuzzy.
+//! `stdin` / `url` / `type` (virtual-type assertion, sigil `=`). Every other
+//! domain is a registry **source** (`[[sources]]`, matched by `name` *or*
+//! `prefix`) — value = exact id, search = fuzzy.
 //!
 //! Human **sigils** (terminal shorthand; machines emit canonical `goo://`):
 //!   bare / `./ ~/ / scheme://` → infer (text/file/url) · `+x` → text ·
 //!   `:dom/path` → value · `:dom:query` → search · `^`/`^name` → clip ·
+//!   `=<mime>` → virtual-type subject (shipped via `core.toml`; user-overridable) ·
 //!   any other first char → user `[[sigils]]` alias.
 
 use crate::{mime, registry, selection};
@@ -175,6 +177,11 @@ pub fn resolve(raw: &str, reg: &Value, _verb: Option<&Value>) -> Result<Value, S
             Ok(json!({ "type": "text/plain", "text": s }))
         }
         "url" => Ok(json!({ "type": "text/x-uri", "text": q, "id": q })),
+        // Virtual-type assertion (`goo://type/<mime>`, sigil `=<mime>`): a subject
+        // with just `.type` set — used by `--explain` / `goo options` to preview a
+        // plan or discovery surface for a hypothetical subject of that type. No
+        // content, no id; the planner / OPTIONS only need the type.
+        "type" => Ok(json!({ "type": q })),
         _ => resolve_source(domain, q, is_search, &refine, reg),
     }
 }
@@ -437,6 +444,28 @@ mod tests {
         let plus = resolve("+./not-a-path", &r, None).unwrap(); // forced text, not a file
         assert_eq!(plus["type"], "text/plain");
         assert_eq!(plus["text"], "./not-a-path");
+    }
+
+    // The virtual-type value-domain — `goo://type/<mime>` and its `=<mime>` sigil
+    // (shipped in `core.toml`). Resolves to a content-less subject `{type}`, used
+    // by `--explain` / `goo options` to preview against a hypothetical subject.
+    #[test]
+    fn resolve_type_domain_and_equals_sigil() {
+        // canonical URI: just `.type`, no `.text`/`.id` (it's a *virtual* subject).
+        let canonical = resolve("goo://type/text/markdown", &json!({}), None).unwrap();
+        assert_eq!(canonical["type"], "text/markdown");
+        assert!(canonical.get("text").is_none(), "type-domain subject has no .text");
+        assert!(canonical.get("id").is_none(), "type-domain subject has no .id");
+
+        // `:type/<mime>` (the colon-sigil value form) reaches the same place.
+        let colon = resolve(":type/image/png", &json!({}), None).unwrap();
+        assert_eq!(colon["type"], "image/png");
+
+        // `=<mime>` via the built-in sigil (declared in core.toml — feed it directly).
+        let reg = json!({ "sigils": [{ "char": "=", "expands": "goo://type/" }] });
+        assert_eq!(canonicalize("=text/csv", &reg), "goo://type/text/csv");
+        let eq = resolve("=text/csv", &reg, None).unwrap();
+        assert_eq!(eq["type"], "text/csv");
     }
     #[test]
     fn resolve_file_reads_contents_and_errors() {
