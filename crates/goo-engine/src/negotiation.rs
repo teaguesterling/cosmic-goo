@@ -221,6 +221,38 @@ pub fn plan_bounded(
     Some(reconstruct(path, total, &usable, &verbs, accept, reg))
 }
 
+/// Per-layer converter-hop budget — the earned-hops model (§4.1). `a` bounds
+/// input coercion (pre-verb, layer A); `b` bounds output negotiation (post-verb,
+/// layer B). The default is the tight `(1, 1)`: one *implicit* hop on each side, so
+/// a deeper route is **earned, not free**. `--hops N` raises layer A; `--force`
+/// makes both unbounded. The verb edge and the delivery edge are never hops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hops {
+    pub a: u8,
+    pub b: u8,
+}
+
+impl Default for Hops {
+    fn default() -> Self {
+        Hops { a: 1, b: 1 }
+    }
+}
+
+impl Hops {
+    /// No bound on either layer — `--force`, and the high bound stage 3's teaching
+    /// 415 re-searches at to discover the route it should suggest.
+    pub fn unbounded() -> Self {
+        Hops { a: u8::MAX, b: u8::MAX }
+    }
+
+    /// `--hops N`: raise the input-coercion (layer A) budget. Layer B stays at the
+    /// default ≤1 — "more hops" means a longer *input* chain, never extra output
+    /// negotiation (that one case wants `--force`; §4.1).
+    pub fn with_layer_a(self, n: u8) -> Self {
+        Hops { a: n, ..self }
+    }
+}
+
 /// A resolved presentation context: the preference-ordered Accept profile
 /// (most-preferred first) and the available environment capabilities (which gate
 /// converter `requires`). The `--as` / `--to` overrides and the env heuristic
@@ -342,6 +374,24 @@ pub fn plan_request_using(
     available_tools: &[String],
     using: Option<&str>,
 ) -> Option<Plan> {
+    plan_request_using_bounded(subject_type, verb, target, reg, available_tools, using, Hops::default())
+}
+
+/// As [`plan_request_using`], but with an explicit per-layer hop budget (§4.1).
+/// The CLI calls this with caps derived from the user's flags — default
+/// `Hops::default()` = (1,1), `--hops N` raises layer A, `--force` is
+/// `Hops::unbounded()`. The two thinner entries above delegate here with the
+/// default so existing callers (and the pure-planner tests) keep the earned-hops
+/// default without churn.
+pub fn plan_request_using_bounded(
+    subject_type: &str,
+    verb: &Value,
+    target: &Target,
+    reg: &Value,
+    available_tools: &[String],
+    using: Option<&str>,
+    hops: Hops,
+) -> Option<Plan> {
     let convs: Vec<Converter> = converters_from_registry(reg)
         .into_iter()
         .filter(|c| tool_present(&c.tool, available_tools))
@@ -351,9 +401,7 @@ pub fn plan_request_using(
         .filter(|e| usage_tool_present(e, reg, available_tools))
         .filter(|e| using.is_none_or(|u| e.instrument == u))
         .collect();
-    // Stage 1 (no behavior change): unbounded depth on both layers. Stage 2 flips
-    // these to flag-derived per-axis caps (default (1,1); §4.1 earned-hops).
-    plan_bounded(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg, u8::MAX, u8::MAX)
+    plan_bounded(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg, hops.a, hops.b)
 }
 
 fn tool_present(tool: &Option<String>, available: &[String]) -> bool {
@@ -956,5 +1004,34 @@ mod tests {
         // pin a channel not in `usage` → no edge → no route (the CLI pre-validates
         // for a friendlier message; the planner just yields None).
         assert!(plan_request_using("text/plain", &verb, &target, &reg, &[], Some("z")).is_none());
+    }
+
+    // Earned-hops (§4.1): the default (1,1) bounds input coercion to one hop, so a
+    // 2-hop chain (csv→tsv→json) is unreachable; raising layer A — or `--force`
+    // (unbounded) — restores it. The verb edge itself is never a hop.
+    #[test]
+    fn earned_hops_bounds_input_coercion() {
+        let reg = j!({ "channels": [
+            { "name": "csv2tsv", "accepts": ["text/csv"], "emits": "text/tab-separated-values", "cost": "cheap", "cmd": "x" },
+            { "name": "tsv2json", "accepts": ["text/tab-separated-values"], "emits": "application/json", "cost": "cheap", "cmd": "y" },
+        ]});
+        let verb = j!({ "name": "keys", "accepts": ["application/json"], "emits": "text/plain" });
+        let target = Target { accept: owned(&["*/*"]), env_caps: vec![] };
+
+        // default (1,1): csv→tsv→json is 2 layer-A hops → no route.
+        assert!(plan_request_using_bounded("text/csv", &verb, &target, &reg, &[], None, Hops::default()).is_none());
+        // the default-delegating entry agrees (proves the flip is wired through).
+        assert!(plan_request("text/csv", &verb, &target, &reg, &[]).is_none());
+        // raise layer A to 2 → the chain unlocks (csv2tsv + tsv2json + verb).
+        let p = plan_request_using_bounded("text/csv", &verb, &target, &reg, &[], None, Hops::default().with_layer_a(2)).unwrap();
+        assert_eq!(p.steps.len(), 3);
+        // --force (unbounded) reaches it too.
+        assert!(plan_request_using_bounded("text/csv", &verb, &target, &reg, &[], None, Hops::unbounded()).is_some());
+
+        // Regression: a *single* input hop is still allowed by the default (1 ≤ 1).
+        let one = j!({ "channels": [
+            { "name": "csv2json", "accepts": ["text/csv"], "emits": "application/json", "cost": "cheap", "cmd": "z" }
+        ]});
+        assert!(plan_request("text/csv", &verb, &target, &one, &[]).is_some());
     }
 }

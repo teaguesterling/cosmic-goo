@@ -198,6 +198,21 @@ fn parse_args(rest: &[String]) -> (Vec<String>, Value) {
     (positionals, Value::Object(adverbs))
 }
 
+/// Derive the earned-hops budget (§4.1) from the run's adverbs: `--force` lifts
+/// the bound entirely; `--hops N` raises input-coercion depth (layer A); else the
+/// tight default `(1, 1)`. `--hops`/`--force` ride in the adverb map like
+/// `--as`/`--to`/`--using` — no verb template references them, so they're inert as
+/// substitutions and read here only as planner controls.
+fn hops_from_adverbs(adverbs: &Value) -> negotiation::Hops {
+    if adverbs.get("force").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return negotiation::Hops::unbounded();
+    }
+    match adverbs.get("hops").and_then(|v| v.as_str()).and_then(|s| s.parse::<u8>().ok()) {
+        Some(n) => negotiation::Hops::default().with_layer_a(n),
+        None => negotiation::Hops::default(),
+    }
+}
+
 fn print_usage() {
     print!(
         "goo — Grammar Of Operations CLI
@@ -213,6 +228,7 @@ USAGE
     goo validate                         Validate all loaded plugins
     goo <verb> … [--using CHANNEL]       --using pins the channel that performs a verb
     goo <verb> … [--to DEST | -o FILE]   route the result to a file / clipboard (^) instead of stdout
+    goo <verb> … [--hops N | --force]    allow deeper auto-coercion (default: 1 hop in, 1 out)
     goo --explain <verb> [@TYPE|subj]    Show the negotiation plan (route/415) — read-only
                                          [--as TYPE] [--using CHANNEL] [--explain-env tty|cosmic|desktop|piped]
 
@@ -247,6 +263,7 @@ fn cmd_explain(args: &[String]) -> i32 {
     let reg = registry::load_all();
     let (mut verb_name, mut subj, mut type_override, mut as_type, mut env_ovr, mut using) =
         (None, None, None, None, None, None);
+    let (mut hops_flag, mut force): (Option<&str>, bool) = (None, false);
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
@@ -260,6 +277,13 @@ fn cmd_explain(args: &[String]) -> i32 {
         } else if a == "--using" {
             using = args.get(i + 1).map(String::as_str);
             i += 1;
+        } else if let Some(v) = a.strip_prefix("--hops=") {
+            hops_flag = Some(v);
+        } else if a == "--hops" {
+            hops_flag = args.get(i + 1).map(String::as_str);
+            i += 1;
+        } else if a == "--force" {
+            force = true;
         } else if let Some(v) = a.strip_prefix("--explain-env=") {
             env_ovr = Some(v);
         } else if a == "--explain-env" {
@@ -335,7 +359,16 @@ fn cmd_explain(args: &[String]) -> i32 {
     // execution (exec_negotiated) prunes by real availability.
     let (avail, missing) = channel_tools(&reg);
     let all_tools: Vec<String> = avail.into_iter().chain(missing).collect();
-    match negotiation::plan_request_using(&subject_type, &verb, &target, &reg, &all_tools, using) {
+    // Same earned-hops budget the run would use, so --explain is an honest preview.
+    let hops = if force {
+        negotiation::Hops::unbounded()
+    } else {
+        match hops_flag.and_then(|s| s.parse::<u8>().ok()) {
+            Some(n) => negotiation::Hops::default().with_layer_a(n),
+            None => negotiation::Hops::default(),
+        }
+    };
+    match negotiation::plan_request_using_bounded(&subject_type, &verb, &target, &reg, &all_tools, using, hops) {
         None => {
             println!("415 · no route — {subject_type} can't be presented here (verb: {verb_name})");
             1
@@ -448,13 +481,17 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
         }
     }
 
+    // Earned-hops (§4.1): default ≤1 converter hop per layer; `--hops N` raises
+    // input-coercion depth, `--force` lifts the bound entirely.
+    let hops = hops_from_adverbs(adverbs);
+
     let (available, missing) = channel_tools(reg);
-    match negotiation::plan_request_using(subject_type, verb, &target, reg, &available, using) {
+    match negotiation::plan_request_using_bounded(subject_type, verb, &target, reg, &available, using, hops) {
         None => {
             // No route with the installed tools. If a route *would* exist with
             // everything installed, name the missing tools *on that route* — so
             // the hint is actionable ("install: mlr"), not every uninstalled tool.
-            let hint = route_missing_tools_hint(subject_type, verb, &target, reg, &missing);
+            let hint = route_missing_tools_hint(subject_type, verb, &target, reg, &missing, hops);
             die(format!("415 · no route — can't route {subject_type} through '{verb_name}'{hint}"))
         }
         Some(plan) => match dest {
@@ -493,7 +530,7 @@ fn channel_tool(reg: &Value, name: &str) -> Option<String> {
 /// For a 415 where tool-pruning may be the cause: re-plan tool-agnostically (as
 /// if everything were installed); if a route exists, return " — install: X, Y"
 /// naming the missing tools *on that route*. Empty if no route exists regardless.
-fn route_missing_tools_hint(subject_type: &str, verb: &Value, target: &negotiation::Target, reg: &Value, missing: &[String]) -> String {
+fn route_missing_tools_hint(subject_type: &str, verb: &Value, target: &negotiation::Target, reg: &Value, missing: &[String], hops: negotiation::Hops) -> String {
     if missing.is_empty() {
         return String::new();
     }
@@ -501,7 +538,9 @@ fn route_missing_tools_hint(subject_type: &str, verb: &Value, target: &negotiati
         let (a, m) = channel_tools(reg);
         a.into_iter().chain(m).collect()
     };
-    let Some(ideal) = negotiation::plan_request(subject_type, verb, target, reg, &all) else {
+    // Re-plan tool-agnostically but under the SAME hop budget the run used, so the
+    // hint names tools on a route the user could actually reach.
+    let Some(ideal) = negotiation::plan_request_using_bounded(subject_type, verb, target, reg, &all, None, hops) else {
         return String::new(); // no route even with everything installed — not a tool problem
     };
     let mut needed: Vec<String> = Vec::new();
