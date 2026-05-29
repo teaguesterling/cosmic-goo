@@ -8,7 +8,7 @@
 //! XDG dirs `registry::dirs()` reads); no path magic. Exit codes: 0 / 1
 //! (catch-all) / 130 (cancel).
 
-use goo_engine::{address, dispatch as disp, exec, mime, negotiation, registry, selection, verbs};
+use goo_engine::{address, dispatch as disp, exec, mime, negotiation, options, registry, selection, verbs};
 use serde_json::{json, Map, Value};
 use std::io::IsTerminal;
 
@@ -88,6 +88,7 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
         Some("plugins") => cmd_plugins(),
         Some("validate") => cmd_validate(),
         Some("--explain") => cmd_explain(&args[1..]),
+        Some("options") => cmd_options(&args[1..]),
         Some("dispatch") => cmd_dispatch(args.get(1).map(String::as_str)),
         Some("__complete") => cmd_complete(args.get(1).map(String::as_str), args.get(2).map(String::as_str)),
         Some("-h") | Some("--help") | Some("help") => {
@@ -223,6 +224,7 @@ USAGE
     goo list <source>                    Emit source items as JSON
     goo describe <verb>                  Show verb details
     goo dispatch <input>                 Classify content and route to a verb
+    goo options <subject|@TYPE>          Applicable verbs + their slots, as JSON (discovery; unstable v1)
     goo compose                          Build a sentence (scripted via GOO_COMPOSE_ANSWERS)
     goo plugins                          List loaded plugins
     goo validate                         Validate all loaded plugins
@@ -440,6 +442,39 @@ fn cmd_explain(args: &[String]) -> i32 {
             }
             0
         }
+    }
+}
+
+/// `goo options <subject | @TYPE>` — the OPTIONS discovery surface (goo-protocol
+/// §7): the verbs applicable to the subject and, per verb, the slots a caller can
+/// fill (`Using:` instruments, `With:` adverbs + their choices, `object_type`).
+/// Emits JSON — the single composable surface the compose-gui's verb-pick,
+/// completion, and (later) the `good` daemon all consume. Read-only. The shape is
+/// **unstable through v1** (`schema_version`/`stable`). Rust-only: it exposes
+/// `Using:` channels, which the bash reference has no concept of.
+fn cmd_options(args: &[String]) -> i32 {
+    let reg = registry::load_all();
+    let Some(arg) = args.iter().find(|a| !a.starts_with('-')) else {
+        return die("options: usage: goo options <subject | @TYPE>");
+    };
+    // Mirror --explain's subject handling: `@<mime>` asserts the type virtually
+    // (valid_when predicates needing .text/.metadata won't fire); otherwise resolve
+    // the address to a full subject so valid_when filtering is accurate.
+    let subject = if let Some(t) = arg.strip_prefix('@') {
+        json!({ "type": t })
+    } else {
+        match address::resolve(arg, &reg, None) {
+            Ok(s) => s,
+            Err(e) => return die(e.replace("address: ", "")),
+        }
+    };
+    let view = options::options_for(&reg, &subject);
+    match serde_json::to_string_pretty(&view) {
+        Ok(s) => {
+            println!("{s}");
+            0
+        }
+        Err(e) => die(format!("options: {e}")),
     }
 }
 
@@ -1066,7 +1101,7 @@ fn cmd_validate() -> i32 {
     // Reserved subcommands an alias can never shadow.
     const RESERVED: &[&str] = &[
         "compose", "list", "describe", "plugins", "validate", "dispatch", "__complete", "help",
-        "-h", "--help",
+        "options", "-h", "--help",
     ];
 
     // 1. Verbs: a declared accept pattern list can't contain empty strings.

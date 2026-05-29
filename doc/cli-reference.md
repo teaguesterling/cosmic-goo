@@ -14,6 +14,7 @@ goo describe <verb>
 goo plugins
 goo validate
 goo compose                              # build a sentence (scripted via GOO_COMPOSE_ANSWERS)
+goo options <subject|@TYPE>              # JSON: applicable verbs + their slots (discovery; unstable v1)
 goo --help | -h | help
 ```
 
@@ -102,6 +103,31 @@ echo "https://example.com" | goo dispatch   # no rule → text/x-uri default ver
 ```
 
 Rules live in plugin TOML (see [plugin authoring](plugin-authoring.md#content-dispatch)); none ship by default — dispatch only does what your config tells it to. `goo validate` checks every rule has a `matches` and a `verb` that exists.
+
+### `goo options <subject | @TYPE>`
+
+The OPTIONS discovery surface ([goo-protocol §7](design/goo-protocol.md)): the verbs
+applicable to the subject and, per verb, the slots a caller can fill — `Using:`
+(instrument channels), `With:` (adverbs + their choices, mirroring the run-path
+`uses_adverbs` gate), and `object_type` for two-step verbs. Emits JSON — the single
+composable shape the compose-gui's verb-pick, completion, and (later) the `good`
+daemon all consume. Read-only.
+
+```
+$ goo options @text/markdown
+{ "schema_version": "0.1", "stable": false, "type": "text/markdown",
+  "default": null,
+  "allow": ["critique", "summarize", "think", …],
+  "verbs": { "think": { "using": [],
+    "with": { "via":   {"kind":"selector","default":"clipboard","values":["clipboard","fabric",…]},
+              "depth": {"kind":"selector","default":"normal","values":["normal","ultra"]} },
+    "object_type": null } … } }
+```
+
+The JSON shape is **unstable through v1** — consumers gate on `schema_version`.
+`to:` (write-destination choices) is intentionally absent; it ships with the
+`{write}`-domain framework. The output never includes verb internals (`cmd`,
+`prompt`, `description`) — that's the projection contract.
 
 ## Verb invocation
 

@@ -10,6 +10,7 @@ pub mod dispatch;
 pub mod exec;
 pub mod mime;
 pub mod negotiation;
+pub mod options;
 pub mod registry;
 pub mod selection;
 pub mod shell;
