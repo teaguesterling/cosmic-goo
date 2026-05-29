@@ -159,7 +159,10 @@ impl Plan {
 // tiebreaker.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum Node {
-    Ty(String, bool),
+    // type, layer (false = pre-verb A, true = post-verb B), and converter hops
+    // taken *within this layer* (for the earned-hops bound, §4.1). The hop count
+    // is part of node identity so Dijkstra prunes per-layer depth.
+    Ty(String, bool, u8),
     Goal,
 }
 
@@ -173,7 +176,11 @@ fn cap_ok(requires: &[String], env: &[String]) -> bool {
 }
 
 /// Plan the cheapest pipeline, or `None` if no route reaches Accept (a `415`).
-/// `accept` is preference-ordered (most-preferred first).
+/// `accept` is preference-ordered (most-preferred first). This is the unbounded
+/// convenience entry (no per-layer hop cap) — it delegates to [`plan_bounded`]
+/// with `u8::MAX` on both layers. The earned-hops caps (§4.1) enter via
+/// `plan_bounded`; this wrapper keeps the pure-planner tests' intent ("any depth")
+/// explicit.
 pub fn plan(
     subject_type: &str,
     verb_edges: &[VerbEdge],
@@ -182,14 +189,33 @@ pub fn plan(
     env_caps: &[String],
     reg: &Value,
 ) -> Option<Plan> {
+    plan_bounded(subject_type, verb_edges, converters, accept, env_caps, reg, u8::MAX, u8::MAX)
+}
+
+/// As [`plan`], but bounding the number of *converter* hops taken within each
+/// layer: at most `max_hops_a` before the verb (input coercion) and `max_hops_b`
+/// after it (output negotiation). The verb edge itself is never a converter hop.
+/// This is the earned-hops model (§4.1): a caller grants depth per axis from the
+/// explicit slots the user supplied (`--hops`, `--as`/`--to`); the default is
+/// tight and deeper routes must be earned.
+pub fn plan_bounded(
+    subject_type: &str,
+    verb_edges: &[VerbEdge],
+    converters: &[Converter],
+    accept: &[String],
+    env_caps: &[String],
+    reg: &Value,
+    max_hops_a: u8,
+    max_hops_b: u8,
+) -> Option<Plan> {
     // Prune transformers whose env requirements aren't met (not a runtime fail).
     let usable: Vec<&Converter> = converters.iter().filter(|c| cap_ok(&c.requires, env_caps)).collect();
     let verbs: Vec<&VerbEdge> = verb_edges.iter().filter(|v| cap_ok(&v.requires, env_caps)).collect();
 
-    let start = Node::Ty(subject_type.to_string(), false);
+    let start = Node::Ty(subject_type.to_string(), false, 0);
     let (path, total) = dijkstra(
         &start,
-        |node| successors(node, &usable, &verbs, accept, reg),
+        |node| successors(node, &usable, &verbs, accept, reg, max_hops_a, max_hops_b),
         |node| *node == Node::Goal,
     )?;
     Some(reconstruct(path, total, &usable, &verbs, accept, reg))
@@ -325,7 +351,9 @@ pub fn plan_request_using(
         .filter(|e| usage_tool_present(e, reg, available_tools))
         .filter(|e| using.is_none_or(|u| e.instrument == u))
         .collect();
-    plan(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg)
+    // Stage 1 (no behavior change): unbounded depth on both layers. Stage 2 flips
+    // these to flag-derived per-axis caps (default (1,1); §4.1 earned-hops).
+    plan_bounded(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg, u8::MAX, u8::MAX)
 }
 
 fn tool_present(tool: &Option<String>, available: &[String]) -> bool {
@@ -432,22 +460,31 @@ fn successors(
     verbs: &[&VerbEdge],
     accept: &[String],
     reg: &Value,
+    max_hops_a: u8,
+    max_hops_b: u8,
 ) -> Vec<(Node, u32)> {
     let mut out = Vec::new();
-    let Node::Ty(t, layer) = node else { return out };
+    let Node::Ty(t, layer, hops) = node else { return out };
 
-    // Within-layer converter edges (both A and B).
-    for c in converters {
-        if c.accepts.iter().any(|p| is_subtype(t, p, reg)) {
-            out.push((Node::Ty(c.emits.clone(), *layer), c.cost.weight()));
+    // Within-layer converter edges (both A and B), bounded by the earned-hops cap
+    // for this layer (§4.1). Each converter step increments the layer's hop count;
+    // when it reaches the cap, no further converter edges are offered (but the verb
+    // edge and delivery below are unaffected — the cap limits *coercion* depth).
+    let cap = if *layer { max_hops_b } else { max_hops_a };
+    if *hops < cap {
+        for c in converters {
+            if c.accepts.iter().any(|p| is_subtype(t, p, reg)) {
+                out.push((Node::Ty(c.emits.clone(), *layer, hops + 1), c.cost.weight()));
+            }
         }
     }
     if !*layer {
-        // Verb edges A→B (the mandatory action; identity for `present`).
+        // Verb edges A→B (the mandatory action; identity for `present`). Crossing
+        // the verb resets the hop count: layer B earns its own coercion budget.
         for v in verbs {
             if v.accepts.iter().any(|p| is_subtype(t, p, reg)) {
                 let to = v.emits.clone().unwrap_or_else(|| t.clone());
-                out.push((Node::Ty(to, true), v.cost.weight()));
+                out.push((Node::Ty(to, true, 0), v.cost.weight()));
             }
         }
     } else if let Some(rank) = accept.iter().position(|p| is_subtype(t, p, reg)) {
@@ -469,16 +506,16 @@ fn reconstruct(
     let mut delivered = String::new();
     for win in path.windows(2) {
         match (&win[0], &win[1]) {
-            // Same-layer hop = a converter.
-            (Node::Ty(from, a), Node::Ty(to, b)) if a == b => {
+            // Same-layer hop = a converter (layers equal; hop counts ignored).
+            (Node::Ty(from, a, _), Node::Ty(to, b, _)) if a == b => {
                 steps.push(Step {
                     kind: StepKind::Convert(pick_converter(from, to, converters, reg)),
                     from: from.clone(),
                     to: to.clone(),
                 });
             }
-            // A→B = the verb.
-            (Node::Ty(from, false), Node::Ty(to, true)) => {
+            // A→B = the verb (layer false → true).
+            (Node::Ty(from, false, _), Node::Ty(to, true, _)) => {
                 steps.push(Step {
                     kind: StepKind::Verb(pick_verb(from, to, verbs, reg)),
                     from: from.clone(),
@@ -486,7 +523,7 @@ fn reconstruct(
                 });
             }
             // B→Goal = delivery.
-            (Node::Ty(from, true), Node::Goal) => delivered = from.clone(),
+            (Node::Ty(from, true, _), Node::Goal) => delivered = from.clone(),
             _ => {}
         }
     }

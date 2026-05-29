@@ -224,11 +224,15 @@ Auto-coercion must be **predictable** — a hop is **earned, not free.**
 - **Layer B (output): ≤1 hop** for the implicit present-to-`Accept` (image→ansi on
   a tty — no flag). `--as <type>` *redirects* that Accept (still ≤1); `--to <dest>`
   adds the destination's accept as a target (its own ≤1).
-- **`--using <chan>`** earns the instrument edge; its type-coercion hop is
-  *suppressed* when `--as`/`--to` is present (it would double-count their hop).
-- **Beyond the per-layer cap → a `415` that *teaches*** (§6): re-run the search
-  unbounded, and if a route exists, print it + the flag to allow it — `--hops N`
-  (raise layer-A depth) or `--force` (unbounded).
+- **`--using <chan>`** picks *which verb edge* (the A→B crossing) Dijkstra
+  traverses — the instrument's accepts/emits live on that edge, not a
+  layer-internal converter. It doesn't add a coercion hop; it narrows the *edge*,
+  while `--as`/`--to` narrow the acceptable *goal type*. Different axes, nothing to
+  suppress.
+- **Beyond the per-layer cap → a `415` that *teaches*** (§6): re-run the search at
+  a high bound (≈`--hops 8`, not literally unbounded — keep `415`s fast on a big
+  converter graph), and if a route exists, print it + the flag to allow it —
+  `--hops N` (raise layer-A depth) or `--force`.
 
 The governing principle — **explicit vs implicit**: naming a slot (`--as`, `--to`,
 `--using`, `--hops`) is you *asking* for a transform, which authorizes the hop;
@@ -240,9 +244,12 @@ Mechanically: the Dijkstra node gains a per-layer hop count
 that layer's cap. The verb edge enters layer B (hops reset); delivery (`→Goal`)
 isn't a hop. Caps come from the flags (default A≤1, B≤1).
 
-**Pinned (open) details:** (1) `--as` *redirects* the implicit B hop, not *adds*
-(≤1 per axis); (2) the exact `--using` suppression (by `--to`, `--as`, or either;
-which side); (3) per-axis bounds (A and B separately), not a summed budget.
+**Locked (per the advisor pass):** bounds are **per-axis** — A and B counted
+separately, never summed (so `--as` can't silently lengthen the *input* chain).
+**`--hops N` raises layer A only**; `--as`/`--to` each engage layer B at ≤1.
+Needing >1 layer-B hops is the one case that wants `--force` — and the teaching
+error says exactly that. `--using` isn't a hop (it selects the verb edge), so
+there's nothing to suppress.
 
 ### 4.2 Route enumeration — "all the ways A→B"
 
@@ -251,9 +258,19 @@ of **all** converter routes from the subject to a satisfiable `Accept` within de
 `C`, cost-ranked, powers both: the teaching hint is the cheapest route past the
 default cap, and `goo --explain <verb> <subj> --paths [--max-hops C]` prints the
 full ranked list — the route-graph debugger ("what are *all* the ways to get JSON
-from this?"). One enumerator, two consumers. (A bounded DFS over the converter
-graph, ≤`C` hops; `pathfinding::yen` for k-shortest is the alternative the source
-already flags.)
+from this?"). One enumerator, two consumers. Use **`pathfinding::yen`** (k-shortest,
+proven ordering — the graph is tiny), bounded to ≤`C` hops.
+
+**Drawing matters — don't emit 200-char lines.** The single-line
+`A →[c]→ B →[d]→ C` reads fine for one route but becomes a wall across many paths.
+So:
+- **text** (default): a compact **vertical/indented** layout — one hop per line,
+  shared prefixes elided, so K paths read as a tree, not K wide lines.
+- **`--format mermaid`**: emit a `graph LR` of the route **DAG** — all paths as one
+  diagram where shared types are shared *nodes* (K routes → one readable graph),
+  edges labeled by converter + cost. Renders in any mermaid viewer / GitHub / the
+  simulator. Worth offering for the single-route `--explain` too once a plan has a
+  few hops.
 
 ## 5. Cost & materialization
 
