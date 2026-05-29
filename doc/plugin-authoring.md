@@ -45,6 +45,7 @@ description = "one-line description"
 [[sources]]  # places to enumerate typed items
 [[verbs]]    # named actions
 [[adverbs]]  # modifiers on verbs
+[[channels]] # type→type conversions (the coercion graph) + verb instruments
 ```
 
 Each section is an array of tables. A plugin can contribute any combination, including just one section.
@@ -77,6 +78,12 @@ is_a = ["text/markdown"]   # any verb accepting text/markdown (or text/*) now ap
 ```
 
 `is_a` is a DAG (cycles are guarded). Use it to plug a vendor handle/content type into existing verb vocabularies without re-declaring `accepts` everywhere. (Lattice resolution is in the Rust engine; the bash reference matches by glob + suffix only.)
+
+#### Importing the OS MIME database
+
+Rather than re-declare common types and their relationships, goo can import the system [shared-mime-info](https://specifications.freedesktop.org/shared-mime-info-spec/) database: its `subclasses` become `is_a` edges (so `image/svg+xml` ⊑ `application/xml` ⊑ `text/plain`, and a verb accepting `text/*` reaches an SVG), and its `globs2` become extension→type mappings. Opt in by pointing `COSMIC_GOO_MIME_DIRS` at the MIME dirs (colon-separated, e.g. `/usr/share/mime`). It's **off by default** so the registry stays machine-independent for conformance.
+
+> **Checkers & detectors.** `[[checkers]]` ("is this content usable as type X?") and `[[detectors]]` ("what is this?") are a declared, validated schema, but today only the built-in `json` checker executes — `cmd`-based checkers/detectors validate at load but don't run yet (the cmd runner is in progress). See [detection.md](design/detection.md) for the model and roadmap; for now, lean on extensions (`globs2`/`COSMIC_GOO_MIME_DIRS`) and `is_a` for custom-type recognition.
 
 ### Sources
 
@@ -217,6 +224,60 @@ cmd = "..."
 ```
 
 Evaluated in-process (jq is already loaded), so it's cheap to run while listing applicable verbs. It's the same kind of subject-JSON predicate that the `?params` source filter compiles into (see [cli-reference](cli-reference.md#subject-addressing)). For checks needing real I/O (a remote exists, a file's size), prefer keeping the verb broad and failing in the `cmd` itself — a heavier shell-predicate form is future work.
+
+### Channels (type coercion)
+
+A `[[channels]]` entry declares a **type → type conversion** — an edge in the coercion graph the negotiation engine routes through (see [CLI: presentation & coercion](cli-reference.md#presentation-coercion-the-negotiation-engine)). When a verb needs `application/json` but the subject is `text/csv`, goo finds and runs a csv→json channel automatically — no glue per verb.
+
+```toml
+[[channels]]
+name = "csv2json"
+accepts = ["text/csv"]          # lattice patterns it consumes (subtype-aware, like a verb)
+emits = "application/json"       # the single concrete type it produces (no globs)
+cost = "cheap"                   # free | cheap | normal | lossy | network
+tool = "mlr"                     # PATH binary it needs (optional; pruned if absent)
+cmd = "mlr --icsv --ojson cat {in.path|q}"
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | identifier (what `--using`/`--explain` show; collisions resolve by load order) |
+| `accepts` | one or more MIME patterns it consumes — subtype-aware, same matching as a verb's `accepts` |
+| `emits` | the single **concrete** type it produces — never a glob (the planner needs a node to land on; `goo validate` rejects a pattern here) |
+| `cost` | route-cost tier: `free` < `cheap` < `normal` < `lossy` < `network`. The planner minimizes **total** cost, so a lossless/local channel beats a lossy or networked one; `lossy`/`network` are flagged in `--explain`. |
+| `consumes` | how it reads input: `stream` \| `path` \| `bytes` (default `path`) |
+| `tool` | a PATH binary the `cmd` needs. The planner **routes around** an uninstalled tool, or 415s with `install: <tool>`. Omit for no dependency. |
+| `requires` | environment capabilities that gate it — e.g. `["display"]` for a GUI converter only usable with a display |
+| `cmd` | the conversion command. `{in.path}` is the input file (the subject, or the previous step's output); the usual filters apply (`|q`). It writes its result to **stdout**. |
+
+goo chains channels (each step's stdout becomes the next step's `{in.path}`) and picks the cheapest route. By default it takes **at most one** coercion hop per side — see [earned hops](cli-reference.md#earned-hops-auto-coercion-is-bounded). Inspect the chosen route with `goo --explain <verb> <subject>`, and list *every* route with `--paths`.
+
+#### Channels as instruments: a verb's `usage`
+
+A verb can be carried out **by channels** instead of its own `cmd` — declare `usage = [<channel>, …]`. The planner picks the cheapest reachable one (filling the *instrument* slot); `--using` pins one. The chosen channel's `cmd` runs in the **verb's** context, so it reads `{subject.*}` / `{verb.*}` (not `{in.path}`):
+
+```toml
+[[verbs]]
+name = "say"
+accepts = ["text/*"]
+usage = ["loud", "quiet"]        # two ways to "say"; the planner / --using chooses
+
+[[channels]]
+name = "loud"
+accepts = ["text/*"]
+emits = "text/x-said"
+cost = "cheap"
+cmd = "tr a-z A-Z < {subject.metadata.path|q}"
+
+[[channels]]
+name = "quiet"
+accepts = ["text/*"]
+emits = "text/x-said"
+cost = "normal"
+cmd = "tr A-Z a-z < {subject.metadata.path|q}"
+```
+
+`goo say notes.txt` runs the cheaper `loud`; `goo say notes.txt --using=quiet` pins the other. (Channels are a Rust-engine feature; the bash reference has no negotiation, so channel/coercion behavior is Rust-only.)
 
 ### Adverbs
 

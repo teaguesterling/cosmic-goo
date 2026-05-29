@@ -22,6 +22,10 @@ linked below; this is just "we've built up through here."
 | **Structural-inference gating** (#3) — a sniffed/inferred structured type wins only for a verb that *specifically* wants it (not a generic `text/*` verb) | **built** (Rust) | `mime::infer_for` |
 | **Tool-aware planner** (#2) — a channel declares `tool`; the planner routes around uninstalled tools, or 415s with an actionable "install: X" hint; `--explain` is tool-agnostic | **built** (Rust) | `negotiation::plan_request`, `channel_tools` |
 | **`--using` run-path override** (#1) — pin the verb's `usage` channel, overriding the planner's pick (a constraint, validated) | **built** (Rust) | `plan_request_using`, `cmd_verb`; `execute.bats` |
+| **Earned-hops depth bounding** (§4.1) — auto-coercion is bounded: ≤1 converter hop per layer by default (a deeper route is *earned, not free*); `--hops N` raises input-coercion depth, `--force` lifts the bound; per-axis caps via `Hops`/`plan_bounded`. A 415 within budget **teaches**: re-searches deep and prints the deeper route + the exact flag (`--hops N` / `--force`) | **built** (Rust) | `negotiation::plan_bounded`, `Hops`; `deeper_route_hint` in `goo` bin; `hops.bats` |
+| **Route enumeration** (§4.2) — `goo --explain <verb> <subj> --paths [--max-hops C] [--format text\|mermaid]` lists *all* routes A→B (cost-ranked via `pathfinding::yen` on a hopless node), drawn vertically (text) or as a merged `graph LR` DAG with shared nodes (mermaid) | **built** (Rust) | `negotiation::enumerate`; `render_paths_*` in `goo` bin; `explain.bats` |
+| **Rich `--explain` rendering + detail modes** — the route line is colored on a TTY (cost by color; lossy/network marked; no inline `:cheap` noise), plain when piped; `--explain-with route\|steps\|shell` picks the detail view (adaptive default: runnable commands for a ≤2-hop route, annotated steps beyond) | **built** (Rust) | `render_route`/`render_steps`/`render_shell`, `use_color`; `explain.bats` |
+| **`-c`/`--config` extra config** — merge an additional plugin TOML/dir last (highest precedence) for a single run, via `COSMIC_GOO_EXTRA_CONFIG` | **built** (Rust) | `registry::extra_config_files`; `config.bats` |
 | **Type detection — registry-driven checkers + OS lattice + extension signal + `--explain` provenance** (slices 1–5) — `[[detectors]]`/`[[checkers]]` collections (parity); the `json` check declared in an embedded `core.toml` (`builtin`, behavior-preserving) with `infer_for` now registry-driven; **OS-MIME-DB importer** (opt-in `COSMIC_GOO_MIME_DIRS`) pulls shared-mime-info `subclasses`→`is_a` (svg→xml→text into `is_subtype`) + `globs2`→`extensions` as `[[types]]`; **extension signal** — a file's extension → declared type, authoritative over libmagic (`resolve_file`, Rust-only; `None`-path == libmagic); **`--explain` `subject:` line** annotates which signal chose the type (explicit/extension/checker/libmagic/content), typed via the run's own path (fixes a 2a/4 divergence) | **built** (Rust) | `registry.rs`, `address.rs`, `mime.rs`, `goo` bin; `mimedb.bats`, `extsignal.bats`, `explain.bats` |
 | **Type detection — remaining** — the signal *model* (weighted candidates the verb's `accepts` selects; `emits` types the handle not content; no privileged hardwired types): `emits` wiring (terminal-vs-container), the `cmd` runner (`input`/`ok`/`reads`), multi-candidate-for-files, the checker *name* in `--explain`, importer production default | **designed** | [detection.md](detection.md) |
 | **`--to`/`-o` output routing (v1)** — the verb's result lands at a `{write}` destination instead of stdout: `--to <dest>`/`-o <file>`; v1 destinations **file + clipboard** (`address::write_to`, canonicalized via the addressing); `--to` ⇒ piped Accept (bytes, not a rendered surface); composes with `--using`/`--as`; no `--to` is byte-identical to stdout. Rust-only run-path | **built** (Rust) | `address.rs`, `selection.rs`, `goo` bin; `execute.bats` |
@@ -31,7 +35,7 @@ linked below; this is just "we've built up through here."
 
 Bash is frozen at the **pre-negotiation** behavior and is the reference for
 everything below the arc; the lattice/inference/negotiation are Rust-only, so
-their bats tests skip on bash (the suite is 289/289 on both engines).
+their bats tests skip on bash (the suite is 314/314 on both engines).
 
 ## The interface / protocol layer
 
@@ -49,6 +53,6 @@ their bats tests skip on bash (the suite is 289/289 on both engines).
 
 - **Engine + CLI** — the Rust `goo` is the default; bash is the reference (`make install` / `make install-bash`).
 - **Plugins** — 25 (~88 verbs, 17 sources), incl. non-text handle domains and content-inspection verbs.
-- **Tests** — bats conformance suite (289/289 both engines) + 148 engine unit tests.
+- **Tests** — bats conformance suite (314/314 both engines) + 150 engine unit tests.
 
 See [limitations.md](../limitations.md) for the user-facing roadmap.

@@ -5,7 +5,10 @@
 ```
 goo                                      # no args: prints this usage (a true CLI — never launches a GUI)
 goo <verb> [POSITIONAL ...] [--FLAG=VALUE ...]
+goo <verb> <subject> [--as TYPE] [--to DEST | -o FILE] [--using CHANNEL] [--hops N | --force]
 goo <address>                            # no verb: resolve the address, run its type's default verb
+goo --explain <verb> [@TYPE|subject] …   # show the negotiation plan (route / 415) — never executes
+goo -c <file|dir> <verb> …               # merge an extra plugin config for this run (repeatable)
 goo list <source>
 goo describe <verb>
 goo plugins
@@ -221,6 +224,84 @@ goo activate Firefox
 goo list apps | jq .
 ```
 
+## Presentation & coercion (the negotiation engine)
+
+`goo` doesn't only run a verb's `cmd`. When the subject's type isn't one the verb
+`accepts`, goo inserts type conversions **before** the verb (input coercion); when
+the result needs to reach a particular place or representation, it inserts
+conversions **after** (output negotiation). The conversions are declared
+`[[channels]]` (see [plugin authoring](plugin-authoring.md#channels-type-coercion))
+and goo plans the cheapest route through them. This is why
+
+```bash
+goo json-keys data.csv      # json-keys accepts application/json; csv is coerced first
+```
+
+just works — `data.csv` is routed `text/csv → [csv→json channel] → application/json`,
+then the verb runs. No matching route ⇒ a clean **`415`** (it never runs the verb
+on the wrong type).
+
+### Coercion & routing flags
+
+| Flag | Meaning |
+|---|---|
+| `--as TYPE` | Pin the output **representation** (the Accept). `goo view img.png --as text/x-ansi` forces the inline-ANSI rendering even on a desktop. |
+| `--to DEST` | Route the result to a **destination** instead of stdout. `DEST` is an address: a file (`goo://file/…` or a path), or `^` for the clipboard. |
+| `-o FILE` | Sugar for `--to` a file. `goo upper "hi" -o out.txt`. |
+| `--using CHANNEL` | Pin which **channel** carries out a verb that's implemented by `usage` channels (the instrument). A constraint, validated against the verb's `usage`. |
+| `--hops N` | Allow up to **N** input-coercion hops (default 1). For routes that need a longer conversion chain. |
+| `--force` | Lift the hop bound entirely (unbounded coercion, both directions). |
+
+`--to` makes the result **bytes** (it's going to a sink, not a terminal), so binary
+flows intact — with the demo config's `qr-png` verb,
+`goo -c doc/examples/goo-demo.toml qr-png "wifi" -o code.png` writes a real PNG, not
+a rendered surface. The flags compose: `goo view image.png --as text/x-ansi -o frame.txt`
+coerces the image to inline ANSI and routes that to the file.
+
+### Earned hops — auto-coercion is bounded
+
+By default goo takes **at most one** converter hop on each side (input, output): a
+single, obvious conversion is convenient; a deep chain should be deliberate. When a
+route needs more than the budget, goo refuses with a `415` that **teaches** — it
+re-searches deeper and prints the route it found plus the exact flag to allow it:
+
+```
+$ goo up2 notes.txt
+goo: 415 · no route within 1 input hop(s) — a deeper route exists:
+    text/plain → up → text/x-up → upup → text/x-upup → (up2) → text/plain
+  allow it with --hops 2 (or --force)
+```
+
+`--hops N` raises the **input**-coercion budget; a longer **output** chain needs
+`--force` (the message says which). A 415 caused by an uninstalled tool instead
+prints `— install: <tool>` naming the tools on the would-be route.
+
+### `goo --explain` — the plan explainer
+
+A read-only view of what goo *would* do: the Accept profile, the typed subject (and
+which signal chose the type), and the planned route — or the `415`. It never runs
+anything, and `@<mime>` lets you assert a subject type virtually (no file needed).
+
+```
+goo --explain <verb> [@TYPE | <subject>] [flags]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--as TYPE`, `--using CHANNEL`, `--hops N`, `--force` | Preview the run under these constraints (same semantics as the run path). |
+| `--explain-env tty\|cosmic\|desktop\|piped` | Override the detected environment (default: isatty + `$WAYLAND_DISPLAY`). |
+| `--explain-with route\|steps\|shell` | Detail view. `route` = the type-route one-liner; `steps` = numbered transitions + each `cmd` template; `shell` = the commands in run order with the subject filled in. Default: **adaptive** (commands for a ≤2-hop route, annotated steps beyond). |
+| `--paths [--max-hops C] [--format text\|mermaid]` | Enumerate **all** routes to a satisfiable Accept (the route-graph debugger), not just the chosen one. `--max-hops` bounds depth (default 3); `--format mermaid` emits a `graph LR` diagram. |
+
+The route line is **richly rendered on a TTY** — cost shown by color, `lossy`/`network`
+edges flagged — and plain ASCII when piped.
+
+```bash
+goo --explain view @image/png --explain-env cosmic      # how would an image render here?
+goo --explain json-keys data.csv --explain-with shell    # show the commands it'd run
+goo --explain json-keys @text/csv --paths --format mermaid | <mermaid viewer>
+```
+
 ## Exit codes
 
 | Code | Meaning |
@@ -235,7 +316,19 @@ goo list apps | jq .
 |---|---|---|
 | `COSMIC_GOO_BUILTIN_PLUGINS_DIR` | Where built-in plugins live | `$REPO/plugins` for a dev checkout; `/usr/share/cosmic-goo/plugins` for a system install |
 | `XDG_CONFIG_HOME` | Standard XDG; user plugin dir is `$XDG_CONFIG_HOME/cosmic-goo/plugins` | `$HOME/.config` |
+| `COSMIC_GOO_EXTRA_CONFIG` | Extra plugin config(s) to merge last (highest precedence). Set by `-c`/`--config`; colon-separate multiple. | unset |
+| `COSMIC_GOO_MIME_DIRS` | Opt-in: import the OS [shared-mime-info](https://specifications.freedesktop.org/shared-mime-info-spec/) DB (its `subclasses` → `is_a` lattice, `globs2` → extension map) at registry load. Colon-separated dirs (e.g. `/usr/share/mime`). | unset (no OS-MIME import) |
 | `COS_CLI` | Override the `cos-cli` binary used by `focused_app` and the apps plugin | Auto-resolved from PATH or `$HOME/.cargo/bin/cos-cli` |
+
+### `-c` / `--config <file\|dir>`
+
+Merge an extra plugin TOML (or a directory of them) for this run only, applied
+**last** so it overrides everything else — handy for trying a config without
+installing it. Repeatable. Equivalent to setting `COSMIC_GOO_EXTRA_CONFIG`.
+
+```bash
+goo -c ./doc/examples/duckdb-formats.toml json-keys data.parquet
+```
 
 ## Shell completion
 
