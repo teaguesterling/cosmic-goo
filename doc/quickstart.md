@@ -51,8 +51,9 @@ things you reach for, or the full `goo://` form:
 | `:apps/firefox` | the Firefox app · `goo://apps/firefox` |
 | `:ssh-hosts/prod`, `:tmux`, `:processes` | a source entity (17 sources ship) |
 
-A relative file needs the leading `./` (or `~/`, or an absolute path): `goo
-json-keys ./data.json`. A bare `data.json` is read as *literal text*, not a file.
+A bare subject that names an **existing file** resolves as that file — `goo
+json-keys data.json` just works. Force literal text with `+`: `goo upper +data.json`
+uppercases the string `data.json`, not the file.
 
 ```
 $ goo upper ^                       # uppercase whatever's on the clipboard
@@ -70,7 +71,7 @@ and goo routes it through a converter first. `goo --explain` shows that route (i
 your debug lens — *what would happen, and why*):
 
 ```
-$ goo --explain json-keys ./people.csv
+$ goo --explain json-keys people.csv
 subject: text/csv (via libmagic)
 text/csv →[csv2json: cheap]→ application/json →(json-keys)→ text/plain
 ```
@@ -78,7 +79,7 @@ text/csv →[csv2json: cheap]→ application/json →(json-keys)→ text/plain
 With the converter's tool (`mlr`) installed, it just runs:
 
 ```
-$ goo json-keys ./people.csv
+$ goo json-keys people.csv
 age
 name
 ```
@@ -87,7 +88,7 @@ name
 error:
 
 ```
-$ goo json-keys ./people.csv
+$ goo json-keys people.csv
 goo: 415 · no route — can't route text/csv through 'json-keys' — install: mlr
 ```
 
@@ -100,7 +101,7 @@ By default the result prints to stdout (pipe it like any tool). Or send it
 somewhere: **`-o <file>`** writes a file, **`--to ^`** puts it on the clipboard.
 
 ```
-$ goo json-pretty ./data.json -o pretty.json    # format → a file
+$ goo json-pretty data.json -o pretty.json      # format → a file
 $ goo upper "ship it" --to ^                    # → the clipboard
 ```
 

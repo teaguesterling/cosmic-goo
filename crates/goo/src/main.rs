@@ -1200,6 +1200,15 @@ fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str
         return address::resolve(positional, reg, Some(verb));
     }
 
+    // 1b. A bare positional that names an existing path → resolve it as that
+    // file/dir. Filesystem reality breaks the bare-token ambiguity, so
+    // `goo json-keys data.json` works without a leading `./`. A rare collision (a
+    // file shadowing a source name) is disambiguated with an explicit sigil
+    // (`:apps/x`) or forced to text with `+`.
+    if !positional.is_empty() && std::path::Path::new(positional).exists() {
+        return address::resolve(&format!("./{positional}"), reg, Some(verb));
+    }
+
     // 2. Bare positional.
     if !positional.is_empty() {
         // Context-sensitive inference: a positive structural signal (JSON shape)

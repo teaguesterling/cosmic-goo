@@ -31,7 +31,7 @@ linked below; this is just "we've built up through here."
 
 Bash is frozen at the **pre-negotiation** behavior and is the reference for
 everything below the arc; the lattice/inference/negotiation are Rust-only, so
-their bats tests skip on bash (the suite is 284/284 on both engines).
+their bats tests skip on bash (the suite is 289/289 on both engines).
 
 ## The interface / protocol layer
 
@@ -49,6 +49,6 @@ their bats tests skip on bash (the suite is 284/284 on both engines).
 
 - **Engine + CLI** — the Rust `goo` is the default; bash is the reference (`make install` / `make install-bash`).
 - **Plugins** — 25 (~88 verbs, 17 sources), incl. non-text handle domains and content-inspection verbs.
-- **Tests** — bats conformance suite (284/284 both engines) + 148 engine unit tests.
+- **Tests** — bats conformance suite (289/289 both engines) + 148 engine unit tests.
 
 See [limitations.md](../limitations.md) for the user-facing roadmap.
