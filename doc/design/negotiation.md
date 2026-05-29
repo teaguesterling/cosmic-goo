@@ -210,6 +210,51 @@ reconstruct the path.
    route to `Accept` is cheapest. **"Accept drives `Using:`" (§12) is literally
    Dijkstra minimizing cost to a satisfiable Accept** — emergent, not special-cased.
 
+### 4.1 Bounded coercion — earned hops (explicit > implicit)
+
+Unbounded Dijkstra is a footgun: `goo someverb data.csv` silently chaining
+csv→parquet→json→yaml is surprising and expensive even when it "works."
+Auto-coercion must be **predictable** — a hop is **earned, not free.**
+
+**The rule: ≤1 *implicit* converter hop per layer; explicit intent earns more.**
+
+- **Layer A (input coercion): ≤1 hop by default** — the minimal "make the subject
+  fit the verb." `csv→json` for a json verb: fine. `csv→json→yaml` for a yaml
+  verb: 2 hops → *not* implicit; opt-in.
+- **Layer B (output): ≤1 hop** for the implicit present-to-`Accept` (image→ansi on
+  a tty — no flag). `--as <type>` *redirects* that Accept (still ≤1); `--to <dest>`
+  adds the destination's accept as a target (its own ≤1).
+- **`--using <chan>`** earns the instrument edge; its type-coercion hop is
+  *suppressed* when `--as`/`--to` is present (it would double-count their hop).
+- **Beyond the per-layer cap → a `415` that *teaches*** (§6): re-run the search
+  unbounded, and if a route exists, print it + the flag to allow it — `--hops N`
+  (raise layer-A depth) or `--force` (unbounded).
+
+The governing principle — **explicit vs implicit**: naming a slot (`--as`, `--to`,
+`--using`, `--hops`) is you *asking* for a transform, which authorizes the hop;
+un-asked-for coercion stays at the shallow floor. Depth is something you *say*,
+never a silent default.
+
+Mechanically: the Dijkstra node gains a per-layer hop count
+(`Ty(type, layer, hops)`); `successors` prunes a converter edge that would exceed
+that layer's cap. The verb edge enters layer B (hops reset); delivery (`→Goal`)
+isn't a hop. Caps come from the flags (default A≤1, B≤1).
+
+**Pinned (open) details:** (1) `--as` *redirects* the implicit B hop, not *adds*
+(≤1 per axis); (2) the exact `--using` suppression (by `--to`, `--as`, or either;
+which side); (3) per-axis bounds (A and B separately), not a summed budget.
+
+### 4.2 Route enumeration — "all the ways A→B"
+
+The teaching error must *find a deeper route*; generalize it. A bounded enumeration
+of **all** converter routes from the subject to a satisfiable `Accept` within depth
+`C`, cost-ranked, powers both: the teaching hint is the cheapest route past the
+default cap, and `goo --explain <verb> <subj> --paths [--max-hops C]` prints the
+full ranked list — the route-graph debugger ("what are *all* the ways to get JSON
+from this?"). One enumerator, two consumers. (A bounded DFS over the converter
+graph, ≤`C` hops; `pathfinding::yen` for k-shortest is the alternative the source
+already flags.)
+
 ## 5. Cost & materialization
 
 **Cost is a named tier**, mapped to a numeric weight in one place at plan time —
