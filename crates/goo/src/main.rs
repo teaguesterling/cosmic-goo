@@ -14,8 +14,39 @@ use std::io::IsTerminal;
 
 fn main() {
     reset_sigpipe();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    // Global `-c <path>` / `--config <path>` (repeatable): extra plugin files/dirs
+    // merged LAST (highest precedence). Threaded to registry::load_all via env so
+    // every entry point (verb run, --explain, list, …) sees the same config.
+    let (args, configs) = extract_config_flags(raw);
+    if !configs.is_empty() {
+        std::env::set_var("COSMIC_GOO_EXTRA_CONFIG", configs.join(":"));
+    }
     std::process::exit(dispatch(&args, 0));
+}
+
+/// Pull global `-c`/`--config` out of the arg list, returning `(remaining, configs)`.
+fn extract_config_flags(args: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let (mut out, mut configs) = (Vec::new(), Vec::new());
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "-c" || a == "--config" {
+            if let Some(p) = args.get(i + 1) {
+                configs.push(p.clone());
+                i += 2;
+                continue;
+            }
+            i += 1;
+        } else if let Some(p) = a.strip_prefix("--config=").or_else(|| a.strip_prefix("-c=")) {
+            configs.push(p.to_string());
+            i += 1;
+        } else {
+            out.push(a.clone());
+            i += 1;
+        }
+    }
+    (out, configs)
 }
 
 /// Restore the default SIGPIPE disposition. Rust ignores SIGPIPE at startup, so
@@ -181,8 +212,12 @@ USAGE
     goo plugins                          List loaded plugins
     goo validate                         Validate all loaded plugins
     goo <verb> … [--using CHANNEL]       --using pins the channel that performs a verb
+    goo <verb> … [--to DEST | -o FILE]   route the result to a file / clipboard (^) instead of stdout
     goo --explain <verb> [@TYPE|subj]    Show the negotiation plan (route/415) — read-only
                                          [--as TYPE] [--using CHANNEL] [--explain-env tty|cosmic|desktop|piped]
+
+GLOBAL
+    -c, --config <file|dir>              merge an extra plugin config (repeatable; highest precedence)
 
 SUBJECT INFERENCE
     If no positional is given, the subject falls back in order:

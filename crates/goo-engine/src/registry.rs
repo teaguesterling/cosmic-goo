@@ -213,7 +213,35 @@ pub fn load_all() -> Value {
             reg = merge(&reg, &c);
         }
     }
+    // Ad-hoc configs from `-c/--config` (`COSMIC_GOO_EXTRA_CONFIG`) merge LAST —
+    // highest precedence, so a demo/override config wins by name.
+    for file in extra_config_files() {
+        if let Some(c) = load_one(&file) {
+            reg = merge(&reg, &c);
+        }
+    }
     reg
+}
+
+/// Extra config paths from `COSMIC_GOO_EXTRA_CONFIG` (colon-separated; set by the
+/// `-c/--config` flag). Each entry is a `.toml` file, or a directory whose
+/// `*.toml` are all loaded (alphabetical). Unset → none.
+fn extra_config_files() -> Vec<PathBuf> {
+    let Ok(val) = std::env::var("COSMIC_GOO_EXTRA_CONFIG") else { return Vec::new() };
+    let mut out = Vec::new();
+    for entry in val.split(':').filter(|s| !s.is_empty()) {
+        let p = PathBuf::from(entry);
+        if p.is_dir() {
+            out.extend(
+                read_sorted(&p)
+                    .into_iter()
+                    .filter(|q| q.is_file() && q.extension().is_some_and(|e| e == "toml")),
+            );
+        } else {
+            out.push(p);
+        }
+    }
+    out
 }
 
 // ---- OS MIME DB importer (shared-mime-info → [[types]]); see detection.md ----

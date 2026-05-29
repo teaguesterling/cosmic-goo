@@ -1,0 +1,60 @@
+# goo-demo — showcase verbs + channels. Load ad-hoc with:
+#   goo -c doc/examples/goo-demo.toml <verb> <subject> …
+# Demonstrates goo's signature: you ask for a format, and the planner discovers
+# the conversion path (multi-hop coercion); plus addressing, present verbs, and
+# routing (--to / -o). Tools used: python3, yq (jq-based), qrencode, pandoc, jq.
+name = "goo-demo"
+
+# ── multi-hop coercion: CSV → JSON → YAML, discovered automatically ──
+# Ask `goo yaml data.csv` and the planner chains these two channels to reach the
+# `yaml` verb's accepted type. `goo --explain yaml data.csv` shows the route.
+
+# Declare extensions so the extension signal types these files (slice 4): a `.md`
+# is text/markdown, a `.csv` is text/csv — without this they'd fall to libmagic's
+# text/plain and the verbs below wouldn't match.
+[[types]]
+name = "text/markdown"
+extensions = [".md", ".markdown"]
+
+[[types]]
+name = "text/csv"
+extensions = [".csv"]
+
+[[types]]
+name = "application/yaml"
+display = "YAML"
+extensions = [".yaml", ".yml"]
+
+[[channels]]
+name = "demo-csv2json"
+accepts = ["text/csv"]
+emits = "application/json"
+cost = "cheap"
+tool = "python3"
+cmd = "python3 -c 'import csv,json,sys; json.dump(list(csv.DictReader(open(sys.argv[1]))),sys.stdout)' {in.path|q}"
+
+[[channels]]
+name = "demo-json2yaml"
+accepts = ["application/json"]
+emits = "application/yaml"
+cost = "cheap"
+tool = "yq"
+cmd = "yq -y . {in.path|q}"
+
+[[verbs]]
+name = "yaml"
+accepts = ["application/yaml"]
+cmd = "cat -- {subject.metadata.path|q}"
+
+# ── text → a QR code, right in the terminal ──
+[[verbs]]
+name = "qr"
+accepts = ["text/*"]
+cmd = "qrencode -t ANSIUTF8 -- {subject.text|q}"
+
+# ── markdown → HTML (pandoc); a real verb that reads its (possibly coerced) input ──
+[[verbs]]
+name = "to-html"
+accepts = ["text/markdown", "text/x-markdown"]
+emits = "text/html"
+cmd = "pandoc -f markdown -t html {subject.metadata.path|q}"
