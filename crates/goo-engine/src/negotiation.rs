@@ -19,7 +19,7 @@
 //! retrofit of `plan`.
 
 use crate::mime::is_subtype;
-use pathfinding::prelude::dijkstra;
+use pathfinding::prelude::{dijkstra, yen};
 use serde_json::Value;
 
 /// Declared cost semantics, mapped to a numeric weight in one place (§4). The
@@ -584,6 +584,135 @@ fn reconstruct(
     Plan { steps, delivered, cost: total.saturating_sub(penalty) }
 }
 
+// ---- route enumeration (§4.2): "all the ways A→B" for `--explain --paths` ----
+
+// A *thin* enumeration node — type + layer, NO hop counter. The planner's `Node`
+// carries hops so Dijkstra prunes per-layer depth; but for `yen` k-shortest
+// enumeration, a hop counter in identity would split one type-sequence into many
+// "paths" that differ only by internal count (advisor trap #1). So enumerate on
+// this hopless node — every distinct path is a distinct type sequence — and bound
+// depth by counting converter hops *after* the fact.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+enum EnumNode {
+    Ty(String, bool),
+    Goal,
+}
+
+fn successors_enum(
+    node: &EnumNode,
+    converters: &[&Converter],
+    verbs: &[&VerbEdge],
+    accept: &[String],
+    reg: &Value,
+) -> Vec<(EnumNode, u32)> {
+    let mut out = Vec::new();
+    let EnumNode::Ty(t, layer) = node else { return out };
+    for c in converters {
+        if c.accepts.iter().any(|p| is_subtype(t, p, reg)) {
+            out.push((EnumNode::Ty(c.emits.clone(), *layer), c.cost.weight()));
+        }
+    }
+    if !*layer {
+        for v in verbs {
+            if v.accepts.iter().any(|p| is_subtype(t, p, reg)) {
+                let to = v.emits.clone().unwrap_or_else(|| t.clone());
+                out.push((EnumNode::Ty(to, true), v.cost.weight()));
+            }
+        }
+    } else if let Some(rank) = accept.iter().position(|p| is_subtype(t, p, reg)) {
+        out.push((EnumNode::Goal, rank as u32 * RANK_PENALTY));
+    }
+    out
+}
+
+fn plan_from_enum_path(path: &[EnumNode], total: u32, converters: &[&Converter], verbs: &[&VerbEdge], accept: &[String], reg: &Value) -> Plan {
+    let mut steps = Vec::new();
+    let mut delivered = String::new();
+    for win in path.windows(2) {
+        match (&win[0], &win[1]) {
+            (EnumNode::Ty(from, a), EnumNode::Ty(to, b)) if a == b => {
+                steps.push(Step { kind: StepKind::Convert(pick_converter(from, to, converters, reg)), from: from.clone(), to: to.clone() });
+            }
+            (EnumNode::Ty(from, false), EnumNode::Ty(to, true)) => {
+                steps.push(Step { kind: StepKind::Verb(pick_verb(from, to, verbs, reg)), from: from.clone(), to: to.clone() });
+            }
+            (EnumNode::Ty(from, true), EnumNode::Goal) => delivered = from.clone(),
+            _ => {}
+        }
+    }
+    let rank = accept.iter().position(|p| is_subtype(&delivered, p, reg)).unwrap_or(0) as u32;
+    Plan { steps, delivered, cost: total.saturating_sub(rank * RANK_PENALTY) }
+}
+
+/// Per-layer converter-hop counts of a plan: `(input, output)` — converters before
+/// the verb edge, and after it.
+fn layer_hops(plan: &Plan) -> (u8, u8) {
+    let (mut a, mut b, mut seen_verb) = (0u8, 0u8, false);
+    for s in &plan.steps {
+        match &s.kind {
+            StepKind::Verb(_) => seen_verb = true,
+            StepKind::Convert(_) if !seen_verb => a = a.saturating_add(1),
+            StepKind::Convert(_) => b = b.saturating_add(1),
+        }
+    }
+    (a, b)
+}
+
+/// Enumerate the distinct routes (cost-ranked, up to `k`) from `subject_type`
+/// through the verb to a satisfiable `Accept`, keeping those within `max_hops`
+/// converter hops *per layer* (§4.2). The route-graph debugger behind
+/// `goo --explain <verb> <subj> --paths`. Each result is a [`Plan`] (same shape
+/// the planner emits); the first is the route `plan` itself would pick.
+pub fn enumerate(
+    subject_type: &str,
+    verb_edges: &[VerbEdge],
+    converters: &[Converter],
+    accept: &[String],
+    env_caps: &[String],
+    reg: &Value,
+    max_hops: u8,
+    k: usize,
+) -> Vec<Plan> {
+    let usable: Vec<&Converter> = converters.iter().filter(|c| cap_ok(&c.requires, env_caps)).collect();
+    let verbs: Vec<&VerbEdge> = verb_edges.iter().filter(|v| cap_ok(&v.requires, env_caps)).collect();
+    let start = EnumNode::Ty(subject_type.to_string(), false);
+    yen(
+        &start,
+        |node| successors_enum(node, &usable, &verbs, accept, reg),
+        |node| *node == EnumNode::Goal,
+        k,
+    )
+    .into_iter()
+    .map(|(path, total)| plan_from_enum_path(&path, total, &usable, &verbs, accept, reg))
+    .filter(|plan| {
+        let (a, b) = layer_hops(plan);
+        a <= max_hops && b <= max_hops
+    })
+    .collect()
+}
+
+/// As [`enumerate`], but pulling the converter set / verb edges from the registry
+/// (the surface the CLI's `--paths` calls). Prunes channels whose `tool` is absent.
+pub fn enumerate_request(
+    subject_type: &str,
+    verb: &Value,
+    target: &Target,
+    reg: &Value,
+    available_tools: &[String],
+    max_hops: u8,
+    k: usize,
+) -> Vec<Plan> {
+    let convs: Vec<Converter> = converters_from_registry(reg)
+        .into_iter()
+        .filter(|c| tool_present(&c.tool, available_tools))
+        .collect();
+    let edges: Vec<VerbEdge> = verb_edges(verb, reg)
+        .into_iter()
+        .filter(|e| usage_tool_present(e, reg, available_tools))
+        .collect();
+    enumerate(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg, max_hops, k)
+}
+
 // Reconstruction re-derives which edge Dijkstra used by matching (from, to) and
 // taking the cheapest candidate — consistent with what the search relaxed.
 // Tiebreaker when two edges share endpoints *and* cost: the first in slice order
@@ -1033,5 +1162,32 @@ mod tests {
             { "name": "csv2json", "accepts": ["text/csv"], "emits": "application/json", "cost": "cheap", "cmd": "z" }
         ]});
         assert!(plan_request("text/csv", &verb, &target, &one, &[]).is_some());
+    }
+
+    // Route enumeration (§4.2): all the ways csv→…→json, cost-ranked. A direct
+    // converter and a two-hop chain both reach json; enumerate returns both, the
+    // cheaper (direct) first, and the hop bound prunes the long one.
+    #[test]
+    fn enumerate_lists_ranked_routes_and_bounds_depth() {
+        let reg = j!({});
+        let verbs = [verb("jq", &["application/json"], Some("application/json"), Tier::Normal)];
+        let convs = [
+            conv("csv2json", &["text/csv"], "application/json", Tier::Cheap), // direct (1 hop)
+            conv("csv2tsv", &["text/csv"], "text/tab-separated-values", Tier::Cheap),
+            conv("tsv2json", &["text/tab-separated-values"], "application/json", Tier::Cheap), // 2-hop
+        ];
+        let accept = strs(&["application/json"]);
+
+        // depth 3, k=10: both routes appear, cheapest (direct) first.
+        let routes = enumerate("text/csv", &verbs, &convs, &accept, &[], &reg, 3, 10);
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].steps[0].kind, StepKind::Convert("csv2json".into())); // 1-hop wins
+        assert!(routes[0].cost <= routes[1].cost); // cost-ranked
+        assert!(routes[1].steps.iter().any(|s| s.kind == StepKind::Convert("csv2tsv".into())));
+
+        // max_hops=1 prunes the 2-hop chain, leaving only the direct route.
+        let shallow = enumerate("text/csv", &verbs, &convs, &accept, &[], &reg, 1, 10);
+        assert_eq!(shallow.len(), 1);
+        assert_eq!(shallow[0].steps[0].kind, StepKind::Convert("csv2json".into()));
     }
 }

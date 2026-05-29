@@ -135,3 +135,39 @@ setup() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"unknown --explain-with"* ]]
 }
+
+# --- --paths: enumerate all routes A→B (§4.2) ---
+@test "explain: --paths lists multiple routes (image on cosmic → chafa + eog)" {
+    run "$GOO" --explain view @image/png --explain-env cosmic --paths </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"route(s)"* ]]
+    [[ "$output" == *"chafa"* ]]   # image → ansi
+    [[ "$output" == *"eog"* ]]     # image → surface — a distinct route
+}
+
+@test "explain: --paths --max-hops bounds the depth" {
+    # ≤1 hop keeps the direct chafa/eog routes, drops the chafa→cosmic-edit chain.
+    run "$GOO" --explain view @image/png --explain-env cosmic --paths --max-hops 1 </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"cosmic-edit"* ]]   # the 2-hop route is pruned
+}
+
+@test "explain: --paths --format mermaid emits a graph LR with shared nodes" {
+    run "$GOO" --explain view @image/png --explain-env cosmic --paths --format mermaid </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"graph LR"* ]]
+    [[ "$output" == *"-->"* ]]
+    [[ "$output" == *"chafa"* ]]
+}
+
+@test "explain: --paths with no route → 415" {
+    run "$GOO" --explain view @application/json --explain-env tty --paths </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"415"* ]]
+}
+
+@test "explain: --paths --format bogus fails cleanly" {
+    run "$GOO" --explain view @image/png --explain-env cosmic --paths --format bogus </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"unknown --format"* ]]
+}

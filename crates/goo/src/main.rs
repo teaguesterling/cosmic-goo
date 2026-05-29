@@ -232,6 +232,7 @@ USAGE
     goo --explain <verb> [@TYPE|subj]    Show the negotiation plan (route/415) — read-only
                                          [--as TYPE] [--using CHANNEL] [--explain-env tty|cosmic|desktop|piped]
                                          [--explain-with route|steps|shell] (default: adaptive)
+                                         [--paths [--max-hops C] [--format text|mermaid]]  all routes A→B
 
 GLOBAL
     -c, --config <file|dir>              merge an extra plugin config (repeatable; highest precedence)
@@ -263,13 +264,15 @@ use goo_engine::shell::{bash_capture, bash_capture_bytes, bash_exec};
 /// $WAYLAND_DISPLAY). The route line is richly rendered on a TTY (cost by color;
 /// lossy/network edges marked). `--explain-with route|steps|shell` picks the detail
 /// view (default: adaptive — `shell` commands for a ≤2-hop route, annotated `steps`
-/// beyond).
+/// beyond). `--paths [--max-hops C] [--format text|mermaid]` enumerates *all* routes
+/// A→B (the route-graph debugger) instead of the single chosen plan.
 fn cmd_explain(args: &[String]) -> i32 {
     let reg = registry::load_all();
     let (mut verb_name, mut subj, mut type_override, mut as_type, mut env_ovr, mut using) =
         (None, None, None, None, None, None);
     let (mut hops_flag, mut force): (Option<&str>, bool) = (None, false);
     let mut explain_with: Option<&str> = None;
+    let (mut paths, mut max_hops_flag, mut format_flag): (bool, Option<&str>, Option<&str>) = (false, None, None);
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
@@ -287,6 +290,18 @@ fn cmd_explain(args: &[String]) -> i32 {
             explain_with = Some(v);
         } else if a == "--explain-with" {
             explain_with = args.get(i + 1).map(String::as_str);
+            i += 1;
+        } else if a == "--paths" {
+            paths = true;
+        } else if let Some(v) = a.strip_prefix("--max-hops=") {
+            max_hops_flag = Some(v);
+        } else if a == "--max-hops" {
+            max_hops_flag = args.get(i + 1).map(String::as_str);
+            i += 1;
+        } else if let Some(v) = a.strip_prefix("--format=") {
+            format_flag = Some(v);
+        } else if a == "--format" {
+            format_flag = args.get(i + 1).map(String::as_str);
             i += 1;
         } else if let Some(v) = a.strip_prefix("--hops=") {
             hops_flag = Some(v);
@@ -370,6 +385,26 @@ fn cmd_explain(args: &[String]) -> i32 {
     // execution (exec_negotiated) prunes by real availability.
     let (avail, missing) = channel_tools(&reg);
     let all_tools: Vec<String> = avail.into_iter().chain(missing).collect();
+
+    // `--paths`: enumerate ALL routes to a satisfiable Accept (the route-graph
+    // debugger), instead of the single chosen plan. `--max-hops C` bounds depth
+    // (default 3); `--format text|mermaid` picks the drawing.
+    if paths {
+        let max_hops: u8 = max_hops_flag.and_then(|s| s.parse().ok()).unwrap_or(3);
+        let routes = negotiation::enumerate_request(&subject_type, &verb, &target, &reg, &all_tools, max_hops, 12);
+        if routes.is_empty() {
+            println!("415 · no route within {max_hops} hop(s) — {subject_type} → {verb_name} (nothing reaches the Accept)");
+            return 1;
+        }
+        let out = match format_flag {
+            Some("mermaid") => render_paths_mermaid(&routes, verb_name, &reg),
+            Some("text") | None => render_paths_text(&routes, &subject_type, verb_name, &reg, max_hops, use_color()),
+            Some(other) => return die(format!("explain: unknown --format '{other}' (text|mermaid)")),
+        };
+        println!("{out}");
+        return 0;
+    }
+
     // Same earned-hops budget the run would use, so --explain is an honest preview.
     let hops = if force {
         negotiation::Hops::unbounded()
@@ -663,6 +698,81 @@ fn substitute_subject(cmd: &str, subj_path: Option<&str>) -> String {
         .replace("{in.path}", p)
         .replace("{subject.metadata.path|q}", &q)
         .replace("{subject.metadata.path}", p)
+}
+
+/// The edge label for one plan step in a route drawing: the converter/instrument
+/// name, with a `(lossy)`/`(network)` marker on the edges that matter.
+fn edge_label(step: &negotiation::Step, verb_name: &str, reg: &Value) -> String {
+    match &step.kind {
+        negotiation::StepKind::Convert(name) => {
+            let tier = channel_tier(reg, name);
+            if tier == "lossy" || tier == "network" {
+                format!("{name} ({tier})")
+            } else {
+                name.clone()
+            }
+        }
+        negotiation::StepKind::Verb(inst) => {
+            let label = if inst.is_empty() { verb_name } else { inst.as_str() };
+            format!("({label})")
+        }
+    }
+}
+
+/// `--paths` text drawing (§4.2): the ranked routes, drawn **vertically** — one
+/// hop per line, indented under each route — so K paths read as a tall list, never
+/// a wall of 200-char lines. Ordered as the planner decides: by Accept preference
+/// first (so #1 delivers the most-preferred representation), then by cost — which
+/// is why the per-route cost isn't strictly ascending across different Accepts.
+fn render_paths_text(routes: &[negotiation::Plan], subject_type: &str, verb_name: &str, reg: &Value, max_hops: u8, color: bool) -> String {
+    let mut out = format!("{} route(s) from {subject_type} (≤{max_hops} hops/layer, most-preferred first):\n", routes.len());
+    for (i, plan) in routes.iter().enumerate() {
+        out.push_str(&format!("\n  {}. cost {} → {}\n", i + 1, plan.cost, plan.delivered));
+        let start = plan.steps.first().map(|s| s.from.as_str()).unwrap_or(subject_type);
+        out.push_str(&format!("       {start}\n"));
+        for s in &plan.steps {
+            let label = edge_label(s, verb_name, reg);
+            let label = if color { format!("{C_DIM}{label}{C_RESET}") } else { label };
+            out.push_str(&format!("         → {label} → {}\n", s.to));
+        }
+    }
+    out.trim_end().to_string()
+}
+
+fn type_id(order: &mut Vec<String>, t: &str) -> usize {
+    match order.iter().position(|x| x == t) {
+        Some(p) => p,
+        None => {
+            order.push(t.to_string());
+            order.len() - 1
+        }
+    }
+}
+
+/// `--paths --format mermaid` (§4.2): the routes as a single `graph LR` DAG, where
+/// shared types are shared *nodes* (K routes → one readable graph, advisor trap #2)
+/// and each edge is labeled by its converter/verb. Renders in any mermaid viewer.
+fn render_paths_mermaid(routes: &[negotiation::Plan], verb_name: &str, reg: &Value) -> String {
+    let mut order: Vec<String> = Vec::new(); // types, first-seen order → node ids
+    let mut edges: Vec<(usize, usize, String)> = Vec::new();
+    for plan in routes {
+        for s in &plan.steps {
+            let from = type_id(&mut order, &s.from);
+            let to = type_id(&mut order, &s.to);
+            let label = edge_label(s, verb_name, reg).replace('|', "/");
+            if !edges.iter().any(|(f, t, l)| *f == from && *t == to && *l == label) {
+                edges.push((from, to, label));
+            }
+        }
+    }
+    let mut out = String::from("graph LR\n");
+    for (i, t) in order.iter().enumerate() {
+        out.push_str(&format!("  n{i}[\"{}\"]\n", t.replace('"', "'")));
+    }
+    for (f, t, l) in &edges {
+        out.push_str(&format!("  n{f} -->|{l}| n{t}\n"));
+    }
+    out.trim_end().to_string()
 }
 
 /// The declared cost tier of a channel, for `--explain` display.
