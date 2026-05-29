@@ -18,7 +18,7 @@
 //!     slice 4b).
 
 use crate::negotiation::{Plan, Step, StepKind};
-use crate::shell::{bash_capture, bash_exec};
+use crate::shell::{bash_capture_bytes, bash_exec};
 use crate::{mime, template, verbs};
 use serde_json::{json, Value};
 use std::fs;
@@ -30,17 +30,23 @@ pub fn execute(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value) -> Re
     Ok(run_pipeline(plan, subject_path, verb, reg, false)?.0)
 }
 
-/// Run the plan, **capturing** the final output instead of inheriting stdout
-/// (for tests and non-terminal consumers). Returns the delivered bytes as text.
-pub fn execute_capture(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value) -> Result<String, String> {
+/// Run the plan, **capturing** the final output as **raw bytes** (binary-safe —
+/// the byte-sink routing path: `--to`/`-o`).
+pub fn execute_capture_bytes(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value) -> Result<Vec<u8>, String> {
     Ok(run_pipeline(plan, subject_path, verb, reg, true)?.1.unwrap_or_default())
+}
+
+/// Run the plan, capturing the final output as **text** (lossy from bytes — for
+/// tests and text consumers).
+pub fn execute_capture(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value) -> Result<String, String> {
+    Ok(execute_capture_bytes(plan, subject_path, verb, reg).map(|b| String::from_utf8_lossy(&b).into_owned())?)
 }
 
 fn is_present(verb: &Value) -> bool {
     verb.get("kind").and_then(Value::as_str) == Some("present")
 }
 
-fn run_pipeline(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value, capture_final: bool) -> Result<(i32, Option<String>), String> {
+fn run_pipeline(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value, capture_final: bool) -> Result<(i32, Option<Vec<u8>>), String> {
     // A present verb's A→B step is identity (the subject *is* the result) — drop
     // it. A real verb's step stays and runs its cmd (4b).
     let present = is_present(verb);
@@ -57,19 +63,19 @@ fn run_pipeline(plan: &Plan, subject_path: &str, verb: &Value, reg: &Value, capt
 
     let tmp = make_tmpdir()?;
     let mut current = PathBuf::from(subject_path);
-    let mut out = (0, None);
+    let mut out: (i32, Option<Vec<u8>>) = (0, None);
     let last = steps.len() - 1;
     for (i, step) in steps.iter().enumerate() {
         let rendered = render_step(step, &current, verb, reg)?;
         if i == last && !capture_final {
             out = (bash_exec(&rendered), None); // final → inherit stdout
         } else {
-            let captured = bash_capture(&rendered);
+            let captured = bash_capture_bytes(&rendered); // raw bytes — binary-safe
             if i == last {
                 out = (0, Some(captured));
             } else {
                 let buf = tmp.join(format!("buf{i}")); // buffer between hops
-                fs::write(&buf, captured.as_bytes()).map_err(|e| format!("exec: buffer write: {e}"))?;
+                fs::write(&buf, &captured).map_err(|e| format!("exec: buffer write: {e}"))?;
                 current = buf;
             }
         }
@@ -136,10 +142,10 @@ fn render_step(step: &Step, current: &Path, verb: &Value, reg: &Value) -> Result
     }
 }
 
-fn deliver_file(path: &str, capture: bool) -> Result<(i32, Option<String>), String> {
+fn deliver_file(path: &str, capture: bool) -> Result<(i32, Option<Vec<u8>>), String> {
     if capture {
-        let s = fs::read_to_string(path).map_err(|e| format!("exec: read subject: {e}"))?;
-        Ok((0, Some(s)))
+        let b = fs::read(path).map_err(|e| format!("exec: read subject: {e}"))?;
+        Ok((0, Some(b)))
     } else {
         // Stream the bytes to the inherited stdout (a byte sink, e.g. a pipe).
         Ok((bash_exec(&format!("cat -- {}", shell_quote(path))), None))

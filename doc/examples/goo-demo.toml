@@ -52,6 +52,13 @@ name = "qr"
 accepts = ["text/*"]
 cmd = "qrencode -t ANSIUTF8 -- {subject.text|q}"
 
+# ── text → a PNG QR (binary bytes; `-o code.png` / `--to ^` route it intact) ──
+[[verbs]]
+name = "qr-png"
+accepts = ["text/*"]
+emits = "image/png"
+cmd = "qrencode -t PNG -o - -- {subject.text|q}"
+
 # ── markdown → HTML (pandoc); a real verb that reads its (possibly coerced) input ──
 [[verbs]]
 name = "to-html"

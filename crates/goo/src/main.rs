@@ -236,7 +236,7 @@ EXAMPLES
 
 // ---------------- helpers ----------------
 
-use goo_engine::shell::{bash_capture, bash_exec};
+use goo_engine::shell::{bash_capture, bash_capture_bytes, bash_exec};
 
 /// `goo --explain VERB [SUBJECT|@TYPE] [--as TYPE] [--explain-env ENV]` — the
 /// negotiation plan explainer (goo-debug). Read-only: shows the Accept profile
@@ -455,8 +455,8 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
                 Ok(code) => code,
                 Err(e) => die(format!("{verb_name}: {e}")),
             },
-            Some(d) => match exec::execute_capture(&plan, &subject_path, verb, reg) {
-                Ok(out) => route_result(d, out.as_bytes(), reg),
+            Some(d) => match exec::execute_capture_bytes(&plan, &subject_path, verb, reg) {
+                Ok(out) => route_result(d, &out, reg),
                 Err(e) => die(format!("{verb_name}: {e}")),
             },
         },
@@ -575,7 +575,7 @@ fn exec_verb(
     // `--to`/`-o`, capture the result and route it to the destination instead.
     match adverbs.get("to").and_then(|v| v.as_str()) {
         None => bash_exec(&rendered.cmd),
-        Some(d) => route_result(d, bash_capture(&rendered.cmd).as_bytes(), reg),
+        Some(d) => route_result(d, &bash_capture_bytes(&rendered.cmd), reg),
     }
 }
 

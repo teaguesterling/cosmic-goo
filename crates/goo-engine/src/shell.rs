@@ -16,11 +16,17 @@ pub fn bash_exec(cmd: &str) -> i32 {
 /// Run `bash -c <cmd>`, capturing stdout (for `list` / handle search / the
 /// negotiation executor's intermediate hops).
 pub fn bash_capture(cmd: &str) -> String {
+    String::from_utf8_lossy(&bash_capture_bytes(cmd)).into_owned()
+}
+
+/// Like [`bash_capture`] but returns **raw stdout bytes** — binary-safe, for the
+/// executor's intermediate buffers and byte-sink routing (a PNG, parquet, …).
+pub fn bash_capture_bytes(cmd: &str) -> Vec<u8> {
     Command::new("bash")
         .arg("-c")
         .arg(cmd)
         .output()
         .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .map(|o| o.stdout)
         .unwrap_or_default()
 }

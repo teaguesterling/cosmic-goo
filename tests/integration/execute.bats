@@ -83,6 +83,13 @@ accepts = ["text/*"]
 emits = "text/x-said"
 cost = "normal"
 cmd = "tr A-Z a-z < {subject.metadata.path|q}"
+
+# Emits two raw bytes (0xFF 0xFE) that are NOT valid UTF-8 — to prove --to routes
+# binary intact (a String/utf8-lossy capture would inflate them to 6 bytes).
+[[verbs]]
+name = "rawbytes"
+accepts = ["text/*"]
+cmd = 'printf "\377\376"'
 EOF
     printf 'hello goo' > "$BATS_TEST_TMPDIR/sub.txt"
 
@@ -204,6 +211,13 @@ EOF
     run "$GOO" say "$BATS_TEST_TMPDIR/s2.txt" --using=quiet --to "$BATS_TEST_TMPDIR/q.txt" </dev/null
     [ "$status" -eq 0 ]
     [ "$(cat "$BATS_TEST_TMPDIR/q.txt")" = "hi" ]   # quiet = lowercase, then routed to the file
+}
+
+# bytes mode: --to routes BINARY intact (no utf8-lossy inflation).
+@test "execute: --to preserves raw binary bytes (no utf8 corruption)" {
+    run "$GOO" rawbytes "$BATS_TEST_TMPDIR/sub.txt" --to "$BATS_TEST_TMPDIR/raw.bin" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$(wc -c < "$BATS_TEST_TMPDIR/raw.bin")" -eq 2 ]   # 2 raw bytes, not 6 (lossy would inflate)
 }
 
 # clipboard destination (needs wl-copy + a compositor — tool-aware skip).
