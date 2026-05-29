@@ -68,3 +68,52 @@ emits = "application/json"
 cost = "cheap"
 tool = "duckdb"
 cmd = "duckdb -s \"COPY (FROM read_parquet('{in.path}')) TO '/dev/stdout' (FORMAT json, ARRAY true)\""
+
+# ── EXTENSION-powered sources → JSON (the `LOAD ext;` form). With these, JSON (and
+# thence csv/parquet/yaml) is reachable from YAML, Excel, and HTML too — so any
+# json-wanting verb takes a .xlsx or an .html and the planner finds the route.
+# yaml + webbed are teaguesterling's community extensions; excel is core.
+#
+# These require the extensions installed in DuckDB's extension dir, which is
+# HOME-relative (~/.duckdb):
+#     duckdb -c "INSTALL yaml FROM community; INSTALL webbed FROM community; INSTALL excel;"
+# So goo must run with a HOME that has them — a sandboxed/empty HOME makes `LOAD`
+# fail and the channel yields nothing. (Core csv/json/parquet above need no LOAD.)
+
+[[types]]
+name = "application/yaml"
+extensions = [".yaml", ".yml"]
+[[types]]
+name = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+display = "Excel (xlsx)"
+extensions = [".xlsx"]
+[[types]]
+name = "text/html"
+extensions = [".html", ".htm"]
+
+# YAML → JSON  (duckdb_yaml: read_yaml)
+[[channels]]
+name = "ddb-yaml-json"
+accepts = ["application/yaml"]
+emits = "application/json"
+cost = "cheap"
+tool = "duckdb"
+cmd = "duckdb -s \"LOAD yaml;\" -s \"COPY (FROM read_yaml('{in.path}')) TO '/dev/stdout' (FORMAT json, ARRAY true)\""
+
+# Excel → JSON  (core `excel`: read_xlsx)
+[[channels]]
+name = "ddb-xlsx-json"
+accepts = ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+emits = "application/json"
+cost = "cheap"
+tool = "duckdb"
+cmd = "duckdb -s \"LOAD excel;\" -s \"COPY (FROM read_xlsx('{in.path}')) TO '/dev/stdout' (FORMAT json, ARRAY true)\""
+
+# HTML → JSON  (duckdb_webbed: read_html — parses the DOM)
+[[channels]]
+name = "ddb-html-json"
+accepts = ["text/html"]
+emits = "application/json"
+cost = "normal"
+tool = "duckdb"
+cmd = "duckdb -s \"LOAD webbed;\" -s \"COPY (FROM read_html('{in.path}')) TO '/dev/stdout' (FORMAT json, ARRAY true)\""
