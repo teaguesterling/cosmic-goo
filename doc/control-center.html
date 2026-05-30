@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cosmic-goo — Control Center (design draft)</title>
+<style>
+  :root{
+    --bg:#0b0e1a; --bg2:#121734; --panel:#161b3a; --panel2:#1d2450;
+    --ink:#e8ecff; --dim:#9aa3d4; --faint:#646db0;
+    --line:#2a3266; --acc:#7c6cff; --acc2:#36d6c3; --warn:#ffb454;
+    --ok:#46e08a; --bad:#ff6b8b; --core:#36d6c3; --desktop:#7c9cff; --cosmic:#c77dff;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#241a4d 0%,var(--bg) 55%) fixed,var(--bg);
+       color:var(--ink);font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  a{color:var(--acc2);text-decoration:none} a:hover{text-decoration:underline}
+  code,.mono{font-family:var(--mono);font-size:.86em}
+  .wrap{max-width:1240px;margin:0 auto;padding:0 22px}
+
+  /* ---------- chrome: title bar + tabs (window-like) ---------- */
+  .chrome{background:rgba(11,14,26,.86);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:30}
+  .titlebar{padding:14px 22px 8px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;max-width:1240px;margin:0 auto}
+  .titlebar h1{margin:0;font-size:22px;letter-spacing:-.3px;
+    background:linear-gradient(90deg,#fff,#b9b1ff 55%,var(--acc2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .titlebar .sub{color:var(--dim);font-size:13px}
+  .titlebar .deco{margin-left:auto;display:flex;gap:6px}
+  .deco i{width:11px;height:11px;border-radius:50%;display:inline-block;opacity:.55}
+  .deco i.r{background:#ff5f57} .deco i.y{background:#febc2e} .deco i.g{background:#28c840}
+
+  nav.tabs{padding:0 22px 0;max-width:1240px;margin:0 auto;display:flex;gap:2px;overflow-x:auto}
+  nav.tabs button{background:none;border:0;color:var(--dim);font:inherit;font-weight:600;cursor:pointer;
+    padding:8px 14px 10px;border-radius:9px 9px 0 0;white-space:nowrap;display:flex;align-items:center;gap:7px;
+    border-bottom:2px solid transparent;margin-bottom:-1px}
+  nav.tabs button:hover{color:var(--ink);background:rgba(124,108,255,.08)}
+  nav.tabs button.on{color:#fff;background:var(--panel);border-bottom-color:var(--acc2)}
+  nav.tabs button .em{font-size:15px;opacity:.85}
+  nav.tabs button .ct{font-size:11px;color:var(--faint);font-family:var(--mono);margin-left:3px}
+  nav.tabs button.on .ct{color:var(--ink)}
+
+  /* ---------- view shell ---------- */
+  main{padding:24px 22px 60px;max-width:1240px;margin:0 auto}
+  section.view{display:none;animation:fade .15s ease}
+  section.view.on{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  h2.h{font-size:22px;margin:6px 0 6px;display:flex;align-items:baseline;gap:10px}
+  h2.h .sub{font-size:13px;color:var(--dim);font-weight:400}
+  p.lede{color:var(--dim);margin:0 0 18px;max-width:860px}
+  h3.sh{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--faint);margin:24px 0 10px}
+
+  /* ---------- two-pane layout (list + detail) ---------- */
+  .layout-split{display:grid;grid-template-columns:340px 1fr;gap:14px;height:calc(100vh - 180px);min-height:560px}
+  @media(max-width:920px){.layout-split{grid-template-columns:1fr;height:auto}}
+  .pane{background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden;display:flex;flex-direction:column}
+  .pane .ph{padding:10px 14px;border-bottom:1px solid var(--line);background:var(--bg2);
+    font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);display:flex;align-items:center;gap:8px}
+  .pane .ph .ct{margin-left:auto;color:var(--ink);font-family:var(--mono);font-size:11px}
+  .pane .filt{padding:8px 12px;border-bottom:1px solid var(--line);background:rgba(0,0,0,.18)}
+  .pane .filt input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);
+    border-radius:8px;padding:6px 10px;font:inherit;font-size:12.5px}
+  .pane .filt input:focus{outline:none;border-color:var(--acc)}
+  .pane .body{flex:1;overflow:auto;padding:6px 0}
+
+  .row{display:flex;align-items:flex-start;gap:8px;padding:7px 12px;cursor:pointer;border-left:3px solid transparent}
+  .row:hover{background:rgba(124,108,255,.06)}
+  .row.on{background:rgba(54,214,195,.10);border-left-color:var(--acc2)}
+  .row .nm{font-family:var(--mono);font-size:13px;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .meta{font-size:10.5px;color:var(--faint);margin-left:6px;font-family:var(--mono);white-space:nowrap}
+  .row .badge{font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:11px;letter-spacing:.4px}
+  .badge.poly{background:rgba(124,108,255,.14);color:#b8acff}
+  .badge.uniq{color:var(--faint)}
+  .badge.dflt{background:rgba(70,224,138,.16);color:var(--ok)}
+  .badge.warn{background:rgba(255,180,84,.16);color:var(--warn)}
+  .badge.cosmic{background:rgba(199,125,255,.16);color:var(--cosmic)}
+  .badge.core{background:rgba(54,214,195,.16);color:var(--core)}
+  .badge.desktop{background:rgba(124,156,255,.16);color:var(--desktop)}
+
+  .detail{padding:18px 22px;overflow:auto}
+  .detail h3{margin:0 0 4px;font-size:18px}
+  .detail .desc{color:var(--dim);margin:0 0 14px;font-size:13px}
+  .detail .kv{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;margin:10px 0;font-size:13px}
+  .detail .kv dt{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  .detail .kv dd{margin:0;color:var(--ink)}
+  .detail .kv dd code{color:var(--acc2)}
+
+  .contrib{background:var(--bg2);border:1px solid var(--line);border-radius:11px;margin:8px 0;overflow:hidden}
+  .contrib > .hd{padding:9px 13px;display:flex;align-items:center;gap:10px;background:rgba(124,108,255,.06);border-bottom:1px solid var(--line)}
+  .contrib > .hd .from{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
+  .contrib > .hd .fname{font-family:var(--mono);color:var(--acc2);font-size:12px}
+  .contrib > .hd .right{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .contrib > .bd{padding:10px 13px}
+  .contrib .kv{margin:0;font-size:12.5px}
+  .contrib pre{background:#0a0d1c;border:1px solid var(--line);border-radius:7px;padding:8px 11px;margin:8px 0 0;
+    font-family:var(--mono);font-size:12px;color:#d6dcff;overflow:auto}
+  .specbar{height:3px;border-radius:2px;background:linear-gradient(90deg,var(--acc2),transparent);margin-top:4px;width:60%}
+  .specbar.lo{width:18%}
+  .specbar.mid{width:42%}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:3px 9px;
+    font-family:var(--mono);font-size:11.5px;display:inline-flex;gap:5px;align-items:baseline}
+  .chip small{color:var(--faint);font-family:system-ui;font-size:10.5px}
+  .chip.link{cursor:pointer;border-color:rgba(54,214,195,.4);color:var(--acc2)}
+  .chip.link:hover{background:rgba(54,214,195,.10)}
+  .chip.tier-core{border-color:rgba(54,214,195,.35);color:var(--core)}
+  .chip.tier-desktop{border-color:rgba(124,156,255,.35);color:var(--desktop)}
+  .chip.tier-cosmic{border-color:rgba(199,125,255,.35);color:var(--cosmic)}
+
+  .btn{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:8px;
+    padding:5px 11px;cursor:pointer;font:inherit;font-size:12px}
+  .btn:hover{border-color:var(--acc);color:#fff}
+  .btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  .btn.primary:hover{background:#9387ff}
+  .btn.danger{border-color:rgba(255,107,139,.5);color:var(--bad)}
+  .btn.danger:hover{background:rgba(255,107,139,.08)}
+  .btn.sm{padding:3px 8px;font-size:11px}
+  .btn-row{display:flex;gap:7px;margin-top:14px;flex-wrap:wrap}
+
+  /* probe panel — "what fires for type X?" */
+  .probe{background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin:14px 0}
+  .probe .lbl{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+  .probe .in{display:flex;gap:8px;align-items:center}
+  .probe .in input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--ink);
+    border-radius:8px;padding:6px 11px;font:inherit;font-family:var(--mono);font-size:12.5px}
+  .probe .out{margin-top:10px;font-size:12.5px;font-family:var(--mono);color:var(--ink)}
+  .probe .out .arrow{color:var(--acc2);margin:0 4px}
+  .probe .out .why{color:var(--faint);font-size:11px;display:block;margin-top:3px}
+
+  /* entity cards */
+  .ecard{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 13px;margin:8px 0;
+    display:grid;grid-template-columns:auto 1fr auto;gap:11px;align-items:center}
+  .ecard .ico{width:32px;height:32px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    display:grid;place-items:center;font-size:18px}
+  .ecard .body .t{font-size:13.5px;color:var(--ink);font-weight:600}
+  .ecard .body .s{font-size:11.5px;color:var(--faint);font-family:var(--mono);margin-top:2px}
+  .ecard .acts{display:flex;gap:5px;flex-wrap:wrap}
+
+  /* graph rendering placeholder */
+  .graph{background:var(--bg2);border:1px solid var(--line);border-radius:13px;padding:18px;text-align:center;
+    min-height:280px;display:flex;align-items:center;justify-content:center;color:var(--faint);font-style:italic;
+    background-image:radial-gradient(circle at 25% 30%, rgba(124,108,255,.10) 0 2px, transparent 3px),
+      radial-gradient(circle at 75% 70%, rgba(54,214,195,.10) 0 2px, transparent 3px),
+      linear-gradient(180deg, transparent 0%, rgba(0,0,0,.18) 100%);}
+
+  /* tool/diagnostics dashboard */
+  .ttable{width:100%;border-collapse:collapse;margin:8px 0}
+  .ttable th,.ttable td{text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:middle}
+  .ttable th{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;background:var(--bg2)}
+  .ttable td.t{color:var(--ok)} .ttable td.f{color:var(--bad)}
+  .ttable code{color:var(--acc2)}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit, minmax(260px,1fr));gap:10px;margin:10px 0}
+  .gstat{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px 14px}
+  .gstat .lbl{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
+  .gstat .n{font-size:24px;font-weight:700;margin-top:2px;color:var(--ink)}
+  .gstat .d{color:var(--dim);font-size:12px;margin-top:3px}
+
+  hr.sep{border:0;border-top:1px solid var(--line);margin:24px 0}
+
+  .pill{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+    padding:2px 7px;border-radius:10px;border:1px solid var(--line)}
+  .pill.draft{color:var(--warn);border-color:rgba(255,180,84,.5)}
+  .pill.live{color:var(--ok);border-color:rgba(70,224,138,.5)}
+
+  /* footer note */
+  footer{color:var(--faint);font-size:12px;margin-top:30px;padding-top:14px;border-top:1px solid var(--line);text-align:center}
+</style>
+</head>
+<body>
+
+<div class="chrome">
+  <div class="titlebar">
+    <h1>cosmic-goo · Control Center</h1>
+    <span class="sub">design draft — registry browser + entity surface + configuration + diagnostics</span>
+    <span class="pill draft">DRAFT</span>
+    <span class="deco"><i class="r"></i><i class="y"></i><i class="g"></i></span>
+  </div>
+  <nav class="tabs">
+    <button class="on" onclick="show('vocabulary')"><span class="em">📚</span> Vocabulary <span class="ct">3 sub</span></button>
+    <button onclick="show('entities')"><span class="em">🌐</span> Entities <span class="ct">live</span></button>
+    <button onclick="show('channels')"><span class="em">🔄</span> Channels <span class="ct">14</span></button>
+    <button onclick="show('modifiers')"><span class="em">⚙️</span> Modifiers <span class="ct">adv/sig/al</span></button>
+    <button onclick="show('plugins')"><span class="em">🔌</span> Plugins <span class="ct">30</span></button>
+    <button onclick="show('tools')"><span class="em">🛠️</span> Tools <span class="ct">22</span></button>
+    <button onclick="show('diag')"><span class="em">🔍</span> Diagnostics</button>
+  </nav>
+</div>
+
+<main>
+
+<!-- ============================== VOCABULARY ============================== -->
+<section class="view on" id="vocabulary">
+  <h2 class="h">Vocabulary
+    <span class="sub">verbs · types · domains — the language goo's registry defines</span>
+  </h2>
+  <p class="lede">Each kind of word can be contributed by <b>multiple plugins</b>. The settings UI shows them <b>stacked</b>, specificity-sorted, with the "what fires for type X?" probe revealing dispatch rationale. Only <b>entities</b> (next tab) are canonically singular.</p>
+
+  <!-- vocabulary sub-tabs -->
+  <nav class="tabs" style="position:static;padding:0;margin:-4px 0 14px;border-bottom:1px solid var(--line)">
+    <button class="on" onclick="vshow('verbs')">verbs <span class="ct">92 names</span></button>
+    <button onclick="vshow('types')">types <span class="ct">19</span></button>
+    <button onclick="vshow('domains')">domains <span class="ct">21 sources + 7 value</span></button>
+  </nav>
+
+  <!-- ============ VERBS ============ -->
+  <div id="v-verbs" class="vsub on">
+  <div class="layout-split">
+    <div class="pane">
+      <div class="ph">verbs <span class="ct">92</span></div>
+      <div class="filt"><input placeholder="filter — `connect`, `open`, accepts:image/*"></div>
+      <div class="body">
+        <div class="row on"><span class="nm">connect</span><span class="badge poly">×3</span></div>
+        <div class="row"><span class="nm">disconnect</span><span class="badge poly">×2</span></div>
+        <div class="row"><span class="nm">stop</span><span class="badge poly">×3</span></div>
+        <div class="row"><span class="nm">info</span><span class="badge poly">×3</span></div>
+        <div class="row"><span class="nm">logs</span><span class="badge poly">×2</span></div>
+        <div class="row"><span class="nm">show</span><span class="badge poly">×2</span></div>
+        <div class="row"><span class="nm">status</span><span class="badge poly">×2</span></div>
+        <div class="row"><span class="nm">open</span><span class="badge poly">×1</span><span class="badge dflt">default</span></div>
+        <div class="row"><span class="nm">copy</span><span class="badge poly">×1</span></div>
+        <div class="row"><span class="nm">activate</span><span class="badge uniq">cosmic</span><span class="badge dflt">default</span></div>
+        <div class="row"><span class="nm">summarize</span><span class="badge uniq">text-verbs</span></div>
+        <div class="row"><span class="nm">critique</span><span class="badge uniq">text-verbs</span></div>
+        <div class="row"><span class="nm">think</span><span class="badge uniq">text-verbs</span></div>
+        <div class="row"><span class="nm">draft-response</span><span class="badge uniq">text-verbs</span></div>
+        <div class="row"><span class="nm">search</span><span class="badge uniq">urls</span></div>
+        <div class="row"><span class="nm">calc</span><span class="badge uniq">calculator</span></div>
+        <div class="row"><span class="nm">unmount</span><span class="badge uniq">mounts</span></div>
+        <div class="row"><span class="nm">usage</span><span class="badge uniq">mounts</span></div>
+        <div class="row"><span class="nm">paste</span><span class="badge uniq">cliphist</span></div>
+        <div class="row"><span class="nm">qr-encode</span><span class="badge uniq">screenshots</span></div>
+        <div class="row" style="opacity:.6"><span class="nm">…and 72 more</span></div>
+      </div>
+    </div>
+
+    <div class="pane">
+      <div class="ph">connect <span class="pill live">3 contributors</span> <span class="ct">polymorphic</span></div>
+      <div class="detail">
+        <h3><code>connect</code></h3>
+        <p class="desc">Verb. <b>Polymorphic</b> — three plugins contribute, dispatched by subject type via specificity. Each contributor accepts a different vendor handle type, so there's no real conflict; specificity picks the exact-match impl for the subject's type, with later-registered tie-breaking ("user wins").</p>
+
+        <div class="kv">
+          <dt>name</dt><dd><code>connect</code></dd>
+          <dt>kind</dt><dd>polymorphic verb (3 impls, distinct accepts)</dd>
+          <dt>default_for</dt><dd><code>application/vnd.nm.connection</code> · <code>application/vnd.bluez.device</code> · <code>application/vnd.ssh.host</code></dd>
+        </div>
+
+        <h3 class="sh" style="margin-top:18px">Contributors — most-specific first per type</h3>
+
+        <div class="contrib">
+          <div class="hd">
+            <span class="from">from</span>
+            <span class="fname">plugins/network.toml</span>
+            <span class="chip tier-desktop">desktop</span>
+            <span class="right">
+              <button class="btn sm">edit</button>
+              <button class="btn sm">disable</button>
+            </span>
+          </div>
+          <div class="bd">
+            <div class="kv">
+              <dt>accepts</dt><dd><span class="chip link">application/vnd.nm.connection</span></dd>
+              <dt>default_for</dt><dd><code>application/vnd.nm.connection</code></dd>
+              <dt>specificity</dt><dd>exact-match for <code>vnd.nm.connection</code> · max<div class="specbar"></div></dd>
+            </div>
+            <pre>cmd = "nmcli connection up {subject.id|q}"</pre>
+          </div>
+        </div>
+
+        <div class="contrib">
+          <div class="hd">
+            <span class="from">from</span>
+            <span class="fname">plugins/bluetooth.toml</span>
+            <span class="chip tier-desktop">desktop</span>
+            <span class="right">
+              <button class="btn sm">edit</button>
+              <button class="btn sm">disable</button>
+            </span>
+          </div>
+          <div class="bd">
+            <div class="kv">
+              <dt>accepts</dt><dd><span class="chip link">application/vnd.bluez.device</span></dd>
+              <dt>specificity</dt><dd>exact-match for <code>vnd.bluez.device</code> · max<div class="specbar"></div></dd>
+            </div>
+            <pre>cmd = "bluetoothctl connect {subject.id|q}"</pre>
+          </div>
+        </div>
+
+        <div class="contrib">
+          <div class="hd">
+            <span class="from">from</span>
+            <span class="fname">plugins/ssh-hosts.toml</span>
+            <span class="chip tier-core">core</span>
+            <span class="right">
+              <button class="btn sm">edit</button>
+              <button class="btn sm">disable</button>
+            </span>
+          </div>
+          <div class="bd">
+            <div class="kv">
+              <dt>accepts</dt><dd><span class="chip link">application/vnd.ssh.host</span></dd>
+              <dt>specificity</dt><dd>exact-match for <code>vnd.ssh.host</code> · max<div class="specbar"></div></dd>
+            </div>
+            <pre>cmd = "ssh {subject.id|q}"</pre>
+          </div>
+        </div>
+
+        <h3 class="sh">Try it — what fires for a given subject type?</h3>
+        <div class="probe">
+          <div class="lbl">subject type</div>
+          <div class="in">
+            <input value="application/vnd.bluez.device">
+            <button class="btn primary sm">resolve</button>
+          </div>
+          <div class="out">
+            <span>connect</span><span class="arrow">→</span>plugins/bluetooth.toml
+            <span class="why">match: exact pattern <code>application/vnd.bluez.device</code> (specificity ∞ — pattern == type); ties broken by registry order, none here.</span>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn primary">Override (creates user-plugin entry)</button>
+          <button class="btn">Disable all 3</button>
+          <button class="btn">Open in `goo describe`</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <!-- ============ TYPES ============ -->
+  <div id="v-types" class="vsub" style="display:none">
+  <div class="layout-split">
+    <div class="pane">
+      <div class="ph">types <span class="ct">19 declared + OS-MIME</span></div>
+      <div class="filt"><input placeholder="filter — `text/`, `vnd.`, `image/*`"></div>
+      <div class="body">
+        <div class="row on"><span class="nm">application/vnd.git.repo</span><span class="badge cosmic">handle</span></div>
+        <div class="row"><span class="nm">application/vnd.bluez.device</span><span class="badge cosmic">handle</span></div>
+        <div class="row"><span class="nm">application/vnd.cos-cli.app</span><span class="badge cosmic">handle</span></div>
+        <div class="row"><span class="nm">application/vnd.cos-cli.workspace</span><span class="badge cosmic">handle</span></div>
+        <div class="row"><span class="nm">application/vnd.container</span><span class="badge cosmic">handle</span></div>
+        <div class="row"><span class="nm">application/vnd.mount</span><span class="badge cosmic">handle</span></div>
+        <div class="row"><span class="nm">application/vnd.emoji</span><span class="badge cosmic">handle</span></div>
+        <div class="row"><span class="nm">application/vnd.systemd.unit</span><span class="badge cosmic">handle</span></div>
+        <div class="row"><span class="nm">application/json</span><span class="badge core">content</span></div>
+        <div class="row"><span class="nm">text/markdown</span><span class="badge core">content</span></div>
+        <div class="row"><span class="nm">text/csv</span><span class="badge core">content</span></div>
+        <div class="row"><span class="nm">image/png</span><span class="badge core">content</span></div>
+        <div class="row" style="opacity:.6"><span class="nm">…and OS-MIME imports</span></div>
+      </div>
+    </div>
+
+    <div class="pane">
+      <div class="ph">application/vnd.git.repo</div>
+      <div class="detail">
+        <h3><code>application/vnd.git.repo</code></h3>
+        <p class="desc">A handle to a git repository worktree. Declared by <code>plugins/git.toml</code>; `is_a` edges relate it to the filesystem so file verbs (open, reveal, copy-path) reach repos automatically.</p>
+
+        <div class="kv">
+          <dt>display</dt><dd>git repository</dd>
+          <dt>kind</dt><dd>handle</dd>
+          <dt>declared by</dt><dd><span class="chip">plugins/git.toml</span></dd>
+        </div>
+
+        <h3 class="sh">Lattice — `is_a` walk</h3>
+        <div class="chips">
+          <span class="chip">application/vnd.git.repo</span>
+          <span style="color:var(--faint)">⊑</span>
+          <span class="chip link">inode/directory</span>
+          <span style="color:var(--faint)">⊑</span>
+          <span class="chip link">inode/*</span>
+        </div>
+        <p class="desc" style="margin-top:8px">Walking the lattice means polymorphic verbs accepting <code>inode/*</code> (like the files-plugin <code>open</code>) automatically apply to repos — no per-type wiring needed.</p>
+
+        <h3 class="sh">Emitted by</h3>
+        <div class="chips">
+          <span class="chip link">plugins/git.toml → :repo</span>
+        </div>
+
+        <h3 class="sh">Accepted by (15)</h3>
+        <div class="chips">
+          <span class="chip link">open</span><span class="chip link">reveal</span><span class="chip link">copy-path</span>
+          <span class="chip link">read</span><span class="chip link">preview</span>
+          <span class="chip link">status</span><span class="chip link">pull</span><span class="chip link">gh-pr-list</span>
+          <span class="chip link">tree</span><span class="chip link">size</span>
+          <span class="chip link">md5</span><span class="chip link">sha256</span>
+          <span class="chip" style="opacity:.6">+3 more</span>
+        </div>
+
+        <h3 class="sh">Source contributors (1)</h3>
+        <div class="contrib">
+          <div class="hd">
+            <span class="from">declared in</span>
+            <span class="fname">plugins/git.toml</span>
+            <span class="chip tier-core">core</span>
+            <span class="right"><button class="btn sm">open</button></span>
+          </div>
+          <div class="bd">
+            <pre>[[types]]
+name    = "application/vnd.git.repo"
+display = "git repository"
+kind    = "handle"
+is_a    = ["inode/directory"]</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <!-- ============ DOMAINS ============ -->
+  <div id="v-domains" class="vsub" style="display:none">
+  <div class="layout-split">
+    <div class="pane">
+      <div class="ph">domains <span class="ct">21 source + 7 value</span></div>
+      <div class="filt"><input placeholder="filter — `:app`, `:file`, vendor"></div>
+      <div class="body">
+        <div class="row on"><span class="nm">:app</span><span class="badge cosmic">cosmic</span><span class="badge poly">2 srcs</span></div>
+        <div class="row"><span class="nm">:win</span><span class="badge cosmic">cosmic</span></div>
+        <div class="row"><span class="nm">:ws</span><span class="badge cosmic">cosmic</span></div>
+        <div class="row"><span class="nm">:bt</span><span class="badge desktop">desktop</span></div>
+        <div class="row"><span class="nm">:net</span><span class="badge desktop">desktop</span></div>
+        <div class="row"><span class="nm">:ssh</span><span class="badge core">core</span></div>
+        <div class="row"><span class="nm">:svc</span><span class="badge desktop">desktop</span></div>
+        <div class="row"><span class="nm">:ps</span><span class="badge core">core</span></div>
+        <div class="row"><span class="nm">:ctr</span><span class="badge core">core</span></div>
+        <div class="row"><span class="nm">:repo</span><span class="badge core">core</span></div>
+        <div class="row"><span class="nm">:br</span><span class="badge core">core</span></div>
+        <div class="row"><span class="nm">:tmux</span><span class="badge core">core</span></div>
+        <div class="row"><span class="nm">:mnt</span><span class="badge desktop">desktop</span></div>
+        <div class="row"><span class="nm">:recent</span><span class="badge desktop">desktop</span></div>
+        <div class="row"><span class="nm">:emo</span><span class="badge desktop">desktop</span></div>
+        <div class="row"><span class="nm">:clip / :sel / :hist</span><span class="badge desktop">desktop</span></div>
+        <div class="row"><span class="nm">:sink</span><span class="badge desktop">desktop</span></div>
+        <div class="row" style="opacity:.7"><span class="nm">— value-domains —</span></div>
+        <div class="row"><span class="nm">text / file / clip / sel / stdin / url / type</span><span class="badge dflt">built-in</span></div>
+      </div>
+    </div>
+
+    <div class="pane">
+      <div class="ph">:app <span class="pill live">2 contributing sources</span></div>
+      <div class="detail">
+        <h3><code>:app</code> <span style="color:var(--faint);font-size:14px;font-weight:400">— per-application launcher</span></h3>
+        <p class="desc">Domain prefix backed by 2 sources, both emitting <code>application/vnd.cos-cli.app</code>. The <b>apps</b> source enumerates per-app (uses <code>app_id</code> as id, so multi-window apps collapse); the <b>focused</b> source is implicit (no prefix, surfaces just the currently-active toplevel as a default subject for keyboard-bound handle verbs).</p>
+
+        <div class="kv">
+          <dt>emits</dt><dd><code>application/vnd.cos-cli.app</code></dd>
+          <dt>verbs accepting</dt><dd>activate (default), close, maximize, minimize, fullscreen, move-to</dd>
+        </div>
+
+        <h3 class="sh">Source contributors (2)</h3>
+        <div class="contrib">
+          <div class="hd">
+            <span class="from">source</span>
+            <span class="fname">apps  (plugins/apps.toml)</span>
+            <span class="chip tier-cosmic">cosmic</span>
+            <span class="right"><button class="btn sm">peek items</button> <button class="btn sm">disable</button></span>
+          </div>
+          <div class="bd">
+            <div class="kv">
+              <dt>prefix</dt><dd><code>app</code></dd>
+              <dt>enumerate</dt><dd>true (bulk-listed in compose/completion)</dd>
+              <dt>id format</dt><dd><code>app_id</code> · per-app (collides on multi-window — see <code>:win</code> for per-toplevel)</dd>
+            </div>
+            <pre>list_cmd = "$HOME/.cargo/bin/cos-cli info --json | jq '[.apps[] | {id: .app_id, title, …}]'"</pre>
+          </div>
+        </div>
+
+        <div class="contrib">
+          <div class="hd">
+            <span class="from">source</span>
+            <span class="fname">focused  (plugins/apps.toml)</span>
+            <span class="chip tier-cosmic">cosmic</span>
+            <span class="right"><button class="btn sm">disable</button></span>
+          </div>
+          <div class="bd">
+            <div class="kv">
+              <dt>prefix</dt><dd>— (no prefix; implicit subject)</dd>
+              <dt>implicit</dt><dd>true (default subject for handle verbs with no positional)</dd>
+              <dt>enumerate</dt><dd>false (skipped in bulk list)</dd>
+            </div>
+            <pre>list_cmd = "… | jq '[.apps[] | select(.state[]? == \"activated\")][0:1]'"</pre>
+          </div>
+        </div>
+
+        <h3 class="sh">Live peek <button class="btn sm" style="margin-left:8px">refresh</button></h3>
+        <div class="chips">
+          <span class="chip">Claude</span>
+          <span class="chip">firefox</span>
+          <span class="chip">com.system76.CosmicEdit <small>(×3 windows — see :win)</small></span>
+          <span class="chip">…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+
+</section>
+
+
+<!-- ============================== ENTITIES ============================== -->
+<section class="view" id="entities">
+  <h2 class="h">Entities
+    <span class="sub">live — the canonical singular pane; what exists right now, with actions</span>
+  </h2>
+  <p class="lede">Unlike vocabulary, entities <b>are</b> canonical: one Firefox window, one <code>~/notes.md</code> file, one <code>build1</code> SSH host. The settings UI shows what's there now and surfaces <code>goo options</code> per entity so any verb applicable to that subject is one click away.</p>
+
+  <div class="grid">
+    <div class="gstat"><div class="lbl">live entities</div><div class="n">~340</div><div class="d">across 21 source-domains</div></div>
+    <div class="gstat"><div class="lbl">last refresh</div><div class="n">2s ago</div><div class="d">click "refresh" on a pane to re-list</div></div>
+    <div class="gstat"><div class="lbl">side effects?</div><div class="n">none</div><div class="d">peeking is read-only; verbs are explicit</div></div>
+  </div>
+
+  <h3 class="sh">🖥 Windows (cos-cli toplevels) · :win <button class="btn sm" style="margin-left:6px">refresh</button></h3>
+  <div class="ecard">
+    <div class="ico">📝</div>
+    <div class="body">
+      <div class="t">Notes.md — CosmicEdit</div>
+      <div class="s">:win/com.system76.CosmicEdit/2 · ws 1 · activated</div>
+    </div>
+    <div class="acts">
+      <button class="btn primary sm">activate</button>
+      <button class="btn sm">maximize</button>
+      <button class="btn sm">move-to…</button>
+      <button class="btn danger sm">close</button>
+    </div>
+  </div>
+  <div class="ecard">
+    <div class="ico">🦊</div>
+    <div class="body">
+      <div class="t">Project planning — Mozilla Firefox</div>
+      <div class="s">:win/firefox/1 · ws 2</div>
+    </div>
+    <div class="acts">
+      <button class="btn primary sm">activate</button>
+      <button class="btn sm">minimize</button>
+      <button class="btn sm">move-to…</button>
+    </div>
+  </div>
+
+  <h3 class="sh">💾 Mounts · :mnt</h3>
+  <div class="ecard">
+    <div class="ico">💽</div>
+    <div class="body">
+      <div class="t">/ (root)</div>
+      <div class="s">/dev/mapper/data-root — ext4 459.5G · used 67%</div>
+    </div>
+    <div class="acts">
+      <button class="btn primary sm">open</button>
+      <button class="btn sm">usage</button>
+    </div>
+  </div>
+  <div class="ecard">
+    <div class="ico">📀</div>
+    <div class="body">
+      <div class="t">USB-DRIVE</div>
+      <div class="s">/media/teague/USB-DRIVE — vfat 32G · used 14%</div>
+    </div>
+    <div class="acts">
+      <button class="btn primary sm">open</button>
+      <button class="btn sm">usage</button>
+      <button class="btn danger sm">unmount</button>
+    </div>
+  </div>
+
+  <h3 class="sh">🐳 Containers · :ctr  <span style="color:var(--faint);font-size:11px">— docker/podman</span></h3>
+  <div class="ecard">
+    <div class="ico">📦</div>
+    <div class="body">
+      <div class="t">web-server</div>
+      <div class="s">running 3h · image: nginx:alpine</div>
+    </div>
+    <div class="acts">
+      <button class="btn primary sm">logs</button>
+      <button class="btn sm">shell</button>
+      <button class="btn danger sm">stop</button>
+    </div>
+  </div>
+
+  <p style="color:var(--faint);font-size:12px;margin-top:14px">…and <code>:ps</code> · <code>:svc</code> · <code>:ssh</code> · <code>:repo</code> · <code>:br</code> · <code>:tmux</code> · <code>:hist</code> · <code>:bt</code> · <code>:net</code> · <code>:sink</code> · <code>:recent</code> · <code>:emo</code> panes below, on demand (some are large; expand only what you need).</p>
+</section>
+
+
+<!-- ============================== CHANNELS ============================== -->
+<section class="view" id="channels">
+  <h2 class="h">Channels
+    <span class="sub">type-coercion edges — what makes <code>goo json-keys data.csv</code> just work</span>
+  </h2>
+  <p class="lede">Channels are the edges of the coercion graph the negotiation planner routes through (cost-ranked Dijkstra). Listed here per declaration; the graph view is live-rendered from <code>--paths --format mermaid</code>.</p>
+
+  <div class="graph">
+    <span>[ live mermaid render of the coercion graph<br>
+    <code>graph LR</code> with shared type nodes; lossy/network edges highlighted ]<br><br>
+    <button class="btn sm" style="margin-top:4px">render now</button>
+    <button class="btn sm">export svg</button>
+    </span>
+  </div>
+
+  <h3 class="sh">Channels by tier <span style="color:var(--faint);font-size:11px">— click any to inspect / disable</span></h3>
+  <table class="ttable">
+    <tr><th>name</th><th>from → to</th><th>cost</th><th>tool</th><th>provides</th><th>actions</th></tr>
+    <tr><td><code>csv2json</code></td><td>text/csv → application/json</td><td>cheap</td><td class="t">✓ mlr</td><td>presentation.toml</td><td><button class="btn sm">trace</button> <button class="btn sm">disable</button></td></tr>
+    <tr><td><code>chafa</code></td><td>image/* → text/x-ansi</td><td><span style="color:var(--warn)">lossy</span></td><td class="t">✓ chafa</td><td>presentation.toml</td><td><button class="btn sm">trace</button> <button class="btn sm">disable</button></td></tr>
+    <tr><td><code>eog</code></td><td>image/* → wayland.surface</td><td>normal</td><td class="t">✓ eog</td><td>presentation.toml</td><td><button class="btn sm">trace</button> <button class="btn sm">disable</button></td></tr>
+    <tr><td><code>ddb-csv-json</code></td><td>text/csv → application/json</td><td>cheap</td><td class="f">— duckdb missing</td><td>duckdb-formats.toml (opt-in via -c)</td><td><button class="btn sm">install hint</button></td></tr>
+    <tr><td><code>ddb-yaml-json</code></td><td>application/yaml → application/json</td><td>cheap</td><td class="f">— duckdb missing</td><td>duckdb-formats.toml (opt-in)</td><td><button class="btn sm">install hint</button></td></tr>
+  </table>
+</section>
+
+
+<!-- ============================== MODIFIERS ============================== -->
+<section class="view" id="modifiers">
+  <h2 class="h">Modifiers
+    <span class="sub">adverbs · sigils · aliases — the composition layer (the "how" not the "what")</span>
+  </h2>
+  <p class="lede">Modifiers shape <em>how</em> verbs apply, not what they do. Adverbs swap an LLM, a search engine, or a tone; sigils are typing shortcuts for subjects; aliases shortcut whole invocations.</p>
+
+  <h3 class="sh">Adverbs <span style="color:var(--faint);font-size:11px">— defaults you can change</span></h3>
+  <table class="ttable">
+    <tr><th>name</th><th>kind</th><th>applies to</th><th>default</th><th>values</th></tr>
+    <tr><td><code>via</code></td><td>selector</td><td>text/*</td><td>clipboard</td><td><span class="chip">clipboard</span> <span class="chip">fabric</span> <span class="chip">claude-desktop</span> <span class="chip">claude-code</span></td></tr>
+    <tr><td><code>engine</code></td><td>selector</td><td>verbs: search</td><td>ddg</td><td><span class="chip">ddg</span> <span class="chip">google</span> <span class="chip">github</span> <span class="chip">mdn</span> <span class="chip">crates</span> <span class="chip">wikipedia</span></td></tr>
+    <tr><td><code>depth</code></td><td>selector</td><td>verbs: think</td><td>normal</td><td><span class="chip">normal</span> <span class="chip">really</span> <span class="chip">ultra</span></td></tr>
+    <tr><td><code>tone</code></td><td>selector</td><td>verbs: shout</td><td>loud</td><td><span class="chip">loud</span> <span class="chip">soft</span></td></tr>
+  </table>
+
+  <h3 class="sh">Sigils <span style="color:var(--faint);font-size:11px">— subject typing shortcuts</span></h3>
+  <table class="ttable">
+    <tr><th>char</th><th>expands to</th><th>provides</th><th>actions</th></tr>
+    <tr><td><code>:</code></td><td><i>colon-sigil parser</i> — <code>:dom/path</code> · <code>:dom:query</code></td><td>built-in</td><td>—</td></tr>
+    <tr><td><code>+</code></td><td>literal text — <code>goo://text/&lt;…&gt;</code></td><td>built-in</td><td>—</td></tr>
+    <tr><td><code>^</code></td><td>clipboard — <code>goo://clip/</code></td><td>built-in</td><td>—</td></tr>
+    <tr><td><code>=</code></td><td>virtual-type subject — <code>goo://type/&lt;mime&gt;</code></td><td>plugins/core.toml</td><td><button class="btn sm">redefine</button></td></tr>
+    <tr><td><code>@</code></td><td><i>(unclaimed — declare in user config)</i></td><td>—</td><td><button class="btn primary sm">claim</button></td></tr>
+  </table>
+
+  <h3 class="sh">Aliases <span style="color:var(--faint);font-size:11px">— invocation shortcuts</span></h3>
+  <table class="ttable">
+    <tr><th>name</th><th>expands to</th><th>plugin</th><th>actions</th></tr>
+    <tr><td colspan="4" style="text-align:center;color:var(--faint);font-style:italic">no aliases declared — add one in your user config</td></tr>
+  </table>
+  <button class="btn primary" style="margin-top:8px">+ new alias</button>
+</section>
+
+
+<!-- ============================== PLUGINS ============================== -->
+<section class="view" id="plugins">
+  <h2 class="h">Plugins
+    <span class="sub">30 enabled — the package list, with discovery order</span>
+  </h2>
+  <p class="lede">Plugins load lowest-to-highest precedence (system → org → user → CWD); later-loaded wins on name collisions for non-polymorphic entries. Verbs and channels merge by <code>(name, accepts)</code> so same-named-different-accepts coexist (the polymorphic dispatch).</p>
+
+  <h3 class="sh">Discovery order — load lowest to highest</h3>
+  <table class="ttable">
+    <tr><th>#</th><th>directory</th><th>tier</th><th>plugins</th></tr>
+    <tr><td>1</td><td><code>/usr/share/cosmic-goo/plugins/</code> (built-in)</td><td>—</td><td>30 — all shipped</td></tr>
+    <tr><td>2</td><td><code>/etc/cosmic-goo/plugins/</code></td><td>—</td><td>0 — system admin overrides</td></tr>
+    <tr><td>3</td><td><code>~/.config/cosmic-goo/plugins/</code></td><td>—</td><td>0 — user overrides</td></tr>
+    <tr><td>4</td><td><code>$PWD/.cosmic-goo/plugins/</code></td><td>—</td><td>0 — project overrides</td></tr>
+    <tr><td>+</td><td><code>COSMIC_GOO_EXTRA_CONFIG</code> (one-shot via <code>-c</code>)</td><td>—</td><td>0 active</td></tr>
+  </table>
+
+  <h3 class="sh">Plugins by tier</h3>
+  <div class="grid">
+    <div class="gstat" style="border-left:3px solid var(--core)">
+      <div class="lbl">core <span style="color:var(--core);font-weight:700">(8)</span></div>
+      <div style="margin-top:8px;line-height:1.9">
+        <span class="chip tier-core">containers</span> <span class="chip tier-core">content</span>
+        <span class="chip tier-core">git</span> <span class="chip tier-core">processes</span>
+        <span class="chip tier-core">ssh-hosts</span> <span class="chip tier-core">text-utilities</span>
+        <span class="chip tier-core">tmux</span> <span class="chip tier-core">sigils</span>
+      </div>
+    </div>
+    <div class="gstat" style="border-left:3px solid var(--desktop)">
+      <div class="lbl">desktop <span style="color:var(--desktop);font-weight:700">(19)</span></div>
+      <div style="margin-top:8px;line-height:1.9">
+        <span class="chip tier-desktop">audio</span> <span class="chip tier-desktop">bluetooth</span>
+        <span class="chip tier-desktop">calculator</span> <span class="chip tier-desktop">claude-routing</span>
+        <span class="chip tier-desktop">clipboard-history</span> <span class="chip tier-desktop">emoji</span>
+        <span class="chip tier-desktop">files</span> <span class="chip tier-desktop">media</span>
+        <span class="chip tier-desktop">mounts</span> <span class="chip tier-desktop">network</span>
+        <span class="chip tier-desktop">notifications</span> <span class="chip tier-desktop">power</span>
+        <span class="chip tier-desktop">recent</span> <span class="chip tier-desktop">screenshots</span>
+        <span class="chip tier-desktop">selection</span> <span class="chip tier-desktop">services</span>
+        <span class="chip tier-desktop">text-verbs</span> <span class="chip tier-desktop">urls</span>
+        <span class="chip tier-desktop">presentation</span>
+      </div>
+    </div>
+    <div class="gstat" style="border-left:3px solid var(--cosmic)">
+      <div class="lbl">cosmic <span style="color:var(--cosmic);font-weight:700">(3)</span></div>
+      <div style="margin-top:8px;line-height:1.9">
+        <span class="chip tier-cosmic">apps</span>
+        <span class="chip tier-cosmic">workspaces</span>
+        <span class="chip tier-cosmic">core</span>
+      </div>
+    </div>
+  </div>
+
+  <p style="color:var(--faint);font-size:12px;margin-top:14px">Click any plugin to see its contributions (verbs / sources / types / channels / adverbs), reload from disk, or open the source file. Disabling a plugin removes ALL its contributions — verbs revert to next-most-specific impl per type, sources go dark, declared types deregister (referrers may break).</p>
+</section>
+
+
+<!-- ============================== TOOLS ============================== -->
+<section class="view" id="tools">
+  <h2 class="h">Tools
+    <span class="sub">channel + verb shell-dep dashboard — install hints for what's missing</span>
+  </h2>
+  <p class="lede">A goo plugin can declare <code>tool = "mlr"</code> on a channel or verb. The planner prunes routes whose tools are missing AND surfaces the install hint on a 415. This pane is the full inventory.</p>
+
+  <table class="ttable">
+    <tr><th>tool</th><th>used by</th><th>status</th><th>install hint</th></tr>
+    <tr><td><code>jq</code></td><td>~most channels + many list_cmd</td><td class="t">✓ on PATH</td><td>—</td></tr>
+    <tr><td><code>bash</code></td><td>engine runtime</td><td class="t">✓ on PATH</td><td>—</td></tr>
+    <tr><td><code>cos-cli</code></td><td>:app · :win · :ws · :focused (apps/workspaces)</td><td class="t">✓ at ~/.cargo/bin</td><td>—</td></tr>
+    <tr><td><code>nmcli</code></td><td>:net + connect/disconnect verbs</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>bluetoothctl</code></td><td>:bt + connect/disconnect</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>findmnt</code></td><td>:mnt list_cmd</td><td class="t">✓ (util-linux)</td><td>—</td></tr>
+    <tr><td><code>mlr</code></td><td>presentation.toml csv2json channel</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>chafa</code></td><td>image/* → text/x-ansi (lossy)</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>eog</code></td><td>image/* → wayland.surface</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>qalc</code></td><td>calculator verb</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>playerctl</code></td><td>media verbs</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>cliphist</code></td><td>:hist + clip verbs</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>gh</code></td><td>gh-pr-list verb</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>grim · slurp</code></td><td>screenshot / capture-region</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>tesseract</code></td><td>ocr-image / ocr-region</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>zbarimg</code></td><td>scan-qr / scan-qr-image</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>qrencode</code></td><td>qr-encode / qr-save</td><td class="t">✓</td><td>—</td></tr>
+    <tr><td><code>duckdb</code></td><td>5 coercion channels (opt-in via -c doc/examples/duckdb-formats.toml)</td><td class="f">— missing</td><td><code>cargo install duckdb-cli</code> · enables CSV↔JSON↔Parquet via DuckDB</td></tr>
+    <tr><td><code>fabric</code></td><td>claude-routing.toml — via=fabric</td><td class="f">— missing</td><td>install Fabric — text-verbs (critique/summarize/think) gain the fabric route</td></tr>
+    <tr><td><code>argos-translate · trans</code></td><td>(could-add translate verb)</td><td class="f">— missing (not used by any plugin yet)</td><td>—</td></tr>
+  </table>
+</section>
+
+
+<!-- ============================== DIAGNOSTICS ============================== -->
+<section class="view" id="diag">
+  <h2 class="h">Diagnostics
+    <span class="sub">validate · environment · registry stats · the "why does this dispatch here?" debugger</span>
+  </h2>
+
+  <h3 class="sh">Validation <button class="btn sm" style="margin-left:6px">re-run</button></h3>
+  <div class="gstat" style="border-left:3px solid var(--ok)">
+    <div class="lbl">goo validate</div>
+    <div class="n" style="font-size:14px;color:var(--ok);font-weight:600">OK</div>
+    <div class="d">30 plugins · 19 types · 21 sources · 92 verbs · 4 adverbs · 2 sigils · 0 aliases · 5 channels · 0 dispatch — 0 errors, 0 warnings</div>
+  </div>
+
+  <h3 class="sh">Environment</h3>
+  <table class="ttable">
+    <tr><th>variable</th><th>value</th><th>effect</th></tr>
+    <tr><td><code>COSMIC_GOO_BUILTIN_PLUGINS_DIR</code></td><td><code>/usr/share/cosmic-goo/plugins</code></td><td>builtin plugin dir</td></tr>
+    <tr><td><code>COSMIC_GOO_MIME_DIRS</code></td><td><i>unset</i></td><td>(opt-in: import OS shared-mime-info — is_a lattice + globs)</td></tr>
+    <tr><td><code>COSMIC_GOO_EXTRA_CONFIG</code></td><td><i>unset</i></td><td>(set by -c/--config — merge extra plugin TOML/dir)</td></tr>
+    <tr><td><code>XDG_CONFIG_HOME</code></td><td><code>~/.config</code></td><td>user plugin dir = <code>$XDG_CONFIG_HOME/cosmic-goo/plugins/</code></td></tr>
+    <tr><td><code>WAYLAND_DISPLAY · DISPLAY</code></td><td><code>wayland-1 · :1</code></td><td>display present — negotiation prefers surfaces on TTY+display</td></tr>
+  </table>
+
+  <h3 class="sh">"Why does this dispatch here?" debugger</h3>
+  <div class="probe">
+    <div class="lbl">verb + subject — see the full dispatch trace</div>
+    <div class="in" style="flex-wrap:wrap">
+      <input style="flex:1;min-width:200px" value="connect">
+      <input style="flex:1;min-width:240px" value=":bt/AA:BB:CC:DD:EE:FF">
+      <button class="btn primary sm">trace</button>
+    </div>
+    <div class="out">
+      <span>connect</span><span class="arrow">→</span>plugins/bluetooth.toml<span class="arrow">→</span>cmd: <code>bluetoothctl connect AA:BB:CC:DD:EE:FF</code>
+      <span class="why">subject :bt/AA:BB:CC:DD:EE:FF resolves to type <code>application/vnd.bluez.device</code>. Among 3 `connect` impls, bluetooth's accepts (<code>vnd.bluez.device</code>) is the exact-pattern match — specificity max. Tied with no others.</span>
+    </div>
+  </div>
+
+  <h3 class="sh">Registry stats</h3>
+  <div class="grid">
+    <div class="gstat"><div class="lbl">verbs</div><div class="n">92</div><div class="d">incl. 17 polymorphic across 7 names</div></div>
+    <div class="gstat"><div class="lbl">sources</div><div class="n">21</div><div class="d">incl. 1 implicit (focused)</div></div>
+    <div class="gstat"><div class="lbl">types</div><div class="n">19 + OS-MIME</div><div class="d">declared in-tree; lattice walks via is_a</div></div>
+    <div class="gstat"><div class="lbl">cold load</div><div class="n">~370ms</div><div class="d">~10ms warm (XDG_RUNTIME_DIR cache)</div></div>
+  </div>
+
+  <h3 class="sh">Recent runs <button class="btn sm" style="margin-left:6px">clear</button></h3>
+  <table class="ttable">
+    <tr><th>time</th><th>command</th><th>result</th></tr>
+    <tr><td><code>14:23:01</code></td><td><code>goo summarize ./notes.md --via=fabric</code></td><td class="t">0 · 2.3s</td></tr>
+    <tr><td><code>14:21:47</code></td><td><code>goo --explain view @image/png --paths --format=mermaid</code></td><td class="t">0 · 18ms</td></tr>
+    <tr><td><code>14:18:14</code></td><td><code>goo open :recent:tax</code></td><td class="t">0 · 12ms</td></tr>
+  </table>
+</section>
+
+</main>
+
+<footer>
+  cosmic-goo Control Center — design draft, no live data. Generated as a mock to lock the conceptual model before iced/libcosmic implementation.
+</footer>
+
+<script>
+function show(id){
+  document.querySelectorAll('section.view').forEach(s => s.classList.toggle('on', s.id===id));
+  document.querySelectorAll('nav.tabs > button').forEach(b => {
+    const t = b.getAttribute('onclick') || '';
+    b.classList.toggle('on', t.includes("'"+id+"'"));
+  });
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+function vshow(id){
+  document.querySelectorAll('.vsub').forEach(s => s.style.display = (s.id==='v-'+id) ? 'block' : 'none');
+  document.querySelectorAll('#vocabulary nav.tabs button').forEach(b => {
+    const t = b.getAttribute('onclick') || '';
+    b.classList.toggle('on', t.includes("'"+id+"'"));
+  });
+}
+</script>
+
+</body>
+</html>
