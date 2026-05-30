@@ -381,7 +381,7 @@ What it completes:
 | `goo <TAB>` | subcommands + verb names |
 | `goo describe <TAB>` | verb names |
 | `goo list <TAB>` | source names |
-| `goo VERB --<TAB>` | adverbs the verb opts into (`--name=`) |
+| `goo VERB --<TAB>` | adverbs the verb opts into (`--name=`) — **subject-aware** when a subject is on the line, via the [OPTIONS surface](#goo-options-subject-type) so the keys match `uses_adverbs` at the run path |
 | `goo VERB --flag=<TAB>` | selector values for that adverb |
 | `goo VERB :<TAB>` | source prefixes (`:app:`, `:ws:`, `:file:`, …) |
 | `goo VERB :source:<TAB>` | items from that source (runs its `list_cmd`) |

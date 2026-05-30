@@ -90,7 +90,7 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
         Some("--explain") => cmd_explain(&args[1..]),
         Some("options") => cmd_options(&args[1..]),
         Some("dispatch") => cmd_dispatch(args.get(1).map(String::as_str)),
-        Some("__complete") => cmd_complete(args.get(1).map(String::as_str), args.get(2).map(String::as_str)),
+        Some("__complete") => cmd_complete(&args[1..]),
         Some("-h") | Some("--help") | Some("help") => {
             print_usage();
             0
@@ -1292,11 +1292,14 @@ fn cmd_dispatch(input_arg: Option<&str>) -> i32 {
 
 // ---------------- subcommand: __complete ----------------
 
-fn cmd_complete(stage: Option<&str>, arg: Option<&str>) -> i32 {
+fn cmd_complete(args: &[String]) -> i32 {
     let reg = registry::load_all();
     let arr = |k: &str| reg.get(k).and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let arg = arg.unwrap_or("");
-    match stage.unwrap_or("") {
+    let stage = args.first().map(String::as_str).unwrap_or("");
+    // First positional after the stage (single-arg stages use this); additional
+    // positionals (multi-arg OPTIONS-backed stages) reach via `args.get(2)`/`(3)`.
+    let arg = args.get(1).map(String::as_str).unwrap_or("");
+    match stage {
         "subcommands" => {
             println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nhelp");
             for v in arr("verbs") {
@@ -1398,6 +1401,48 @@ fn cmd_complete(stage: Option<&str>, arg: Option<&str>) -> i32 {
             });
             if let Some(lc) = lc {
                 print_ids(&bash_capture(&lc));
+            }
+        }
+        // ---- OPTIONS-backed completion (goo-protocol §7 surface) ----
+        // The same `options::options_for` projection the compose-gui consumes — so
+        // completion never drifts from the run-path. Subject is any address (file,
+        // sigil, `=TYPE`, `:type/`, `goo://…`); resolution failures degrade to "no
+        // candidates" rather than an error (completion must never crash the shell).
+        "options-allow" => {
+            // The verbs applicable to `<subject>` — `options.allow`, one per line.
+            // The subject-aware analogue of the `verbs` stage; powers any consumer
+            // that wants "what can I do with this?" (a `goo what` wrapper, zsh
+            // grouping, an editor plugin).
+            if arg.is_empty() {
+                return 0;
+            }
+            if let Ok(subject) = address::resolve(arg, &reg, None) {
+                let view = options::options_for(&reg, &subject);
+                if let Some(allow) = view.get("allow").and_then(Value::as_array) {
+                    for v in allow.iter().filter_map(Value::as_str) {
+                        println!("{v}");
+                    }
+                }
+            }
+        }
+        "options-with" => {
+            // The `With:` keys for `<verb>` given `<subject>` — i.e. the adverbs
+            // that actually take effect at run time (the `uses_adverbs` gate). The
+            // subject-aware counterpart of `adverbs <verb>`; consumed by goo.bash
+            // when a subject is present at the `--<TAB>` position so completion
+            // mirrors what `goo <verb> <subject>` would actually resolve.
+            let verb = arg;
+            let subj = args.get(2).map(String::as_str).unwrap_or("");
+            if verb.is_empty() || subj.is_empty() {
+                return 0;
+            }
+            if let Ok(subject) = address::resolve(subj, &reg, None) {
+                let view = options::options_for(&reg, &subject);
+                if let Some(with) = view.get("verbs").and_then(|v| v.get(verb)).and_then(|v| v.get("with")).and_then(Value::as_object) {
+                    for k in with.keys() {
+                        println!("{k}");
+                    }
+                }
             }
         }
         _ => {}

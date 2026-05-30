@@ -61,10 +61,26 @@ _goo() {
     fi
 
     if [[ "$cur" == --* ]]; then
-        # --<TAB> — complete adverb names for this verb.
+        # --<TAB> — complete adverb names for this verb. If a subject is already
+        # present on the line, route through the OPTIONS surface (goo-protocol §7)
+        # so the keys match what the run-path would actually resolve (subject-aware,
+        # mirrors `uses_adverbs`). Fall back to the verb-only stage when no subject
+        # is available yet.
         local prefix=${cur#--}
-        local adverbs
-        adverbs=$(goo __complete adverbs "$first" 2>/dev/null)
+        local subject="" j
+        for ((j=2; j<cword; j++)); do
+            if [[ "${words[j]}" != -* ]]; then
+                subject="${words[j]}"
+                break
+            fi
+        done
+        local adverbs=""
+        if [ -n "$subject" ]; then
+            adverbs=$(goo __complete options-with "$first" "$subject" 2>/dev/null)
+        fi
+        if [ -z "$adverbs" ]; then
+            adverbs=$(goo __complete adverbs "$first" 2>/dev/null)
+        fi
         # shellcheck disable=SC2207
         COMPREPLY=($(compgen -W "$adverbs" -- "$prefix"))
         # Re-prefix so the user gets --name=

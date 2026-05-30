@@ -136,3 +136,52 @@ EOF
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
+
+# ---- OPTIONS-backed stages (goo-protocol §7) ----
+# Subject-aware completion: same `options::options_for` projection `goo options`
+# and the compose-gui consume. Drives the bash script when a subject is on the
+# line at the `--<TAB>` position so the offered keys match the run-path
+# `uses_adverbs` gate.
+
+@test "complete options-allow: lists subject-applicable verbs (text → shout)" {
+    # Engine-level options-allow is Rust-only; bash bin has no options module.
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
+    run "$GOO" __complete options-allow =text/plain </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -qx "shout"      # accepts text/*
+    ! echo "$output" | grep -qx "poke"     # accepts widget/*, NOT text
+}
+
+@test "complete options-allow: handle subject (widget → poke, not shout)" {
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
+    run "$GOO" __complete options-allow =application/vnd.fix.widget </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -qx "poke"
+    ! echo "$output" | grep -qx "shout"
+}
+
+@test "complete options-with: lists the verb's With: keys (shout → tone)" {
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
+    run "$GOO" __complete options-with shout =text/plain </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -qx "tone"
+}
+
+@test "complete options-with: a verb with no adverbs has empty output" {
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
+    run "$GOO" __complete options-with poke =application/vnd.fix.widget </dev/null
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# Robustness: completion must never crash the shell on bad input — bad subjects
+# or missing args degrade silently to "no candidates".
+@test "complete options-* with empty/bad args: silent, exit 0" {
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
+    run "$GOO" __complete options-allow </dev/null
+    [ "$status" -eq 0 ]; [ -z "$output" ]
+    run "$GOO" __complete options-with shout </dev/null      # subject missing
+    [ "$status" -eq 0 ]; [ -z "$output" ]
+    run "$GOO" __complete options-allow ':nope/no-such-source' </dev/null
+    [ "$status" -eq 0 ]; [ -z "$output" ]
+}
