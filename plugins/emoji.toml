@@ -1,0 +1,81 @@
+name = "emoji"
+tier = "desktop"
+description = "Unicode emoji picker — pick and copy"
+
+# Items emit a vendor `application/vnd.emoji` type (NOT `is_a` text/plain — keeps the
+# text-verbs out of the emoji picker). The default verb is `copy-emoji` →
+# wl-copy the codepoint. Reach via:
+#   :emo:smile    — fuzzy search by name
+#   :emo:heart    — search
+#   :emo/😀       — exact codepoint as the id (rarely useful at the CLI)
+
+[[types]]
+name = "application/vnd.emoji"
+display = "emoji"
+
+[[sources]]
+name = "emoji"
+prefix = "emo"
+icon = "face-smile"
+emits = "application/vnd.emoji"
+enumerate = false   # ~140 items; reach via :emo:query
+# A curated set of the most-used codepoints (Unicode 13 + skin-tone-neutral).
+# The python heredoc is self-contained — no sidecar JSON, ships in one TOML.
+# Replace or extend with the full CLDR set via a user plugin if you want
+# (`[[sources]] name = "emoji"` in ~/.config/cosmic-goo/plugins/ overrides).
+list_cmd = '''python3 -c "
+import json
+data = [
+    ('😀','grinning face'),('😃','grinning face with big eyes'),('😄','smiling face with smiling eyes'),
+    ('😁','beaming face with smiling eyes'),('😆','grinning squinting face'),('😅','grinning face with sweat'),
+    ('🤣','rolling on the floor laughing'),('😂','face with tears of joy'),('🙂','slightly smiling face'),
+    ('🙃','upside-down face'),('😉','winking face'),('😊','smiling face with smiling eyes'),
+    ('😇','smiling face with halo'),('🥰','smiling face with hearts'),('😍','smiling face with heart-eyes'),
+    ('🤩','star-struck'),('😘','face blowing a kiss'),('😗','kissing face'),('😚','kissing face with closed eyes'),
+    ('🥲','smiling face with tear'),('😋','face savoring food'),('😛','face with tongue'),('😜','winking face with tongue'),
+    ('🤪','zany face'),('🤔','thinking face'),('🤐','zipper-mouth face'),('🤨','face with raised eyebrow'),
+    ('😐','neutral face'),('😑','expressionless face'),('😶','face without mouth'),('🙄','face with rolling eyes'),
+    ('😏','smirking face'),('😒','unamused face'),('😬','grimacing face'),('🤥','lying face'),
+    ('😔','pensive face'),('😪','sleepy face'),('🤤','drooling face'),('😴','sleeping face'),
+    ('😷','face with medical mask'),('🤒','face with thermometer'),('🤕','face with head-bandage'),
+    ('🥶','cold face'),('🥵','hot face'),('🥴','woozy face'),('😵','face with crossed-out eyes'),
+    ('🤯','exploding head'),('🤠','cowboy hat face'),('🥳','partying face'),('🥸','disguised face'),
+    ('😎','smiling face with sunglasses'),('🤓','nerd face'),('🧐','face with monocle'),
+    ('😕','confused face'),('😟','worried face'),('🙁','slightly frowning face'),('☹️','frowning face'),
+    ('😮','face with open mouth'),('😲','astonished face'),('😳','flushed face'),('🥺','pleading face'),
+    ('😦','frowning face with open mouth'),('😧','anguished face'),('😨','fearful face'),('😰','anxious face with sweat'),
+    ('😥','sad but relieved face'),('😢','crying face'),('😭','loudly crying face'),('😱','face screaming in fear'),
+    ('😖','confounded face'),('😣','persevering face'),('😞','disappointed face'),('😓','downcast face with sweat'),
+    ('😩','weary face'),('😫','tired face'),('😤','face with steam from nose'),('😡','enraged face'),
+    ('😠','angry face'),('🤬','face with symbols on mouth'),('💀','skull'),('☠️','skull and crossbones'),
+    ('💩','pile of poo'),('🤡','clown face'),('👻','ghost'),('👽','alien'),('🤖','robot'),
+    ('❤️','red heart'),('🧡','orange heart'),('💛','yellow heart'),('💚','green heart'),('💙','blue heart'),
+    ('💜','purple heart'),('🖤','black heart'),('🤍','white heart'),('🤎','brown heart'),('💔','broken heart'),
+    ('❣️','heart exclamation'),('💕','two hearts'),('💞','revolving hearts'),('💓','beating heart'),
+    ('💗','growing heart'),('💖','sparkling heart'),('💘','heart with arrow'),('💝','heart with ribbon'),
+    ('🔥','fire'),('✨','sparkles'),('⭐','star'),('🌟','glowing star'),('💫','dizzy'),('💥','collision'),
+    ('💢','anger symbol'),('💯','hundred points'),('✅','check mark button'),('❌','cross mark'),
+    ('❓','red question mark'),('❗','red exclamation mark'),('⚠️','warning'),('🚫','prohibited'),
+    ('👍','thumbs up'),('👎','thumbs down'),('👏','clapping hands'),('🙌','raising hands'),('🙏','folded hands'),
+    ('👋','waving hand'),('🤝','handshake'),('💪','flexed biceps'),('🫶','heart hands'),('🫡','saluting face'),
+    ('🎉','party popper'),('🎊','confetti ball'),('🎁','wrapped gift'),('🏆','trophy'),('🥇','1st place medal'),
+    ('🚀','rocket'),('🛸','flying saucer'),('🌈','rainbow'),('☀️','sun'),('🌙','crescent moon'),('⚡','high voltage'),
+    ('💻','laptop'),('🖥️','desktop computer'),('⌨️','keyboard'),('🖱️','computer mouse'),('📱','mobile phone'),
+    ('🔋','battery'),('🔌','electric plug'),('💾','floppy disk'),('💿','optical disk'),('📀','dvd'),
+    ('📷','camera'),('📸','camera with flash'),('📹','video camera'),('🎥','movie camera'),('🎬','clapper board'),
+    ('📺','television'),('📻','radio'),('🎵','musical note'),('🎶','musical notes'),('🎤','microphone'),('🎧','headphone'),
+    ('📚','books'),('📖','open book'),('📝','memo'),('✏️','pencil'),('🖊️','pen'),('📋','clipboard'),('📌','pushpin'),
+    ('📎','paperclip'),('🔍','magnifying glass tilted left'),('🔎','magnifying glass tilted right'),('🔑','key'),
+    ('🔐','locked with key'),('🔒','locked'),('🔓','unlocked'),('🛠️','hammer and wrench'),('⚙️','gear'),('🔧','wrench'),
+    ('🐛','bug'),('🐞','lady beetle'),('🐱','cat'),('🐶','dog'),('🦄','unicorn'),('🐙','octopus'),
+    ('🌍','globe showing Europe-Africa'),('🌎','globe showing Americas'),('🌏','globe showing Asia-Australia'),
+]
+print(json.dumps([{'id': c, 'title': f'{c}  {n}', 'subtitle': n, 'text': c} for c, n in data]))
+"'''
+
+[[verbs]]
+name = "copy-emoji"
+description = "Copy the emoji to the clipboard"
+accepts = ["application/vnd.emoji"]
+default_for = "application/vnd.emoji"
+cmd = "printf %s {subject.text|q} | wl-copy"

@@ -354,3 +354,62 @@ setup() {
         echo "$output" | grep -qx "$e" || { echo "missing engine: $e" >&2; return 1; }
     done
 }
+
+# ---- new launcher plugins: recent, emoji, mounts ----
+# `list_cmd` actually runs here, so each test guards on its tool (python3 /
+# findmnt). Side-effect verbs (copy-emoji → wl-copy, mount-unmount, mount-open
+# → file manager) are NEVER executed — we only assert the data shape and the
+# OPTIONS projection.
+
+@test "recent: list_cmd runs and emits valid JSON (empty on a fresh HOME)" {
+    command -v python3 >/dev/null || skip "python3 not installed"
+    # Force an empty HOME so the result is deterministic and the source proves
+    # it handles the missing-xbel case rather than crashing.
+    run env HOME="$BATS_TEST_TMPDIR/empty" "$GOO" list recent </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "[]" ]
+}
+
+@test "emoji: source ships a non-empty curated list with the documented shape" {
+    command -v python3 >/dev/null || skip "python3 not installed"
+    run "$GOO" list emoji </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+assert len(d) >= 100, f'expected >=100 emoji, got {len(d)}'
+for e in d:
+    for k in ('id','title','subtitle','text'):
+        assert k in e, f'missing key {k} in {e}'
+"
+}
+
+@test "emoji: OPTIONS for an emoji subject is clean (vendor type keeps text-verbs out)" {
+    "$GOO" options ':emo/😀' </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
+    run "$GOO" options ':emo/😀' </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"copy-emoji"'* ]]
+    [[ "$output" == *'"default": "copy-emoji"'* ]]
+    [[ "$output" != *'"critique"'* ]]      # text-verb pollution would put these in
+    [[ "$output" != *'"base64-encode"'* ]]
+}
+
+@test "mounts: lists real mounts (at least the root '/' is always there)" {
+    command -v findmnt >/dev/null || skip "findmnt not installed"
+    run "$GOO" list mounts </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+assert len(d) >= 1, 'expected at least one real mount'
+assert '/' in [m['id'] for m in d], 'root mount missing'
+"
+}
+
+@test "mounts: OPTIONS for a mount subject defaults to mount-open" {
+    "$GOO" options ':mnt/' </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
+    run "$GOO" options ':mnt/' </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"default": "mount-open"'* ]]
+    [[ "$output" == *'"mount-unmount"'* ]]
+}

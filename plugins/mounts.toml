@@ -1,0 +1,52 @@
+name = "mounts"
+tier = "desktop"
+description = "Mounted filesystems and removable drives (findmnt)"
+
+# Items emit `application/vnd.mount` so verbs are mount-scoped (not file-scoped
+# — opening the mount point in the file manager is a different action than
+# opening a file). Reach via:
+#   :mnt/<path>     — exact mountpoint
+#   :mnt:<query>    — fuzzy by mountpoint / device / label
+
+[[types]]
+name = "application/vnd.mount"
+display = "mount point"
+kind = "handle"
+
+[[sources]]
+name = "mounts"
+prefix = "mnt"
+icon = "drive-harddisk"
+emits = "application/vnd.mount"
+# findmnt --real excludes pseudo-fs (proc, sysfs, tmpfs, cgroup …) — what a
+# launcher actually wants. -J emits JSON; -l flattens the tree to a list.
+list_cmd = '''findmnt -J -l --real -o TARGET,SOURCE,FSTYPE,SIZE,LABEL 2>/dev/null \
+  | jq -c '.filesystems // [] | map({
+      id: .target,
+      title: (.label // .target),
+      subtitle: "\(.source) — \(.fstype) \(.size // "?")",
+      text: .target,
+      metadata: {path: .target, source: .source, fstype: .fstype, size: .size}
+    })' '''
+
+[[verbs]]
+name = "mount-open"
+description = "Open the mount point in the file manager"
+accepts = ["application/vnd.mount"]
+default_for = "application/vnd.mount"
+cmd = "xdg-open {subject.id|q}"
+
+[[verbs]]
+name = "mount-unmount"
+description = "Unmount the device"
+accepts = ["application/vnd.mount"]
+# gio handles session/removable unmounts cleanly without root; udisksctl is the
+# fallback when gio isn't installed (rare on freedesktop).
+cmd = "gio mount -u {subject.id|q} 2>/dev/null || udisksctl unmount --mount-point {subject.id|q}"
+confirm = true
+
+[[verbs]]
+name = "mount-reveal"
+description = "Show device / fs / size for this mount"
+accepts = ["application/vnd.mount"]
+cmd = "findmnt -no SOURCE,FSTYPE,SIZE,USE%,FSAVAIL --target {subject.id|q}"
