@@ -1078,6 +1078,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "goo-control-gui"
+version = "0.1.0"
+dependencies = [
+ "goo-engine",
+ "iced",
+ "serde_json",
+]
+
+[[package]]
 name = "goo-engine"
 version = "0.1.0"
 dependencies = [

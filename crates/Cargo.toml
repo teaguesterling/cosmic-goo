@@ -8,12 +8,14 @@
 #   goo             — thin CLI (bin)        [slice 4 — the parity milestone]
 #   goo-compose     — dmenu/scripted sentence builder over goo (bin) [v0; the test surface]
 #   goo-compose-gui — native (iced) compose dialog (bin) [v1; libcosmic swap later]
+#   goo-control-gui — native (iced) Control Center: registry browser + entities + plugins [v1]
 #   good            — warm daemon (bin)     [later slice — gated on a launcher consumer]
 #
-# goo-compose-gui is a workspace member but NOT a default-member: it pulls a GUI
+# The GUI crates are workspace members but NOT default-members: they pull a GUI
 # toolkit (heavy first compile), so bare `cargo build`/`cargo test` and the
-# `make` targets skip it. Build it explicitly: `cargo build -p goo-compose-gui`.
+# `make` targets skip them. Build them explicitly: `cargo build -p goo-compose-gui`
+# / `cargo build -p goo-control-gui`.
 [workspace]
 resolver = "2"
-members = ["goo-engine", "goo", "goo-compose", "goo-compose-gui"]
+members = ["goo-engine", "goo", "goo-compose", "goo-compose-gui", "goo-control-gui"]
 default-members = ["goo-engine", "goo", "goo-compose"]
