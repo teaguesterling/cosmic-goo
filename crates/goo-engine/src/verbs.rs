@@ -45,19 +45,75 @@ fn accepts_type(verb: &Value, mime: &str, reg: &Value) -> bool {
 }
 
 /// JSON for the verb named `name`, optionally filtered to those whose `accepts`
-/// matches `type_filter`. Mirrors `verb_lookup`. `None` on miss.
+/// matches `type_filter`. With multiple verbs of the same name (cross-plugin
+/// polymorphism, supported by [`crate::registry::merge`]), the lookup picks the
+/// **most-specific** impl for the type — exact > lattice/subtype > glob, ties
+/// broken by registry order (later-registered = user-override wins).
+/// Without `type_filter`, returns the first verb by name.
 pub fn lookup(reg: &Value, name: &str, type_filter: Option<&str>) -> Option<Value> {
-    let verb = reg
+    let candidates: Vec<&Value> = reg
         .get("verbs")?
         .as_array()?
         .iter()
-        .find(|v| v.get("name").and_then(|n| n.as_str()) == Some(name))?;
-    if let Some(t) = type_filter {
-        if !accepts_type(verb, t, reg) {
-            return None;
+        .filter(|v| v.get("name").and_then(|n| n.as_str()) == Some(name))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let Some(t) = type_filter else {
+        return Some(candidates[0].clone());
+    };
+    // Most-specific match wins; ties take the LATER-registered (>= so iterating
+    // forward yields the last-good tie-breaker).
+    let mut best: Option<(i32, &Value)> = None;
+    for v in &candidates {
+        if let Some(s) = verb_specificity(v, t, reg) {
+            if best.is_none_or(|(b, _)| s >= b) {
+                best = Some((s, v));
+            }
         }
     }
-    Some(verb.clone())
+    best.map(|(_, v)| v.clone())
+}
+
+/// How well `pattern` matches `t`: `None` = no match; higher = more specific.
+/// Exact (`pattern == t`) > lattice/subtype match (declared `is_a`, structured
+/// suffix) > glob (`text/*`, scored by prefix length so `text/markdown` beats
+/// `text/*` and `image/*` beats `*/*`).
+fn pattern_specificity(t: &str, pattern: &str, reg: &Value) -> Option<i32> {
+    if t == pattern {
+        return Some(i32::MAX);
+    }
+    if !mime::is_subtype(t, pattern, reg) {
+        return None;
+    }
+    // Glob: longer prefix = more specific.
+    if let Some(prefix) = pattern.strip_suffix("/*") {
+        return Some(prefix.len() as i32);
+    }
+    if pattern == "*/*" {
+        return Some(0);
+    }
+    // Lattice / structured-suffix match (non-glob, non-exact). Scored above any
+    // glob: a verb saying "I want application/json specifically" beats one
+    // saying "anything text/*" for a json subject.
+    Some(1_000_000)
+}
+
+/// A verb's specificity for type `t` = the max across its `accepts` patterns.
+fn verb_specificity(verb: &Value, t: &str, reg: &Value) -> Option<i32> {
+    let accepts = verb.get("accepts").and_then(Value::as_array)?;
+    let mut best: Option<i32> = None;
+    for p in accepts {
+        if let Some(ps) = p.as_str() {
+            if let Some(s) = pattern_specificity(t, ps, reg) {
+                if best.is_none_or(|b| s > b) {
+                    best = Some(s);
+                }
+            }
+        }
+    }
+    best
 }
 
 /// The verb whose `default_for` matches `type` — a single type string or an
@@ -76,7 +132,10 @@ pub fn default_for(reg: &Value, type_: &str) -> Option<Value> {
 }
 
 /// Every verb applicable to `subject` — type-accepted *and* passing its
-/// `valid_when`. Mirrors `verb_for_subject` (order = registry order).
+/// `valid_when`. With cross-plugin polymorphism (multiple verbs of the same name
+/// with different `accepts`), this returns **one verb per name** — the
+/// most-specific impl for the subject type. Order: registry order of the kept
+/// verbs, so the picker sees the natural sequence.
 pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
     let stype = match subject.get("type").and_then(|t| t.as_str()) {
         Some(s) if !s.is_empty() => s,
@@ -86,11 +145,29 @@ pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
         Some(v) => v,
         None => return Vec::new(),
     };
-    verbs
-        .iter()
-        .filter(|v| accepts_type(v, stype, reg) && valid_for(v, subject))
-        .cloned()
-        .collect()
+    // Walk in registry order; for each name, keep the best-specificity impl seen
+    // (>= so later-registered wins ties, matching `lookup`'s tie-break).
+    use std::collections::HashMap;
+    let mut best: HashMap<String, (i32, usize)> = HashMap::new();
+    for (i, v) in verbs.iter().enumerate() {
+        if !valid_for(v, subject) {
+            continue;
+        }
+        let Some(name) = v.get("name").and_then(Value::as_str) else { continue };
+        if let Some(s) = verb_specificity(v, stype, reg) {
+            best.entry(name.to_string())
+                .and_modify(|e| {
+                    if s >= e.0 {
+                        *e = (s, i);
+                    }
+                })
+                .or_insert((s, i));
+        }
+    }
+    // Re-emit in original registry order so consumers see a stable picker list.
+    let mut kept: Vec<(usize, Value)> = best.values().map(|(_, i)| (*i, verbs[*i].clone())).collect();
+    kept.sort_by_key(|(i, _)| *i);
+    kept.into_iter().map(|(_, v)| v).collect()
 }
 
 /// A fully-rendered command, ready for `bash -c`. `confirm` mirrors the verb's
@@ -583,6 +660,67 @@ template_var = { depth_prefix = "Ultrathink about" }
         assert!(!txt.contains(&"only-zip".to_string()));
         assert!(zip.contains(&"echo-text".to_string()));
         assert!(txt.contains(&"echo-text".to_string()));
+    }
+
+    // ---- cross-plugin polymorphism (multi-verb-per-name) ----
+
+    // The fixture: TWO verbs named `connect` with different `accepts`. Today's
+    // engine accumulates them (registry::merge_verbs); lookup picks by
+    // specificity for the subject type; for_subject returns the right one per name.
+    fn poly_reg() -> Value {
+        json!({
+            "types": [],
+            "verbs": [
+                { "name": "connect", "accepts": ["application/vnd.ssh.host"], "cmd": "ssh {subject.id|q}" },
+                { "name": "connect", "accepts": ["application/vnd.bluez.device"], "cmd": "bluetoothctl connect {subject.id|q}" },
+                { "name": "open", "accepts": ["*/*"], "cmd": "open-anything" },
+                { "name": "open", "accepts": ["text/plain"], "cmd": "open-text" },
+            ]
+        })
+    }
+
+    #[test]
+    fn lookup_picks_most_specific_match_for_type() {
+        let reg = poly_reg();
+        // Two `connect` verbs; ssh subject → the ssh-accepting one (exact-pattern match).
+        let v = lookup(&reg, "connect", Some("application/vnd.ssh.host")).unwrap();
+        assert_eq!(v["cmd"], "ssh {subject.id|q}");
+        // BT subject → the bluez-accepting one.
+        let v = lookup(&reg, "connect", Some("application/vnd.bluez.device")).unwrap();
+        assert_eq!(v["cmd"], "bluetoothctl connect {subject.id|q}");
+        // A subject neither accepts → None.
+        assert!(lookup(&reg, "connect", Some("text/plain")).is_none());
+    }
+
+    #[test]
+    fn lookup_exact_pattern_beats_glob() {
+        let reg = poly_reg();
+        // Two `open` verbs: `*/*` (most permissive) and `text/plain` (exact for text/plain).
+        // For a text/plain subject, the exact-match `open` must win over `*/*`.
+        let v = lookup(&reg, "open", Some("text/plain")).unwrap();
+        assert_eq!(v["cmd"], "open-text");
+        // For an image, only `*/*` matches.
+        let v = lookup(&reg, "open", Some("image/png")).unwrap();
+        assert_eq!(v["cmd"], "open-anything");
+    }
+
+    #[test]
+    fn lookup_no_type_returns_first_by_name() {
+        let reg = poly_reg();
+        // Without a type filter, lookup returns the first verb named `connect` in registry order.
+        let v = lookup(&reg, "connect", None).unwrap();
+        assert_eq!(v["accepts"][0], "application/vnd.ssh.host");
+    }
+
+    #[test]
+    fn for_subject_dedups_by_name_keeping_most_specific() {
+        let reg = poly_reg();
+        // Two `open` verbs both match text/plain; for_subject must return ONE
+        // entry for "open" (the most-specific impl), not two.
+        let verbs = for_subject(&reg, &json!({"type": "text/plain"}));
+        let opens: Vec<&Value> = verbs.iter().filter(|v| v["name"] == "open").collect();
+        assert_eq!(opens.len(), 1, "for_subject leaked two `open` impls");
+        assert_eq!(opens[0]["cmd"], "open-text", "kept the wrong impl");
     }
 
     // ---- render / apply ----

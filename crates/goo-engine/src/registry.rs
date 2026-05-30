@@ -174,13 +174,62 @@ fn override_by(new: &Value, reg: &Value, key: &str) -> Value {
     Value::Array(map.into_values().collect())
 }
 
+/// The verb-merge contract is different from other collections: verbs accumulate
+/// across plugins (so one plugin's `connect` accepting an ssh host can coexist
+/// with another's `connect` accepting a bluetooth device), and dedup only on the
+/// `(name, sorted accepts)` pair — i.e. *exact* re-declaration of the same verb
+/// is what overrides; same-name with different accepts is **polymorphism**, both
+/// live. Lookup-side specificity (in [`crate::verbs::lookup`]) picks the right
+/// impl per subject. Rust-only divergence from the bash reference, which keeps
+/// the simpler override-by-name (documented in STATUS).
+///
+/// Output order: surviving `reg` entries first (preserving registry order), then
+/// `new` entries appended — so iterating from the end finds the latest-registered
+/// entry, which is the "later wins" tie-break at lookup time.
+fn merge_verbs(new: &Value, reg: &Value) -> Value {
+    let key_of = |v: &Value| -> String {
+        let name = v.get("name").and_then(Value::as_str).unwrap_or("");
+        let mut accepts: Vec<&str> = v
+            .get("accepts")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        accepts.sort();
+        format!("{}|{}", name, accepts.join(","))
+    };
+    let new_keys: std::collections::HashSet<String> = new
+        .as_array()
+        .map(|a| a.iter().map(&key_of).collect())
+        .unwrap_or_default();
+    let mut out: Vec<Value> = Vec::new();
+    if let Some(arr) = reg.as_array() {
+        for v in arr {
+            if !new_keys.contains(&key_of(v)) {
+                out.push(v.clone());
+            }
+        }
+    }
+    if let Some(arr) = new.as_array() {
+        for v in arr {
+            out.push(v.clone());
+        }
+    }
+    Value::Array(out)
+}
+
 /// Merge a plugin contribution into a running registry. Later (= `new`) wins on
-/// `name` (`char` for sigils). `dispatch` concatenates in load order.
+/// `name` (`char` for sigils) for most collections; **verbs** accumulate by
+/// `(name, accepts)` to support polymorphic verb names across plugins — see
+/// [`merge_verbs`]. `dispatch` concatenates in load order.
 pub fn merge(reg: &Value, new: &Value) -> Value {
     let mut out = Map::new();
     out.insert("plugins".into(), override_by(&new["plugins"], &reg["plugins"], "name"));
     for c in COLLECTIONS_BY_NAME {
-        out.insert((*c).into(), override_by(&new[*c], &reg[*c], "name"));
+        if *c == "verbs" {
+            out.insert("verbs".into(), merge_verbs(&new["verbs"], &reg["verbs"]));
+        } else {
+            out.insert((*c).into(), override_by(&new[*c], &reg[*c], "name"));
+        }
     }
     out.insert("sigils".into(), override_by(&new["sigils"], &reg["sigils"], "char"));
     // Dispatch rules are ordered, not keyed: reg ++ new (load order).
