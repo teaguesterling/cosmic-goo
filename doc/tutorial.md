@@ -84,7 +84,7 @@ $ goo list workspaces | jq -c '.[] | {id, title}'
 **Skip the verb entirely.** If you give just an address and no verb, `goo` runs that type's *default* action — the CLI form of the protocol's `GOO` verb:
 
 ```
-$ goo goo://br/main      # no verb → branch-log (the git-branch default)
+$ goo goo://br/main      # no verb → `log` (the git-branch type's default_for)
 $ goo ~/notes.md         # → the file default verb (open)
 ```
 
@@ -148,7 +148,7 @@ $ goo qr-save "wifi-password-here"        # → a PNG, prints the path
 $ goo scan-qr-image /tmp/goo-qr-Ab3xZ9.png # decode it back
 wifi-password-here
 
-$ goo git-status :repo:cosmic-goo          # repos source (under ~/Projects)
+$ goo status :repo:cosmic-goo          # `status` (polymorphic; dispatches to git for repos, Rust engine)
 ## main
 
 $ goo now-playing                          # playerctl (no subject)

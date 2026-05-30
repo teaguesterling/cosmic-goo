@@ -20,15 +20,17 @@ list_cmd = """timeout 2 bluetoothctl devices Paired 2>/dev/null \\
       | map(sub("^Device ";"")
             | {id: (split(" ")[0]), title: (split(" ") | .[1:] | join(" "))})'"""
 
+# Polymorphic `connect`/`disconnect` — coexist with network/ssh on Rust.
+
 [[verbs]]
-name = "bt-connect"
+name = "connect"
 description = "Connect to the device"
 accepts = ["application/vnd.bluez.device"]
 default_for = "application/vnd.bluez.device"
 cmd = "bluetoothctl connect {subject.id|q}"
 
 [[verbs]]
-name = "bt-disconnect"
+name = "disconnect"
 description = "Disconnect the device"
 accepts = ["application/vnd.bluez.device"]
 cmd = "bluetoothctl disconnect {subject.id|q}"

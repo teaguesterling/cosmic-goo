@@ -5,7 +5,7 @@ description = "Inspect structured + non-text content: JSON, images, audio/video,
 # These verbs accept *content* MIME types (not handle types). A subject reaches
 # them three ways:
 #   - a native path:   goo json-pretty ./data.json   (resolve_file types it)
-#   - a :files: handle: goo image-info :files:photo
+#   - a :files: handle: goo info :files:photo   (polymorphic `info` on image/*)
 #   - raw stdin/positional whose type the engine infers (json-shape) — Rust only.
 # File-backed subjects carry {subject.metadata.path}; inline ones carry
 # {subject.text}. Verbs that take either branch on the path, like sha256.
@@ -39,8 +39,11 @@ cmd = "p={subject.metadata.path|q}; if [ -n \"$p\" ] && [ -f \"$p\" ]; then src=
 
 # ---------------- images (image/*) ----------------
 
+# `info` / `tree` / `size` polymorphic — coexist via the (name, accepts) merge
+# with processes' `info` and any future per-type impls (Rust engine).
+
 [[verbs]]
-name = "image-info"
+name = "info"
 description = "Dimensions, format, and size of an image (ImageMagick identify)"
 accepts = ["image/*"]
 default_for = "image/*"
@@ -50,7 +53,7 @@ cmd = "identify -format '%wx%h %m %b\\n' -- {subject.metadata.path|q}"
 # Needs ffprobe (ffmpeg). Documented dependency; the verb ships regardless.
 
 [[verbs]]
-name = "media-info"
+name = "info"
 description = "Duration, codec, and stream summary of an audio/video file (ffprobe)"
 accepts = ["audio/*", "video/*"]
 cmd = "ffprobe -hide_banner -- {subject.metadata.path|q}"
@@ -58,14 +61,14 @@ cmd = "ffprobe -hide_banner -- {subject.metadata.path|q}"
 # ---------------- directories (inode/directory) ----------------
 
 [[verbs]]
-name = "dir-tree"
+name = "tree"
 description = "Two-level tree listing of a directory"
 accepts = ["inode/directory"]
 default_for = "inode/directory"
 cmd = "tree -L 2 -- {subject.metadata.path|q}"
 
 [[verbs]]
-name = "dir-size"
+name = "size"
 description = "Total on-disk size of a directory (du -sh)"
 accepts = ["inode/directory"]
 cmd = "du -sh -- {subject.metadata.path|q} | awk '{print $1}'"

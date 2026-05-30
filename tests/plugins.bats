@@ -39,12 +39,17 @@ setup() {
 @test "real plugins: tier-2 verbs are present" {
     local verbs
     verbs=$("$GOO" __complete verbs </dev/null)
+    # Many verb names below are NOW POLYMORPHIC (one name, multiple impls per
+    # accepts — Rust engine). `__complete verbs` lists every impl, so a `grep -qx`
+    # matches any of them; bash sees the single surviving impl (override-by-name)
+    # but the grep still passes for the name. Documented bash divergence: only
+    # one of (network, bluetooth, ssh-hosts) `connect` actually works there.
     for v in calc \
              play-pause next now-playing \
              volume-up mute-toggle set-default-sink \
-             open-repo git-status git-pull gh-pr-list \
-             service-status service-restart service-journal \
-             bt-connect net-up; do
+             status pull gh-pr-list \
+             restart logs \
+             connect; do
         echo "$verbs" | grep -qx "$v" || { echo "missing tier-2 verb: $v" >&2; return 1; }
     done
 }
@@ -58,59 +63,64 @@ setup() {
     done
 }
 
-# Non-text handle domains exist to prove the noun→verb model generalizes
-# beyond text/LLM. Assert the source→type→verb wiring is intact for each,
-# without running any list_cmd (ps/ssh/docker would be non-deterministic):
-# the source/verbs are registered and `describe` confirms each verb accepts
-# the domain's vendor type.
+# Non-text handle domains exist to prove the noun→verb model generalizes beyond
+# text/LLM. Assert each source→type→verb wiring via the OPTIONS surface, which
+# correctly dispatches polymorphic verbs by type (Rust-only; bash uses simple
+# override-by-name and `describe` would return the wrong impl for a polymorphic
+# name like `info`/`logs`/`connect` — that's the documented bash divergence).
 @test "real plugins: handle domains wire source→type→verb" {
-    local verbs sources
-    verbs=$("$GOO" __complete verbs </dev/null)
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version \
+        || skip "engine has no OPTIONS (polymorphism check needs it)"
+    local sources
     sources=$("$GOO" __complete sources </dev/null)
 
-    # source name | vendor type | accepting verbs...
+    # source name | vendor type | verbs that should appear in OPTIONS.allow
     local rows=(
-        "processes|application/vnd.process|proc-info proc-children"
-        "ssh-hosts|application/vnd.ssh.host|ssh-connect ssh-copy-id"
-        "containers|application/vnd.container|container-logs container-shell container-stop"
-        "branches|application/vnd.git.branch|branch-log branch-show"
+        "processes|application/vnd.process|info children"
+        "ssh-hosts|application/vnd.ssh.host|connect ssh-copy-id"
+        "containers|application/vnd.container|logs shell stop"
+        "branches|application/vnd.git.branch|log show"
     )
     for row in "${rows[@]}"; do
         local src="${row%%|*}" rest="${row#*|}"
         local vtype="${rest%%|*}" vlist="${rest#*|}"
         echo "$sources" | grep -qx "$src" || { echo "missing handle source: $src" >&2; return 1; }
+        local opts
+        opts=$("$GOO" options "=$vtype" </dev/null 2>/dev/null)
         for v in $vlist; do
-            echo "$verbs" | grep -qx "$v" || { echo "missing handle verb: $v" >&2; return 1; }
-            run "$GOO" describe "$v" </dev/null
-            [ "$status" -eq 0 ]
-            echo "$output" | grep -q "accepts: .*$vtype" \
-                || { echo "$v does not accept $vtype" >&2; echo "$output" >&2; return 1; }
+            echo "$opts" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert '$v' in d['allow'], f'$v not in allow for $vtype: ' + str(d['allow'])
+" || return 1
         done
     done
 }
 
-# Content-inspection verbs (the content.toml plugin) accept *content* MIME
-# types — structured (application/json) and non-text entities (image/*,
-# audio/*, video/*, inode/directory). Structural check: present + accepts.
+# Content-inspection verbs accept *content* MIME types (structured + non-text
+# entities). After the polymorphic-verb sweep, `info` covers image / audio-video
+# / processes via type-dispatch, `tree`/`size` are unique to directories.
+# OPTIONS-based check (Rust-only; the per-type dispatch is what we're verifying).
 @test "real plugins: content verbs accept their content types" {
-    local verbs
-    verbs=$("$GOO" __complete verbs </dev/null)
-    # verb | accepted type substring
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version \
+        || skip "engine has no OPTIONS"
+    # verb | type that should resolve to this impl
     local rows=(
         "json-pretty|application/json"
         "json-keys|application/json"
-        "image-info|image/*"
-        "media-info|audio/*"
-        "dir-tree|inode/directory"
-        "dir-size|inode/directory"
+        "info|image/png"
+        "info|audio/mpeg"
+        "tree|inode/directory"
+        "size|inode/directory"
     )
     for row in "${rows[@]}"; do
         local v="${row%%|*}" vtype="${row#*|}"
-        echo "$verbs" | grep -qx "$v" || { echo "missing content verb: $v" >&2; return 1; }
-        run "$GOO" describe "$v" </dev/null
-        [ "$status" -eq 0 ]
-        echo "$output" | grep -qF "accepts: " && echo "$output" | grep -qF "$vtype" \
-            || { echo "$v does not accept $vtype" >&2; echo "$output" >&2; return 1; }
+        "$GOO" options "=$vtype" </dev/null 2>/dev/null \
+            | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert '$v' in d['allow'], f'$v not in allow for $vtype: ' + str(d['allow'])
+" || return 1
     done
 }
 
@@ -127,28 +137,34 @@ setup() {
     [ "$output" = "$(printf 'a\nb')" ]
 }
 
-# directory verbs resolve a native path to inode/directory and act on it.
-@test "real plugins: dir-size/dir-tree work on a directory" {
+# directory verbs — polymorphic names after the sweep (`tree`/`size`); bash
+# would dispatch by override-by-name, Rust by accepts. Both engines resolve a
+# native path to inode/directory, so the verb fires either way.
+@test "real plugins: size/tree work on a directory" {
     local d="$BATS_TEST_TMPDIR/tree"
     mkdir -p "$d/sub"
     printf 'hi' > "$d/a.txt"
-    run "$GOO" dir-size "$d" </dev/null
+    run "$GOO" size "$d" </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" =~ [0-9] ]]                    # a size like "12K"
     if command -v tree >/dev/null 2>&1; then
-        run "$GOO" dir-tree "$d" </dev/null
+        run "$GOO" tree "$d" </dev/null
         [ "$status" -eq 0 ]
         [[ "$output" == *"a.txt"* ]]
     fi
 }
 
-# image-info needs ImageMagick's identify; skip cleanly without it.
-@test "real plugins: image-info reports dimensions" {
+# `info` polymorphic across image/audio-video/processes — for an image subject,
+# the Rust engine dispatches to the image-info impl. Bash has only one `info`
+# survivor (override-by-name) which depends on load order; skip on bash.
+@test "real plugins: info on an image reports dimensions" {
     command -v identify >/dev/null 2>&1 || skip "identify (ImageMagick) not installed"
     command -v convert  >/dev/null 2>&1 || skip "convert (ImageMagick) not installed"
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version \
+        || skip "engine has no OPTIONS (proxy for polymorphic-verb support)"
     local p="$BATS_TEST_TMPDIR/x.png"
     convert -size 4x3 xc:red "$p" 2>/dev/null || skip "convert failed"
-    run "$GOO" image-info "$p" </dev/null
+    run "$GOO" info "$p" </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"4x3"* ]]
 }
@@ -175,7 +191,12 @@ setup() {
     # search at this checkout's parent (setup() overrides HOME, so the default
     # ~/Projects root wouldn't find anything).
     export GOO_GIT_ROOTS="$(dirname "$REPO_ROOT")"
-    run "$GOO" git-status ":repo:cosmic-goo" </dev/null
+    # `status` is polymorphic (services + git) — Rust dispatches by accepts to
+    # git's impl for a vnd.git.repo subject. Bash override-by-name keeps only
+    # one impl (services'), which rejects the repo type → skip on bash.
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version \
+        || skip "engine has no polymorphic verb dispatch (Rust only)"
+    run "$GOO" status ":repo:cosmic-goo" </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" =~ "##" ]]
 }
@@ -224,16 +245,17 @@ setup() {
 }
 
 @test "real plugins: clipboard-history verbs are scoped to the vendor type" {
-    # clip-paste must NOT be offered for a plain-text subject.
-    run "$GOO" __complete verb-accepts-handle clip-paste </dev/null
+    # `paste` must accept a vnd.cliphist.entry handle (not just plain text).
+    run "$GOO" __complete verb-accepts-handle paste </dev/null
     [ "$output" = "yes" ]
-    for v in clip-paste clip-show clip-delete clip-wipe; do
+    for v in paste show delete wipe; do
         "$GOO" __complete verbs </dev/null | grep -qx "$v" \
-            || { echo "missing clip verb: $v" >&2; return 1; }
+            || { echo "missing clipboard-history verb: $v" >&2; return 1; }
     done
-    # clip-delete / clip-wipe are destructive -> confirm.
-    "$GOO" describe clip-delete </dev/null | grep -q "confirm: true"
-    "$GOO" describe clip-wipe </dev/null | grep -q "confirm: true"
+    # `delete` / `wipe` are destructive -> confirm. Use the registry: `wipe`
+    # is unique to clipboard-history; `delete` is currently only here too.
+    "$GOO" describe delete </dev/null | grep -q "confirm: true"
+    "$GOO" describe wipe </dev/null | grep -q "confirm: true"
 }
 
 @test "real plugins: calc evaluates an expression" {
@@ -243,7 +265,10 @@ setup() {
 }
 
 @test "real plugins: destructive tier-2 verbs require confirmation" {
-    for v in git-pull service-restart service-stop; do
+    # Polymorphic verbs after the sweep: `pull` (git, unique), `restart` (services,
+    # unique), `stop` (services + containers; first-loaded wins on `describe` —
+    # both have confirm:true, so the check holds on either dispatch).
+    for v in pull restart stop; do
         run "$GOO" describe "$v" </dev/null
         [ "$status" -eq 0 ]
         [[ "$output" =~ "confirm: true" ]] || { echo "$v missing confirm" >&2; return 1; }
@@ -357,9 +382,9 @@ setup() {
 
 # ---- new launcher plugins: recent, emoji, mounts ----
 # `list_cmd` actually runs here, so each test guards on its tool (python3 /
-# findmnt). Side-effect verbs (copy-emoji → wl-copy, mount-unmount, mount-open
-# → file manager) are NEVER executed — we only assert the data shape and the
-# OPTIONS projection.
+# findmnt). Side-effect verbs (emoji `copy` → wl-copy, `unmount`, polymorphic
+# `open` for mounts → file manager) are NEVER executed — we only assert the
+# data shape and the OPTIONS projection.
 
 @test "recent: list_cmd runs and emits valid JSON (empty on a fresh HOME)" {
     command -v python3 >/dev/null || skip "python3 not installed"
@@ -388,8 +413,8 @@ for e in d:
     "$GOO" options ':emo/😀' </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
     run "$GOO" options ':emo/😀' </dev/null
     [ "$status" -eq 0 ]
-    [[ "$output" == *'"copy-emoji"'* ]]
-    [[ "$output" == *'"default": "copy-emoji"'* ]]
+    [[ "$output" == *'"copy"'* ]]
+    [[ "$output" == *'"default": "copy"'* ]]
     [[ "$output" != *'"critique"'* ]]      # text-verb pollution would put these in
     [[ "$output" != *'"base64-encode"'* ]]
 }
@@ -406,10 +431,16 @@ assert '/' in [m['id'] for m in d], 'root mount missing'
 "
 }
 
-@test "mounts: OPTIONS for a mount subject defaults to mount-open" {
+@test "mounts: OPTIONS for a mount subject includes unmount + polymorphic open" {
     "$GOO" options ':mnt/' </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
     run "$GOO" options ':mnt/' </dev/null
     [ "$status" -eq 0 ]
-    [[ "$output" == *'"default": "mount-open"'* ]]
-    [[ "$output" == *'"mount-unmount"'* ]]
+    # `unmount` is mount-scoped; `open` is the polymorphic verb from files.toml,
+    # reaching mounts via the `is_a = ["inode/directory"]` lattice edge.
+    [[ "$output" == *'"unmount"'* ]]
+    [[ "$output" == *'"open"'* ]]
+    [[ "$output" == *'"usage"'* ]]
+    # No `default` for mounts (avoiding destructive default). Lattice-walk in
+    # default_for to inherit `open` is a future engine refinement.
+    [[ "$output" == *'"default": null'* ]]
 }

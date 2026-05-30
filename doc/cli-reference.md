@@ -186,8 +186,8 @@ A second positional becomes the **object** (for two-step verbs like `move-to`), 
 If the first argument is an **explicit address** (a `goo://` URL, a sigil/native shape — anything `is_explicit`) and **not** a verb, `goo` resolves it and runs the **`default_for` verb** of the resolved subject's type. This is the CLI form of the protocol's `GOO` verb — "do the sensible default with this thing":
 
 ```bash
-goo goo://br/main      # → branch-log  (git-branch type's default_for)
-goo :ps:1              # → proc-info    (process type's default_for)
+goo goo://br/main      # → log    (git-branch type's default_for)
+goo :ps:1              # → info   (process type's default_for; polymorphic)
 goo ~/notes.md         # → the inode/* default verb (e.g. open)
 ```
 

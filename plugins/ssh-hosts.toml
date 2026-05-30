@@ -15,8 +15,10 @@ enumerate = false   # reach on demand: :ssh/<host> (value) — goo://ssh/<host>
 # `Host` aliases from ~/.ssh/config, skipping wildcard patterns.
 list_cmd = '''awk 'tolower($1)=="host"{for(i=2;i<=NF;i++) if($i !~ /[*?]/) print $i}' "$HOME/.ssh/config" 2>/dev/null | sort -u | jq -Rsc '[splits("\n")|select(length>0)|{id:.,title:.}]' '''
 
+# Polymorphic `connect` — coexists with network/bluetooth on Rust.
+
 [[verbs]]
-name = "ssh-connect"
+name = "connect"
 description = "Open an SSH session to the host"
 accepts = ["application/vnd.ssh.host"]
 default_for = "application/vnd.ssh.host"

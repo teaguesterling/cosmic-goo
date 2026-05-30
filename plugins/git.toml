@@ -6,6 +6,9 @@ description = "Git repositories — open, status, pull, GitHub PRs"
 name = "application/vnd.git.repo"
 display = "git repository"
 kind = "handle"
+# Repos are directories — declaring is_a wires the files-plugin verbs (open,
+# reveal, copy-path, …) onto repos through the lattice, retiring `open-repo`.
+is_a = ["inode/directory"]
 
 [[sources]]
 name = "repos"
@@ -19,21 +22,18 @@ list_cmd = """find -L ${GOO_GIT_ROOTS:-$HOME/Projects $HOME/.dotfiles} -maxdepth
   | sed 's|/.git$||' \\
   | jq -Rsc 'split("\\n")[:-1] | map({id: ., title: (. | split("/") | last), subtitle: ., metadata: {path: .}})'"""
 
-[[verbs]]
-name = "open-repo"
-description = "Open the repository in the file manager"
-accepts = ["application/vnd.git.repo"]
-default_for = "application/vnd.git.repo"
-cmd = "xdg-open {subject.metadata.path|q}"
+# `open-repo` retired — polymorphic `open` from files.toml applies via the
+# is_a=inode/directory lattice. Polymorphic `status`/`pull` coexist with
+# services'/future container impls (Rust engine).
 
 [[verbs]]
-name = "git-status"
+name = "status"
 description = "Show short status"
 accepts = ["application/vnd.git.repo"]
 cmd = "git -C {subject.metadata.path|q} status -sb"
 
 [[verbs]]
-name = "git-pull"
+name = "pull"
 description = "Pull the current branch"
 accepts = ["application/vnd.git.repo"]
 cmd = "git -C {subject.metadata.path|q} pull"
@@ -43,6 +43,8 @@ confirm = true
 name = "gh-pr-list"
 description = "List open GitHub PRs"
 accepts = ["application/vnd.git.repo"]
+# `gh-pr-list` stays prefixed — bare `list` collides with goo's reserved
+# subcommand. A polymorphic `prs` verb is the natural follow-on.
 cmd = "cd {subject.metadata.path|q} && gh pr list"
 
 # ---- git branches (a second handle type in this plugin) ----
@@ -60,14 +62,15 @@ enumerate = false   # branches of the CWD repo; reach on demand: :br/<name> (val
 list_cmd = '''git branch --format='%(refname:short)' | jq -Rsc '[splits("\n")|select(length>0)|{id:.,title:.}]' '''
 
 [[verbs]]
-name = "branch-log"
+name = "log"
 description = "Recent commits on a branch (CWD repo)"
 accepts = ["application/vnd.git.branch"]
 default_for = "application/vnd.git.branch"
 cmd = "git log --oneline -n 15 {subject.id|q}"
 
 [[verbs]]
-name = "branch-show"
+name = "show"
 description = "Show the tip commit of a branch (CWD repo)"
 accepts = ["application/vnd.git.branch"]
+# Polymorphic `show` — coexists with clipboard-history's `show` (Rust engine).
 cmd = "git show --stat --oneline {subject.id|q} | head -n 20"

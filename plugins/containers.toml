@@ -16,21 +16,23 @@ enumerate = false   # dynamic; reach on demand: :ctr/<name> (value) — goo://ct
 # syntax for the runtime, not a goo substitution — list_cmd is run raw.
 list_cmd = '''{ docker ps --format '{{.Names}}' 2>/dev/null || podman ps --format '{{.Names}}' 2>/dev/null; } | jq -Rsc '[splits("\n")|select(length>0)|{id:.,title:.}]' '''
 
+# Polymorphic verbs — `logs`/`shell`/`stop` dispatch by accepts on Rust.
+
 [[verbs]]
-name = "container-logs"
+name = "logs"
 description = "Tail a container's recent logs"
 accepts = ["application/vnd.container"]
 default_for = "application/vnd.container"
 cmd = "docker logs --tail 80 {subject.id|q} 2>&1 || podman logs --tail 80 {subject.id|q} 2>&1"
 
 [[verbs]]
-name = "container-shell"
+name = "shell"
 description = "Open a shell in the container"
 accepts = ["application/vnd.container"]
 cmd = "docker exec -it {subject.id|q} sh 2>/dev/null || podman exec -it {subject.id|q} sh"
 
 [[verbs]]
-name = "container-stop"
+name = "stop"
 description = "Stop the container"
 accepts = ["application/vnd.container"]
 cmd = "docker stop {subject.id|q} 2>/dev/null || podman stop {subject.id|q}"

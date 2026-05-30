@@ -3,8 +3,8 @@ tier = "desktop"
 description = "Unicode emoji picker — pick and copy"
 
 # Items emit a vendor `application/vnd.emoji` type (NOT `is_a` text/plain — keeps the
-# text-verbs out of the emoji picker). The default verb is `copy-emoji` →
-# wl-copy the codepoint. Reach via:
+# text-verbs out of the emoji picker). The default verb is the polymorphic `copy`
+# (scoped to vnd.emoji here) → wl-copy the codepoint. Reach via:
 #   :emo:smile    — fuzzy search by name
 #   :emo:heart    — search
 #   :emo/😀       — exact codepoint as the id (rarely useful at the CLI)
@@ -74,8 +74,10 @@ print(json.dumps([{'id': c, 'title': f'{c}  {n}', 'subtitle': n, 'text': c} for 
 "'''
 
 [[verbs]]
-name = "copy-emoji"
+name = "copy"
 description = "Copy the emoji to the clipboard"
 accepts = ["application/vnd.emoji"]
 default_for = "application/vnd.emoji"
+# Polymorphic `copy` (Rust engine — type-dispatched). Future copy impls (a file's
+# bytes to clipboard, a path string, …) coexist via accepts.
 cmd = "printf %s {subject.text|q} | wl-copy"

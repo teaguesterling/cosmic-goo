@@ -272,7 +272,7 @@ goo think :recent:thesis --depth=ultra --to=~/notes.md</pre>
     <div class="sect"><div class="t">Has</div>
       <div class="chipgrid">
         <span class="vc has srcchip"><code>:mnt</code><small>mounts.toml — findmnt --real</small></span>
-        <span class="vc has"><code>mount-open</code> · <code>mount-unmount</code> · <code>mount-reveal</code><small>file-manager / gio unmount / findmnt details</small></span>
+        <span class="vc has"><code>open</code> (polymorphic, via <code>is_a=inode/directory</code>) · <code>unmount</code> · <code>usage</code><small>file manager / gio unmount / findmnt details</small></span>
       </div>
     </div>
     <div class="sect"><div class="t">Could add</div>
@@ -282,10 +282,10 @@ goo think :recent:thesis --depth=ultra --to=~/notes.md</pre>
       </div>
     </div>
     <div class="sect"><div class="t">Examples</div>
-      <pre class="code">goo mount-open :mnt/                  <span class="c"># GOO default → file manager on root</span>
-goo mount-open :mnt:usb               <span class="c"># fuzzy: any mount with "usb" in label/path</span>
-goo mount-reveal :mnt/boot            <span class="c"># device / fs / size (read-only)</span>
-goo mount-unmount :mnt:backup         <span class="c"># confirm-gated</span></pre>
+      <pre class="code">goo open :mnt/                        <span class="c"># polymorphic open (via is_a=inode/directory) → file manager on root</span>
+goo open :mnt:usb                     <span class="c"># fuzzy: any mount with "usb" in label/path</span>
+goo usage :mnt/boot                   <span class="c"># device / fs / size (read-only)</span>
+goo unmount :mnt:backup               <span class="c"># confirm-gated</span></pre>
     </div>
     <div class="sect"><div class="t">How others do it</div>
       <p class="ref">Spotlight surfaces mounted volumes in the sidebar. KRunner has <code>locations</code>. cosmic-launcher / pop-launcher don't ship a mounts plugin. goo's first-class treatment closes a gap that's been quietly missing from Linux launchers.</p>
@@ -497,14 +497,14 @@ goo mount-unmount :mnt:backup         <span class="c"># confirm-gated</span></pr
     <div class="sect"><div class="t">Has</div>
       <div class="chipgrid">
         <span class="vc has"><code>calc</code><small>qalc — arithmetic + units</small></span>
-        <span class="vc has srcchip"><code>:emo</code> + <code>copy-emoji</code><small>emoji.toml — curated picker, vendor type keeps OPTIONS clean</small></span>
+        <span class="vc has srcchip"><code>:emo</code> + <code>copy</code><small>emoji.toml — curated picker; polymorphic `copy` on the vendor type keeps OPTIONS clean</small></span>
         <span class="vc has"><code>md5</code> · <code>sha256</code><small>hashes (text or file)</small></span>
         <span class="vc has"><code>base64-encode</code> · <code>base64-decode</code></span>
         <span class="vc has"><code>url-encode</code> · <code>url-decode</code></span>
         <span class="vc has"><code>lower</code> · <code>upper</code> · <code>trim</code></span>
         <span class="vc has"><code>qr-encode</code> · <code>qr-save</code></span>
         <span class="vc has"><code>scan-qr</code> · <code>scan-qr-image</code></span>
-        <span class="vc has"><code>image-info</code> · <code>media-info</code> · <code>dir-tree</code> · <code>json-keys</code> · <code>json-pretty</code><small>structured-content inspectors</small></span>
+        <span class="vc has"><code>info</code> (polymorphic: image/audio/video/process) · <code>tree</code> · <code>size</code> · <code>json-keys</code> · <code>json-pretty</code><small>structured-content inspectors</small></span>
         <span class="vc has"><code>wc</code> · <code>json-string</code> · <code>shell-escape</code></span>
       </div>
     </div>
@@ -521,9 +521,9 @@ goo mount-unmount :mnt:backup         <span class="c"># confirm-gated</span></pr
 goo calc "100 USD to EUR"
 goo calc "32 F to C"
 
-<span class="c"># emoji — vendor type means OPTIONS is JUST copy-emoji</span>
-goo copy-emoji :emo:smile
-goo :emo:heart                        <span class="c"># GOO default = copy-emoji</span>
+<span class="c"># emoji — vendor type + polymorphic copy keeps OPTIONS clean</span>
+goo copy :emo:smile
+goo :emo:heart                        <span class="c"># GOO default = copy (polymorphic, accepts vnd.emoji)</span>
 
 <span class="c"># hashes accept content OR a file (md5 verb peeks at the subject)</span>
 goo sha256 "the quick brown fox"
@@ -621,8 +621,8 @@ echo "hello" | goo upper | goo base64-encode</pre>
 <h3 class="sh">Shipped since last review</h3>
 <ul class="gaps">
   <li><b>:recent</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">recent.toml — recently-used.xbel via python; reuses files verbs</span></li>
-  <li><b>:emo + copy-emoji</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">emoji.toml — 186 curated codepoints; vendor type keeps OPTIONS clean</span></li>
-  <li><b>:mnt</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">mounts.toml — findmnt --real; <code>mount-open</code> / <code>-unmount</code> / <code>-reveal</code></span></li>
+  <li><b>:emo + copy</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">emoji.toml — 186 curated codepoints; vendor type + polymorphic <code>copy</code> keep OPTIONS clean</span></li>
+  <li><b>:mnt</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">mounts.toml — findmnt --real; polymorphic <code>open</code> (via <code>is_a=inode/directory</code>) · <code>unmount</code> · <code>usage</code></span></li>
 </ul>
 
 <h3 class="sh">Easy wins · ~20–30 line TOML each</h3>
@@ -669,7 +669,7 @@ echo "hello" | goo upper | goo base64-encode</pre>
   <li><b>Output routing</b> — <code>--to</code>/<code>-o</code> routes any result to file/clipboard; the only launcher that treats <em>where the answer goes</em> as a first-class slot</li>
   <li><b>Screenshot · OCR · QR scan</b> — <code>screenshot</code>, <code>capture-region</code>, <code>capture-file</code>, <code>ocr-image</code>, <code>ocr-region</code>, <code>scan-qr</code>, <code>scan-qr-image</code> all ship as first-class verbs (grim/slurp/tesseract/zbarimg); other launchers leave these to standalone tools</li>
   <li><b>LLM-routed text verbs</b> — <code>critique</code> / <code>summarize</code> / <code>think</code> / <code>draft-response</code> via the <code>--via</code> adverb to Fabric, Claude Desktop, Claude Code, or clipboard. Raycast has AI as a paid feature; no other open launcher ships first-class LLM verbs.</li>
-  <li><b>Structured-content inspectors</b> — <code>image-info</code> / <code>media-info</code> / <code>dir-tree</code> / <code>json-keys</code> / <code>json-pretty</code> work cross-mime through the type lattice. Spotlight has Quick Look; goo has typed verbs.</li>
+  <li><b>Structured-content inspectors</b> — polymorphic <code>info</code> (image/audio/video/process) · <code>tree</code> · <code>size</code> · <code>json-keys</code> · <code>json-pretty</code>, all cross-mime via the type lattice + (name, accepts) verb dispatch. Spotlight has Quick Look; goo has typed verbs.</li>
 </ul>
 </section>
 

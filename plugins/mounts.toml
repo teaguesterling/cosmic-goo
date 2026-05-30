@@ -2,9 +2,11 @@ name = "mounts"
 tier = "desktop"
 description = "Mounted filesystems and removable drives (findmnt)"
 
-# Items emit `application/vnd.mount` so verbs are mount-scoped (not file-scoped
-# — opening the mount point in the file manager is a different action than
-# opening a file). Reach via:
+# Items emit `application/vnd.mount` AND declare `is_a = ["inode/directory"]` so
+# the files-plugin verbs (open, reveal, copy-path, …) apply to mounts via the
+# subtype lattice. `unmount` / `usage` are mount-scoped via their accepts.
+#
+# Reach via:
 #   :mnt/<path>     — exact mountpoint
 #   :mnt:<query>    — fuzzy by mountpoint / device / label
 
@@ -12,12 +14,14 @@ description = "Mounted filesystems and removable drives (findmnt)"
 name = "application/vnd.mount"
 display = "mount point"
 kind = "handle"
+is_a = ["inode/directory"]
 
 [[sources]]
 name = "mounts"
 prefix = "mnt"
 icon = "drive-harddisk"
 emits = "application/vnd.mount"
+enumerate = false   # reach via :mnt: search (matches files-source pattern)
 # findmnt --real excludes pseudo-fs (proc, sysfs, tmpfs, cgroup …) — what a
 # launcher actually wants. -J emits JSON; -l flattens the tree to a list.
 list_cmd = '''findmnt -J -l --real -o TARGET,SOURCE,FSTYPE,SIZE,LABEL 2>/dev/null \
@@ -29,24 +33,22 @@ list_cmd = '''findmnt -J -l --real -o TARGET,SOURCE,FSTYPE,SIZE,LABEL 2>/dev/nul
       metadata: {path: .target, source: .source, fstype: .fstype, size: .size}
     })' '''
 
-[[verbs]]
-name = "mount-open"
-description = "Open the mount point in the file manager"
-accepts = ["application/vnd.mount"]
-default_for = "application/vnd.mount"
-cmd = "xdg-open {subject.id|q}"
+# `mount-open` retired — polymorphic `open` from files.toml applies via the
+# is_a=inode/directory lattice edge. `goo open :mnt/usb` runs xdg-open as before.
 
 [[verbs]]
-name = "mount-unmount"
+name = "unmount"
 description = "Unmount the device"
 accepts = ["application/vnd.mount"]
-# gio handles session/removable unmounts cleanly without root; udisksctl is the
-# fallback when gio isn't installed (rare on freedesktop).
+# No `default_for` — destructive is the wrong GOO default. `goo :mnt/usb` errs
+# "no default verb"; users invoke `goo open :mnt/usb` or `goo unmount :mnt/usb`
+# explicitly. Lattice-walk in default_for to inherit `open` is a future engine
+# refinement.
 cmd = "gio mount -u {subject.id|q} 2>/dev/null || udisksctl unmount --mount-point {subject.id|q}"
 confirm = true
 
 [[verbs]]
-name = "mount-reveal"
-description = "Show device / fs / size for this mount"
+name = "usage"
+description = "Show device / fs / size / utilization for this mount"
 accepts = ["application/vnd.mount"]
 cmd = "findmnt -no SOURCE,FSTYPE,SIZE,USE%,FSAVAIL --target {subject.id|q}"

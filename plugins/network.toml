@@ -17,15 +17,20 @@ emits = "application/vnd.nm.connection"
 list_cmd = """nmcli -t -f NAME,TYPE connection show 2>/dev/null \\
   | jq -Rsc 'split("\\n")[:-1] | map(split(":") | {id: .[0], title: .[0], subtitle: .[1]})'"""
 
+# Polymorphic `connect`/`disconnect` — coexist with bluetooth/ssh impls via the
+# Rust engine's (name, accepts) verb merge. Bash uses simple override-by-name,
+# so on bash only one plugin's `connect` survives — use the Rust bin for full
+# polymorphism (documented divergence; see STATUS).
+
 [[verbs]]
-name = "net-up"
+name = "connect"
 description = "Activate the connection"
 accepts = ["application/vnd.nm.connection"]
 default_for = "application/vnd.nm.connection"
 cmd = "nmcli connection up {subject.id|q}"
 
 [[verbs]]
-name = "net-down"
+name = "disconnect"
 description = "Deactivate the connection"
 accepts = ["application/vnd.nm.connection"]
 cmd = "nmcli connection down {subject.id|q}"

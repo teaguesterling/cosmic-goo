@@ -31,28 +31,31 @@ list_cmd = """cliphist list 2>/dev/null \\
       {id: $f[0], title: ($f[1:] | join("\\t")), text: ($f[1:] | join("\\t")), metadata: {line: .}}
     )'"""
 
+# Polymorphic verbs — `paste`/`show`/`delete`/`wipe` dispatch by accepts on
+# Rust. `show` coexists with git's `branch-show`→`show`; rest are unique today.
+
 [[verbs]]
-name = "clip-paste"
+name = "paste"
 description = "Copy a history entry back onto the clipboard"
 accepts = ["application/vnd.cliphist.entry"]
 default_for = "application/vnd.cliphist.entry"
 cmd = "cliphist decode {subject.id|q} | wl-copy"
 
 [[verbs]]
-name = "clip-show"
+name = "show"
 description = "Print a history entry to stdout"
 accepts = ["application/vnd.cliphist.entry"]
 cmd = "cliphist decode {subject.id|q}"
 
 [[verbs]]
-name = "clip-delete"
+name = "delete"
 description = "Delete a history entry"
 accepts = ["application/vnd.cliphist.entry"]
 cmd = "printf '%s' {subject.metadata.line|q} | cliphist delete"
 confirm = true
 
 [[verbs]]
-name = "clip-wipe"
+name = "wipe"
 description = "Wipe all clipboard history"
 accepts = []
 cmd = "cliphist wipe"
