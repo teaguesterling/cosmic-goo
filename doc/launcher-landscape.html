@@ -186,10 +186,10 @@
     <tr><td>Clipboard / history</td><td class="n">—</td><td class="n">—</td><td class="p">~</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="goo y">✓</td></tr>
     <tr><td>PRIMARY selection</td><td class="n">n/a</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">n/a</td><td class="p">~</td><td class="goo y">✓</td></tr>
     <tr class="miss"><td>Window switcher</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓ pop-shell</td><td class="goo n">—</td></tr>
-    <tr class="miss"><td>Recent files (xbel)</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo n">—</td></tr>
+    <tr><td>Recent files (xbel)</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo y">✓ :recent</td></tr>
     <tr class="miss"><td>Browser bookmarks/history</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="p">~ ext</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="goo n">—</td></tr>
     <tr class="miss"><td>Browser tabs</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="p">~ ext</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="goo n">—</td></tr>
-    <tr class="miss"><td>Emoji / unicode</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="p">~ ext</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="goo n">—</td></tr>
+    <tr><td>Emoji / unicode</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="p">~ ext</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="goo y">✓ :emo</td></tr>
     <tr class="miss"><td>Snippets / text-expand</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="p">~ ext</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="goo n">—</td></tr>
     <tr class="miss"><td>Notes / scratchpads</td><td class="y">✓</td><td class="y">✓ Tomboy</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="goo n">—</td></tr>
     <tr class="miss"><td>Music (MPRIS)</td><td class="y">✓</td><td class="y">✓ Banshee</td><td class="y">✓</td><td class="p">~ ext</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="goo p">~ verbs only</td></tr>
@@ -209,7 +209,7 @@
     <tr class="miss"><td>Translate / dictionary</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="p">~ ext</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="goo n">—</td></tr>
     <tr class="miss"><td>Brightness / display</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="goo n">—</td></tr>
     <tr class="miss"><td>KDE Connect / phone</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="p">~ ext</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="goo n">—</td></tr>
-    <tr class="miss"><td>Mounts / drives</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="goo n">—</td></tr>
+    <tr><td>Mounts / drives</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="goo y">✓ :mnt</td></tr>
     <tr class="miss"><td>Shell history</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓ scripts</td><td class="goo n">—</td></tr>
     <tr class="miss"><td>Color picker / hex</td><td class="y">✓</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="goo n">—</td></tr>
   </tbody>
@@ -224,27 +224,71 @@
 <details class="pcard">
   <summary>
     <span class="pn">📁 Files &amp; filesystem</span>
-    <span class="pd">find, open, recent, trash, mime-aware actions</span>
-    <span class="cnt"><b>has 2</b> · <i>could add 5</i></span>
+    <span class="pd">find, open, recent, mime-aware actions</span>
+    <span class="cnt"><b>has 4</b> · <i>could add 3</i></span>
   </summary>
   <div class="body">
     <div class="sect"><div class="t">Has</div>
       <div class="chipgrid">
         <span class="vc has srcchip"><code>:file</code><small>files.toml — find by name</small></span>
-        <span class="vc has"><code>open</code><small>xdg-open default</small></span>
+        <span class="vc has srcchip"><code>:recent</code><small>recent.toml — recently-used.xbel</small></span>
+        <span class="vc has"><code>open</code> · <code>reveal</code> · <code>read</code> · <code>preview</code> · <code>copy-path</code><small>files.toml</small></span>
       </div>
     </div>
     <div class="sect"><div class="t">Could add</div>
       <div class="chipgrid">
-        <span class="vc could"><code>:recent</code><small>~/.local/share/recently-used.xbel</small></span>
         <span class="vc could"><code>:trash</code><small>gio trash list-trash</small></span>
-        <span class="vc could"><code>:mount</code><small>udisksctl status / lsblk -J</small></span>
         <span class="vc could"><code>:bookmark</code><small>~/.config/gtk-3.0/bookmarks</small></span>
-        <span class="vc could"><code>preview</code><small>kitty +icat / qlmanage analogue</small></span>
+        <span class="vc could"><code>preview</code> richer<small>kitty +icat / chafa for images</small></span>
       </div>
     </div>
+    <div class="sect"><div class="t">Examples · <span style="color:var(--acc2)">domain · verb · subject</span></div>
+      <pre class="code"><span class="c"># Bare paths and ./ both work — file resolution priority over sigil</span>
+goo open notes.md
+goo open ./notes.md
+
+<span class="c"># :recent — recently-used.xbel; items emit inode/file so all file verbs apply</span>
+goo open :recent                       <span class="c"># GOO default = most-recent</span>
+goo summarize :recent:design           <span class="c"># fuzzy match recent files</span>
+goo reveal :recent/home/teague/x.md    <span class="c"># exact path (path can have slashes)</span>
+
+<span class="c"># Composed: verb · subject · instrument · target</span>
+goo critique ./paper.pdf --via=fabric --to=^
+goo think :recent:thesis --depth=ultra --to=~/notes.md</pre>
+    </div>
     <div class="sect"><div class="t">How others do it</div>
-      <p class="ref">Spotlight indexes the FS continuously and exposes recent + mime-aware actions. KRunner has <code>locations</code> for paths plus <code>recentdocuments</code>. cosmic-launcher / pop-launcher have <code>files</code> (find) + <code>recent</code>. Raycast layers per-mime "actions panel" — open, reveal, move, tag — which goo can do natively via verb dispatch on <code>inode/file</code> + structured-suffix subtypes.</p>
+      <p class="ref">Spotlight indexes the FS continuously and exposes recent + mime-aware actions. KRunner has <code>locations</code> + <code>recentdocuments</code>. cosmic-launcher / pop-launcher have <code>files</code> (find) + <code>recent</code>. Raycast layers per-mime "actions panel" — open, reveal, move, tag — which goo gets natively via verb dispatch on <code>inode/file</code> + structured-suffix subtypes.</p>
+    </div>
+  </div>
+</details>
+
+<details class="pcard">
+  <summary>
+    <span class="pn">💾 Drives &amp; mounts</span>
+    <span class="pd">mountpoints, removable drives, unmount</span>
+    <span class="cnt"><b>has 1</b> · <i>could add 2</i></span>
+  </summary>
+  <div class="body">
+    <div class="sect"><div class="t">Has</div>
+      <div class="chipgrid">
+        <span class="vc has srcchip"><code>:mnt</code><small>mounts.toml — findmnt --real</small></span>
+        <span class="vc has"><code>mount-open</code> · <code>mount-unmount</code> · <code>mount-reveal</code><small>file-manager / gio unmount / findmnt details</small></span>
+      </div>
+    </div>
+    <div class="sect"><div class="t">Could add</div>
+      <div class="chipgrid">
+        <span class="vc could"><code>:drive</code><small>unmounted devices (udisksctl status)</small></span>
+        <span class="vc could"><code>mount-attach</code><small>connect an unmounted drive — confirm-gated</small></span>
+      </div>
+    </div>
+    <div class="sect"><div class="t">Examples</div>
+      <pre class="code">goo mount-open :mnt/                  <span class="c"># GOO default → file manager on root</span>
+goo mount-open :mnt:usb               <span class="c"># fuzzy: any mount with "usb" in label/path</span>
+goo mount-reveal :mnt/boot            <span class="c"># device / fs / size (read-only)</span>
+goo mount-unmount :mnt:backup         <span class="c"># confirm-gated</span></pre>
+    </div>
+    <div class="sect"><div class="t">How others do it</div>
+      <p class="ref">Spotlight surfaces mounted volumes in the sidebar. KRunner has <code>locations</code>. cosmic-launcher / pop-launcher don't ship a mounts plugin. goo's first-class treatment closes a gap that's been quietly missing from Linux launchers.</p>
     </div>
   </div>
 </details>
@@ -446,33 +490,51 @@
 <details class="pcard">
   <summary>
     <span class="pn">🛠️ Utilities (one-shot transforms)</span>
-    <span class="pd">hash, encode, calculate, format</span>
-    <span class="cnt"><b>has ~12</b> · <i>could add 5</i></span>
+    <span class="pd">hash, encode, calculate, emoji, format</span>
+    <span class="cnt"><b>has ~14</b> · <i>could add 4</i></span>
   </summary>
   <div class="body">
     <div class="sect"><div class="t">Has</div>
       <div class="chipgrid">
-        <span class="vc has"><code>calc</code><small>arithmetic</small></span>
-        <span class="vc has"><code>md5</code> · <code>sha256</code><small>hashes</small></span>
+        <span class="vc has"><code>calc</code><small>qalc — arithmetic + units</small></span>
+        <span class="vc has srcchip"><code>:emo</code> + <code>copy-emoji</code><small>emoji.toml — curated picker, vendor type keeps OPTIONS clean</small></span>
+        <span class="vc has"><code>md5</code> · <code>sha256</code><small>hashes (text or file)</small></span>
         <span class="vc has"><code>base64-encode</code> · <code>base64-decode</code></span>
         <span class="vc has"><code>url-encode</code> · <code>url-decode</code></span>
         <span class="vc has"><code>lower</code> · <code>upper</code> · <code>trim</code></span>
         <span class="vc has"><code>qr-encode</code> · <code>qr-save</code></span>
         <span class="vc has"><code>scan-qr</code> · <code>scan-qr-image</code></span>
+        <span class="vc has"><code>image-info</code> · <code>media-info</code> · <code>dir-tree</code> · <code>json-keys</code> · <code>json-pretty</code><small>structured-content inspectors</small></span>
         <span class="vc has"><code>wc</code> · <code>json-string</code> · <code>shell-escape</code></span>
       </div>
     </div>
     <div class="sect"><div class="t">Could add</div>
       <div class="chipgrid">
-        <span class="vc could"><code>:emoji</code><small>Unicode CLDR JSON</small></span>
-        <span class="vc could"><code>units</code><small>kg→lbs, °F→°C, currency (xchg)</small></span>
-        <span class="vc could"><code>pick-color</code><small>grim + gpick</small></span>
+        <span class="vc could"><code>pick-color</code><small>grim + slurp + ImageMagick</small></span>
         <span class="vc could"><code>translate</code><small>verb via trans / argos-translate</small></span>
         <span class="vc could"><code>uuid</code> · <code>now</code><small>uuidgen / date ISO</small></span>
+        <span class="vc could"><code>currency</code> / explicit unit verbs<small>qalc covers via calc; could be more discoverable</small></span>
       </div>
     </div>
+    <div class="sect"><div class="t">Examples</div>
+      <pre class="code"><span class="c"># calc with qalc — units are first-class</span>
+goo calc "100 USD to EUR"
+goo calc "32 F to C"
+
+<span class="c"># emoji — vendor type means OPTIONS is JUST copy-emoji</span>
+goo copy-emoji :emo:smile
+goo :emo:heart                        <span class="c"># GOO default = copy-emoji</span>
+
+<span class="c"># hashes accept content OR a file (md5 verb peeks at the subject)</span>
+goo sha256 "the quick brown fox"
+goo sha256 ./binary.bin
+
+<span class="c"># piped — chain transforms via the shell</span>
+goo wc ^                              <span class="c"># word-count the clipboard</span>
+echo "hello" | goo upper | goo base64-encode</pre>
+    </div>
     <div class="sect"><div class="t">How others do it</div>
-      <p class="ref">KRunner / Albert / Raycast all have unit-conversion in the calc; emoji is universal. goo already ships <em>more</em> one-shot transforms than most launchers (the QR set is unusual) — the visible gaps are emoji and units, both ~20-line TOMLs.</p>
+      <p class="ref">KRunner / Albert / Raycast all have unit-conversion in the calc; emoji is universal. goo already ships <em>more</em> one-shot transforms than most launchers (the QR set + structured-content inspectors are unusual). The remaining gaps are mostly verb-additions, not source-additions.</p>
     </div>
   </div>
 </details>
@@ -556,15 +618,19 @@
 <h2 class="h">Prioritized gaps</h2>
 <p class="lede">Most "missing" items above are a <code>[[sources]]</code> TOML with a <code>list_cmd</code> — <b>no engine changes</b>. That's the architectural payoff: gaps close at plugin speed.</p>
 
+<h3 class="sh">Shipped since last review</h3>
+<ul class="gaps">
+  <li><b>:recent</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">recent.toml — recently-used.xbel via python; reuses files verbs</span></li>
+  <li><b>:emo + copy-emoji</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">emoji.toml — 186 curated codepoints; vendor type keeps OPTIONS clean</span></li>
+  <li><b>:mnt</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">mounts.toml — findmnt --real; <code>mount-open</code> / <code>-unmount</code> / <code>-reveal</code></span></li>
+</ul>
+
 <h3 class="sh">Easy wins · ~20–30 line TOML each</h3>
 <ul class="gaps">
-  <li><b>:recent</b><span class="e">~/.local/share/recently-used.xbel — every GTK/Qt app updates it</span></li>
-  <li><b>:emoji</b><span class="e">Unicode CLDR JSON + <code>copy</code> default verb</span></li>
-  <li><b>:mount</b><span class="e"><code>udisksctl status</code> / <code>lsblk -J</code></span></li>
-  <li><b>:hist-sh</b><span class="e">~/.bash_history / ~/.zsh_history / fish history</span></li>
-  <li><b>brightness</b><span class="e"><code>brightnessctl --machine-readable</code></span></li>
-  <li><b>:mpris</b><span class="e"><code>playerctl --list-all</code> → per-player verbs</span></li>
-  <li><b>:pr</b> / <b>:issue</b><span class="e"><code>gh pr list --json</code> / <code>glab</code></span></li>
+  <li><b>brightness</b><span class="e"><code>brightnessctl --machine-readable</code> — verb-only plugin</span></li>
+  <li><b>:hist-sh</b><span class="e">~/.bash_history / ~/.zsh_history / fish history — needs a default-verb decision (copy? re-run?)</span></li>
+  <li><b>:pr</b> / <b>:issue</b><span class="e"><code>gh pr list --json</code> — pairs with the existing <code>gh-pr-list</code> verb</span></li>
+  <li><b>pick-color</b> · <b>translate</b><span class="e">verb-only utilities — grim + slurp + ImageMagick / trans</span></li>
 </ul>
 
 <h3 class="sh">Medium effort · existing tools, light parsing</h3>
@@ -602,6 +668,8 @@
   <li><b>Verb-on-noun sentence grammar</b> — gnome-do's DNA, with type-driven applicability and channel-based coercion</li>
   <li><b>Output routing</b> — <code>--to</code>/<code>-o</code> routes any result to file/clipboard; the only launcher that treats <em>where the answer goes</em> as a first-class slot</li>
   <li><b>Screenshot · OCR · QR scan</b> — <code>screenshot</code>, <code>capture-region</code>, <code>capture-file</code>, <code>ocr-image</code>, <code>ocr-region</code>, <code>scan-qr</code>, <code>scan-qr-image</code> all ship as first-class verbs (grim/slurp/tesseract/zbarimg); other launchers leave these to standalone tools</li>
+  <li><b>LLM-routed text verbs</b> — <code>critique</code> / <code>summarize</code> / <code>think</code> / <code>draft-response</code> via the <code>--via</code> adverb to Fabric, Claude Desktop, Claude Code, or clipboard. Raycast has AI as a paid feature; no other open launcher ships first-class LLM verbs.</li>
+  <li><b>Structured-content inspectors</b> — <code>image-info</code> / <code>media-info</code> / <code>dir-tree</code> / <code>json-keys</code> / <code>json-pretty</code> work cross-mime through the type lattice. Spotlight has Quick Look; goo has typed verbs.</li>
 </ul>
 </section>
 
