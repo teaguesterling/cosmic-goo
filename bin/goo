@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# bin/goo — cosmic-goo CLI entry point.
+# bin/goo — cosmic-goo CLI entry point — **LEGACY** (bash reference impl).
+#
+# The canonical goo is the Rust binary in `crates/goo` (`make install`). This
+# bash bin is feature-frozen at the pre-negotiation behaviour: it lacks
+# negotiation (`[[channels]]`, --to/--using/--as routing), the OPTIONS surface
+# (`goo options`), --explain, the `=TYPE` sigil, polymorphic verbs across
+# plugins, and most of the type-detection ladder. Kept in-tree as a readable
+# spec and as a no-rust install path for the pre-negotiation subset.
 #
 # Usage:
 #   goo                                # opens the compose dialog (picker-driven)

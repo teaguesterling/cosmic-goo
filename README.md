@@ -2,7 +2,9 @@
 
 > **G**rammar **O**f **O**perations — a compositional sentence layer over the COSMIC launcher.
 
-**Status**: alpha. The `goo` CLI is fully usable — 21 plugins, ~74 verbs, subject addressing, tab completion, and a picker-driven compose dialog. Not yet built: the pop-launcher meta-plugin (inline composition) and the native libcosmic compose GUI.
+**Status**: alpha. The `goo` CLI is fully usable — 28+ plugins, ~90 verbs, subject addressing, tab completion, negotiation/coercion, OPTIONS discovery (`goo options`), the `--explain` planner debugger, and polymorphic verbs across plugins (Rust engine). Not yet built: the pop-launcher meta-plugin (inline composition) and the native libcosmic compose GUI.
+
+**Engines.** The Rust engine (`crates/goo`) is the **canonical** goo and the conformance target for `make test`. The bash bin (`bin/goo` + `lib/*.sh`) is a **legacy reference**, feature-frozen at pre-negotiation behavior — kept as a readable spec and a no-rust install path (`make install-bash`); new features land Rust-only.
 
 ## What it is
 
@@ -42,12 +44,15 @@ Recon results from environment validation are in [`recon/findings.md`](recon/fin
 ## Layout
 
 ```
-bin/        Executable entry points (`goo` CLI; later `goo-compose`)
-lib/        Shell utilities (plugin loader, type matcher, verb dispatch)
-plugins/    Built-in TOML plugins
-tests/      bats-core test suite
+crates/     Rust engine + bin (canonical) — goo-engine, goo, goo-compose-gui
+bin/        Legacy bash CLI (`goo`) — feature-frozen reference
+lib/        Legacy bash utilities (plugin loader, address, verbs, …)
+plugins/    Built-in TOML plugins (consumed by both engines)
+tests/      bats-core test suite — Rust by default (`make test`)
+completions/ Shell completion scripts
+doc/        Current documentation
+docs/       Frozen design archive (`docs/vision/`)
 recon/      Environment reconnaissance scripts and findings
-docs/       Documentation (currently `docs/vision/` only)
 ```
 
 ## License

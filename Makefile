@@ -1,16 +1,23 @@
 # cosmic-goo — Makefile
 #
-# The Rust engine (crates/goo) is now the default `goo` (it passes the bats
-# conformance suite). `make install` builds and installs the Rust binary; the
-# bash engine remains the in-repo reference and is installable via
-# `make install-bash`. The Rust binary still shells out to `bash`+`jq` at
-# runtime, so those stay runtime deps.
+# The Rust engine (`crates/goo`) is the **canonical** goo. `make install` builds
+# and installs the Rust binary. The bash engine (`bin/goo`, `lib/*.sh`) is a
+# **legacy reference**, feature-frozen at pre-negotiation; it stays in the tree
+# (and `make install-bash` still works) but new features land Rust-only.
+#
+# Conformance: `make test` runs bats against the Rust engine (canonical).
+# `make test-bash` runs against the bash engine (legacy; expect ~28% skips for
+# Rust-only features). `make test-both` runs both, for cross-engine parity work.
+#
+# The Rust binary still shells out to `bash`+`jq` at runtime (cmd templates,
+# list_cmds), so those stay runtime deps regardless.
 
 SHELL := /bin/bash
 
 GOO_RELEASE = crates/target/release/goo
+GOO_DEBUG   = crates/target/debug/goo
 
-.PHONY: help test shellcheck validate build install install-bash install-cosmic install-core uninstall tiers clean docs serve docs-install install-completion
+.PHONY: help test test-bash test-both shellcheck validate build install install-bash install-cosmic install-core uninstall tiers clean docs serve docs-install install-completion
 
 # Install layout / tier selection.
 # PREFIX defaults to a user install (~/.local, no root). TIERS selects which
@@ -24,15 +31,27 @@ GOO_SHARE = $(PREFIX)/share/cosmic-goo
 help:  ## Show this help
 	@awk 'BEGIN { FS = ":.*##"; printf "Available targets:\n" } /^[a-zA-Z0-9_-]+:.*##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-test:  ## Run bats test suite
-	@if ! command -v bats >/dev/null 2>&1; then \
-		echo "bats not found. apt install bats"; exit 1; \
+test:  ## Run the bats conformance suite against the Rust engine (canonical)
+	@command -v bats >/dev/null 2>&1 || { echo "bats not found. apt install bats"; exit 1; }
+	@command -v cargo >/dev/null 2>&1 || { echo "cargo not found. Install Rust (https://rustup.rs)"; exit 1; }
+	@if [ ! -d tests ] || ! find tests -name '*.bats' -print -quit | grep -q .; then \
+		echo "(no tests yet)"; exit 0; \
 	fi
-	@if [ -d tests ] && find tests -name '*.bats' -print -quit | grep -q .; then \
-		bats -r tests/; \
-	else \
-		echo "(no tests yet)"; \
-	fi
+	@echo "Building goo (debug) for bats…"
+	@cd crates && cargo build -p goo 2>&1 | tail -2
+	@echo "Running bats against $(GOO_DEBUG)…"
+	@GOO_BIN="$$(pwd)/$(GOO_DEBUG)" bats -r tests/
+
+test-bash:  ## Run bats against the bash engine (legacy reference; ~28% tests skip)
+	@command -v bats >/dev/null 2>&1 || { echo "bats not found. apt install bats"; exit 1; }
+	@echo "Running bats against bin/goo (bash — legacy reference, feature-frozen)…"
+	@echo "Expect ~94 skipped tests for Rust-only features (negotiation, OPTIONS, polymorphic verbs, …)."
+	@bats -r tests/
+
+test-both:  ## Run conformance on BOTH engines (parity verification / cross-engine work)
+	@$(MAKE) --no-print-directory test
+	@echo; echo "--- bash (legacy) ---"
+	@$(MAKE) --no-print-directory test-bash
 
 shellcheck:  ## Lint shell scripts under bin/ and lib/
 	@if ! command -v shellcheck >/dev/null 2>&1; then \
@@ -84,8 +103,9 @@ install: build  ## Install goo (Rust binary; standalone core+desktop tiers) to $
 	@echo "  linked $(PREFIX)/bin/goo -> $(GOO_SHARE)/bin/goo (-> goo-bin)"
 	@echo "Done. Ensure $(PREFIX)/bin is on PATH. Runtime still needs bash + jq."
 
-install-bash:  ## Install the bash engine instead (the in-repo reference / fallback)
-	@echo "Installing goo (bash) to $(PREFIX) [tiers: $(TIERS)]"
+install-bash:  ## Install the bash engine (LEGACY; feature-frozen pre-negotiation)
+	@echo "Installing goo (bash — LEGACY reference; lacks negotiation, OPTIONS, polymorphic verbs, …)"
+	@echo "Installing to $(PREFIX) [tiers: $(TIERS)]"
 	@install -d "$(GOO_SHARE)/bin" "$(GOO_SHARE)/lib" "$(GOO_SHARE)/plugins" "$(PREFIX)/bin"
 	@install -m 0755 bin/goo "$(GOO_SHARE)/bin/goo"
 	@install -m 0644 lib/*.sh "$(GOO_SHARE)/lib/"

@@ -34,9 +34,14 @@ linked below; this is just "we've built up through here."
 | **One-context channel substitution** (unify usage `{subject.*}` and coercion `{in.path}`) + **mode-aware buffering** (stream/bytes, not always temp-file) | **designed** | [negotiation §2.3](negotiation.md), [§5](negotiation.md) |
 | **Output value model** — value (path/bytes/stream/ref/**live surface**) as first-class vs a marshalling-mode annotation | **designed** | [negotiation §2.1](negotiation.md) |
 
-Bash is frozen at the **pre-negotiation** behavior and is the reference for
-everything below the arc; the lattice/inference/negotiation are Rust-only, so
-their bats tests skip on bash (the suite is 314/314 on both engines).
+**Engines.** Rust (`crates/goo`) is the **canonical** goo. Bash (`bin/goo` +
+`lib/*.sh`) is a **legacy reference**, feature-frozen at pre-negotiation — kept
+in-tree as a readable spec / no-rust fallback for the pre-negotiation subset,
+but not the conformance gate anymore (`make test` runs the Rust engine; bash
+runs are opt-in via `make test-bash`). New features land Rust-only and ~28% of
+bats tests skip on bash by design. (The lattice / inference / negotiation /
+OPTIONS / polymorphic-verb features are all Rust-only and accumulate as the
+documented divergence.)
 
 ## The interface / protocol layer
 
@@ -52,7 +57,7 @@ their bats tests skip on bash (the suite is 314/314 on both engines).
 
 ## Surfaces
 
-- **Engine + CLI** — the Rust `goo` is the default; bash is the reference (`make install` / `make install-bash`).
+- **Engine + CLI** — the Rust `goo` is the **canonical** engine (`make install`); the bash bin/goo is a **legacy reference** (`make install-bash`), feature-frozen pre-negotiation.
 - **Plugins** — 25 (~88 verbs, 17 sources), incl. non-text handle domains and content-inspection verbs.
 - **Tests** — bats conformance suite (314/314 both engines) + 150 engine unit tests.
 

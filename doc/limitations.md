@@ -36,12 +36,12 @@ These were limitations in earlier drafts and are now fixed:
 - **`goo compose` was a stub** → a working picker-driven dialog in `bin/goo`; the Rust CLI is non-interactive (scripted), and the GUI is the new `goo-compose-gui` (iced v1 scaffold; libcosmic swap planned).
 - **~370ms cold load** → a registry mtime cache (`$XDG_RUNTIME_DIR/cosmic-goo/registry.json`) makes warm loads ~10ms; cold load only recurs after a plugin edit.
 - **Source scoping unimplemented** → goo:// addressing works in the CLI now (value/search/`?refine`).
-- **Shell-only / no install** → the engine is now the **Rust `goo` binary** (bash stays the reference; `make install` / `make install-bash`); 235+-test bats suite passes on both engines.
+- **Shell-only / no install** → the engine is the **Rust `goo` binary** (canonical; `make install`). The bash bin (`bin/goo` + `lib/`) is a **legacy reference** kept in-tree, feature-frozen at pre-negotiation; opt in with `make install-bash`. Conformance: 330-test bats suite runs Rust by default (`make test`); bash via `make test-bash` (~28% skip — the Rust-only features).
 - **Content-dispatch & canonical scheme** → `[[dispatch]]` + `goo dispatch` shipped; the **`goo://` scheme** is canonical (`goo://domain/path`, strict value/search), with **GOO default-verb dispatch** (`goo goo://…` runs the type's `default_for` verb).
 
 ## Roadmap
 
-Done: the **Rust engine + CLI** (the default `goo`; bash is the reference), **25 plugins** (~88 verbs, 17 sources, incl. non-text handle domains *and* content-inspection verbs for JSON/images/media/directories), goo:// addressing + **GOO default-verb dispatch**, content-dispatch, completion, filters, command aliases, the compose dialog, `goo-compose-gui` v1 (iced) scaffolding, and the **subtype lattice + JSON-shape inference** (type-system arc, in progress). Remaining:
+Done: the **Rust engine + CLI** (the canonical `goo`; bash is a legacy reference kept in-tree), **28+ plugins** (~90 verbs, 18 sources, incl. non-text handle domains *and* content-inspection verbs for JSON/images/media/directories), goo:// addressing + **GOO default-verb dispatch**, content-dispatch, completion, filters, command aliases, the compose dialog, `goo-compose-gui` v1 (iced) scaffolding, and the **subtype lattice + JSON-shape inference** (type-system arc, in progress). Remaining:
 
 - **`goo-compose-gui` build-out** — grow the iced dialog (verb pane → exec), then **swap to libcosmic** for the native COSMIC look (the bones port mostly mechanically).
 - **pop-launcher meta-plugin** — inline `cosmic-launcher` composition with type-aware autocomplete, emitting canonical `goo://` URIs.
