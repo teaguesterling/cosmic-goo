@@ -181,8 +181,8 @@
   <tbody>
     <tr><td>Apps</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo y">✓</td></tr>
     <tr><td>File search</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo y">✓</td></tr>
-    <tr class="miss"><td>Web search</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo n">—</td></tr>
-    <tr><td>Calculator (+ units)</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo p">~ verb</td></tr>
+    <tr><td>Web search</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo y">✓ <span style="font-size:11px;color:var(--faint)">6 engines</span></td></tr>
+    <tr><td>Calculator (+ units)</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo y">✓ qalc</td></tr>
     <tr><td>Clipboard / history</td><td class="n">—</td><td class="n">—</td><td class="p">~</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="goo y">✓</td></tr>
     <tr><td>PRIMARY selection</td><td class="n">n/a</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">n/a</td><td class="p">~</td><td class="goo y">✓</td></tr>
     <tr class="miss"><td>Window switcher</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓ pop-shell</td><td class="goo n">—</td></tr>
@@ -280,25 +280,25 @@
   <summary>
     <span class="pn">🌐 Web &amp; URLs</span>
     <span class="pd">search engines, bookmarks, history, tabs</span>
-    <span class="cnt"><b>has 1</b> · <i>could add 4</i></span>
+    <span class="cnt"><b>has 3</b> · <i>could add 3</i></span>
   </summary>
   <div class="body">
     <div class="sect"><div class="t">Has</div>
       <div class="chipgrid">
         <span class="vc has srcchip"><code>url</code><small>any scheme:// → text/x-uri</small></span>
         <span class="vc has"><code>open</code><small>xdg-open URL</small></span>
+        <span class="vc has"><code>search</code><small>urls.toml — <code>--engine</code> selector: ddg, google, github, mdn, crates, wikipedia</small></span>
       </div>
     </div>
     <div class="sect"><div class="t">Could add</div>
       <div class="chipgrid">
-        <span class="vc could"><code>search</code><small>verb with <code>--engine</code> selector (DDG/Google/MDN/crates.io/GitHub)</small></span>
         <span class="vc could"><code>:bookmark</code><small>Firefox places.sqlite via sqlite3</small></span>
         <span class="vc could"><code>:history</code><small>browser history (per-vendor)</small></span>
-        <span class="vc could"><code>:tab</code><small>per-browser RPC (Firefox MozRepl-likes, qutebrowser :session-info)</small></span>
+        <span class="vc could"><code>:tab</code><small>per-browser RPC (qutebrowser :session-info, Firefox via extension)</small></span>
       </div>
     </div>
     <div class="sect"><div class="t">How others do it</div>
-      <p class="ref">Every launcher has <em>some</em> web search. Raycast and KRunner have bookmarks + history. cosmic-launcher / pop-launcher have a <code>web</code> plugin (search via "ddg ", "g ", etc. prefixes). Ulauncher has dozens of search-engine extensions. <b>This is the single most-glaring goo gap</b> — a 5-minute plugin.</p>
+      <p class="ref">Raycast and KRunner have bookmarks + history. cosmic-launcher / pop-launcher have a <code>web</code> plugin (search via "ddg ", "g ", etc. prefixes). goo's <code>search</code> verb covers the core feature — extend with more engines via <code>~/.config/cosmic-goo/plugins/</code>. The real gap remaining is bookmarks/history/tabs.</p>
     </div>
   </div>
 </details>
@@ -558,7 +558,6 @@
 
 <h3 class="sh">Easy wins · ~20–30 line TOML each</h3>
 <ul class="gaps">
-  <li><b>:web</b><span class="e">search engines via a <code>--engine</code> selector adverb (DDG, Google, MDN, crates.io, GitHub)</span></li>
   <li><b>:recent</b><span class="e">~/.local/share/recently-used.xbel — every GTK/Qt app updates it</span></li>
   <li><b>:emoji</b><span class="e">Unicode CLDR JSON + <code>copy</code> default verb</span></li>
   <li><b>:mount</b><span class="e"><code>udisksctl status</code> / <code>lsblk -J</code></span></li>
@@ -602,6 +601,7 @@
   <li><b>OPTIONS discovery surface</b> — <code>goo options</code>; one composable JSON the compose-gui, shell completion, and (future) daemon all share</li>
   <li><b>Verb-on-noun sentence grammar</b> — gnome-do's DNA, with type-driven applicability and channel-based coercion</li>
   <li><b>Output routing</b> — <code>--to</code>/<code>-o</code> routes any result to file/clipboard; the only launcher that treats <em>where the answer goes</em> as a first-class slot</li>
+  <li><b>Screenshot · OCR · QR scan</b> — <code>screenshot</code>, <code>capture-region</code>, <code>capture-file</code>, <code>ocr-image</code>, <code>ocr-region</code>, <code>scan-qr</code>, <code>scan-qr-image</code> all ship as first-class verbs (grim/slurp/tesseract/zbarimg); other launchers leave these to standalone tools</li>
 </ul>
 </section>
 
