@@ -112,10 +112,10 @@
     <p class="tag">A read of goo's <b>addressable surface</b> against the launcher ecosystem — Spotlight, KRunner, GNOME-Do, Ulauncher, Albert, Raycast, and the native <b>cosmic-launcher</b> (via its <code>pop-launcher</code> backend) — with an expandable per-area database of "has now / could add / how others do it".</p>
     <div class="stats">
       <div class="stat"><div class="n">7</div><div class="l">value-domains</div></div>
-      <div class="stat"><div class="n">17</div><div class="l">source-domains</div></div>
-      <div class="stat"><div class="n">~88</div><div class="l">shipped verbs</div></div>
-      <div class="stat"><div class="n">25</div><div class="l">shipped plugins</div></div>
-      <div class="stat"><div class="n">24</div><div class="l">addressable surfaces</div></div>
+      <div class="stat"><div class="n">21</div><div class="l">source-domains</div></div>
+      <div class="stat"><div class="n">92</div><div class="l">shipped verbs</div></div>
+      <div class="stat"><div class="n">30</div><div class="l">shipped plugins</div></div>
+      <div class="stat"><div class="n">28</div><div class="l">addressable surfaces</div></div>
     </div>
   </div>
 </header>
@@ -185,7 +185,7 @@
     <tr><td>Calculator (+ units)</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo y">✓ qalc</td></tr>
     <tr><td>Clipboard / history</td><td class="n">—</td><td class="n">—</td><td class="p">~</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="goo y">✓</td></tr>
     <tr><td>PRIMARY selection</td><td class="n">n/a</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="n">n/a</td><td class="p">~</td><td class="goo y">✓</td></tr>
-    <tr class="miss"><td>Window switcher</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓ pop-shell</td><td class="goo n">—</td></tr>
+    <tr><td>Window switcher</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓ pop-shell</td><td class="goo y">✓ :win</td></tr>
     <tr><td>Recent files (xbel)</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="goo y">✓ :recent</td></tr>
     <tr class="miss"><td>Browser bookmarks/history</td><td class="y">✓</td><td class="n">—</td><td class="y">✓</td><td class="p">~ ext</td><td class="y">✓</td><td class="y">✓</td><td class="n">—</td><td class="goo n">—</td></tr>
     <tr class="miss"><td>Browser tabs</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="p">~ ext</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td><td class="goo n">—</td></tr>
@@ -356,20 +356,33 @@ goo unmount :mnt:backup               <span class="c"># confirm-gated</span></pr
   <div class="body">
     <div class="sect"><div class="t">Has</div>
       <div class="chipgrid">
-        <span class="vc has srcchip"><code>:app</code><small>apps.toml — cos-cli windows</small></span>
+        <span class="vc has srcchip"><code>:app</code><small>apps.toml — per-app launcher (id=app_id)</small></span>
+        <span class="vc has srcchip"><code>:win</code><small>apps.toml — per-toplevel switcher (id=app_id/index, unique across multi-window apps)</small></span>
         <span class="vc has srcchip"><code>:ws</code><small>workspaces.toml</small></span>
         <span class="vc has srcchip"><code>focused</code><small>focused-app (opt-in source)</small></span>
-        <span class="vc has"><code>activate</code> · <code>next</code> · <code>prev</code><small>workspace verbs</small></span>
+        <span class="vc has"><code>activate</code> · <code>close</code> · <code>maximize</code> · <code>minimize</code> · <code>fullscreen</code><small>polymorphic across :app + :win via vendor type</small></span>
+        <span class="vc has"><code>move-to</code><small>two-step: window → workspace</small></span>
       </div>
     </div>
-    <div class="sect"><div class="t">Could add — <span style="color:var(--cosmic)">cosmic-comp wiring</span></div>
+    <div class="sect"><div class="t">Could add</div>
       <div class="chipgrid">
-        <span class="vc could"><code>:win</code><small>per-window (not per-process) — needs compositor API</small></span>
-        <span class="vc could"><code>move-to</code><small>window → workspace as a two-step verb</small></span>
+        <span class="vc could"><code>:output</code><small>monitors / displays (wlr-randr)</small></span>
+        <span class="vc could"><code>tile-left</code> / <code>tile-right</code><small>cosmic tiling state verbs</small></span>
       </div>
+    </div>
+    <div class="sect"><div class="t">Examples</div>
+      <pre class="code"><span class="c"># :app — per-application (id=app_id; collides for multi-window apps, picks first)</span>
+goo activate :app/firefox            <span class="c"># focus any Firefox window</span>
+goo :app:cosmic                      <span class="c"># GOO default → activate first matching app</span>
+
+<span class="c"># :win — per-toplevel (id=app_id/index; unique across windows of the same app)</span>
+goo :win:notes                       <span class="c"># fuzzy by window title; activate the match</span>
+goo activate :win/com.system76.CosmicEdit/2
+goo close :win/firefox/1 --confirm
+goo move-to :win:report :ws/3        <span class="c"># window → workspace (two-step verb)</span></pre>
     </div>
     <div class="sect"><div class="t">How others do it</div>
-      <p class="ref">KRunner's <em>Windows</em>, Spotlight's window switcher, pop-shell (used by cosmic-launcher) all expose per-window. GNOME-Do focused on apps. cosmic-goo currently only has per-process via <code>:app</code> — adding per-window is the headline cosmic integration gap.</p>
+      <p class="ref">KRunner's <em>Windows</em>, Spotlight's window switcher, pop-shell (used by cosmic-launcher) all expose per-window. GNOME-Do focused on apps. cosmic-goo ships both axes: <code>:app</code> for app-level launch/focus and <code>:win</code> for per-toplevel switching (driven by <code>cos-cli info --json</code>'s per-toplevel data — every Wayland toplevel is a distinct entry with <code>app_id</code>/<code>index</code>).</p>
     </div>
   </div>
 </details>
@@ -623,6 +636,8 @@ echo "hello" | goo upper | goo base64-encode</pre>
   <li><b>:recent</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">recent.toml — recently-used.xbel via python; reuses files verbs</span></li>
   <li><b>:emo + copy</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">emoji.toml — 186 curated codepoints; vendor type + polymorphic <code>copy</code> keep OPTIONS clean</span></li>
   <li><b>:mnt</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">mounts.toml — findmnt --real; polymorphic <code>open</code> (via <code>is_a=inode/directory</code>) · <code>unmount</code> · <code>usage</code></span></li>
+  <li><b>:win</b> per-window switcher <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">apps.toml — per-toplevel from <code>cos-cli info --json</code>; id=<code>app_id/index</code> (unique across multi-window apps); existing cosmic verbs (<code>activate</code>/<code>close</code>/<code>maximize</code>/…) apply via the shared vendor type</span></li>
+  <li><b>polymorphic verb sweep</b> <span style="color:var(--ok);font-weight:700">✓ landed</span><span class="e">24 verbs renamed across 11 plugins (<code>net-up</code>→<code>connect</code>, <code>service-stop</code>→<code>stop</code>, <code>proc-info</code>→<code>info</code>, etc.); cross-plugin dispatch via the Rust engine's (name, accepts) verb merge</span></li>
 </ul>
 
 <h3 class="sh">Easy wins · ~20–30 line TOML each</h3>
@@ -645,7 +660,6 @@ echo "hello" | goo upper | goo base64-encode</pre>
 
 <h3 class="sh">Bigger lifts · real integration work</h3>
 <ul class="gaps">
-  <li><b>:win</b> per-window switcher<span class="e">needs cosmic-comp APIs (parallels <code>:app</code> as <code>:win</code>)</span></li>
   <li><b>:cal</b> / <b>:contact</b> / <b>:mail</b><span class="e">khal / khard / notmuch — the productivity-launcher tier</span></li>
   <li><b>cosmic-config bridge</b><span class="e">read/write the desktop's real settings: scheme, wallpaper, panel</span></li>
   <li><b>KDE Connect</b><span class="e">cross-device send/recv/control</span></li>

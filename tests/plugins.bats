@@ -431,6 +431,47 @@ assert '/' in [m['id'] for m in d], 'root mount missing'
 "
 }
 
+@test "windows: :win source registered with the windows prefix" {
+    run "$GOO" __complete sources </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -qx "windows" || { echo "missing :win source"; return 1; }
+    run "$GOO" __complete source-prefixes </dev/null
+    echo "$output" | grep -qx ":win:" || { echo ":win: prefix not exposed"; return 1; }
+}
+
+# When cos-cli is on PATH (cosmic session), verify the :win source emits
+# per-toplevel items with unique `app_id/index` ids — the fix for the existing
+# :app source's id-collision across multi-window apps.
+@test "windows: list_cmd emits per-toplevel items with unique ids (skips off-cosmic)" {
+    [ -x "$HOME/.cargo/bin/cos-cli" ] || skip "cos-cli not installed (off-cosmic env)"
+    "$HOME/.cargo/bin/cos-cli" info --json 2>/dev/null | jq -e '.apps | length > 0' >/dev/null \
+        || skip "cos-cli reports no apps (no cosmic session)"
+    run "$GOO" list windows </dev/null
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert len(d) >= 1, 'expected at least one window'
+ids = [w['id'] for w in d]
+assert len(set(ids)) == len(ids), f'id collisions: {sorted(ids)}'
+# Each id is `app_id/index` shape
+for w in d:
+    assert '/' in w['id'], f'id should be app_id/index: {w[\"id\"]!r}'
+"
+}
+
+@test "windows: OPTIONS for a :win subject dispatches to cosmic verbs" {
+    "$GOO" options =text/plain </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
+    run "$GOO" options =application/vnd.cos-cli.app </dev/null
+    [ "$status" -eq 0 ]
+    # The cosmic app verbs are reachable for any subject of this vendor type
+    # (whether reached via :app/<app_id> or :win/<app_id>/<index>).
+    for v in activate close maximize minimize fullscreen move-to; do
+        [[ "$output" == *"\"$v\""* ]] || { echo "$v missing from allow for vnd.cos-cli.app"; return 1; }
+    done
+    [[ "$output" == *'"default": "activate"'* ]]
+}
+
 @test "mounts: OPTIONS for a mount subject includes unmount + polymorphic open" {
     "$GOO" options ':mnt/' </dev/null 2>/dev/null | grep -q schema_version || skip "engine has no OPTIONS"
     run "$GOO" options ':mnt/' </dev/null

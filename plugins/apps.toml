@@ -17,6 +17,28 @@ emits = "application/vnd.cos-cli.app"
 # cos-cli to /usr/bin or rely on the user's PATH instead.
 list_cmd = "$HOME/.cargo/bin/cos-cli info --json | jq '[.apps[] | {id: .app_id, title: .title, subtitle: .app_id, metadata: .}]'"
 
+# Per-TOPLEVEL window switcher. cos-cli reports one entry per Wayland toplevel
+# already (a multi-window app like CosmicEdit emits N entries with the same
+# `app_id` but distinct `index` / `title`). The :app source above uses `app_id`
+# as the id, which collides across windows of the same app — fine for "activate
+# the app, any window" but loses per-window addressing. :win uses `app_id/index`
+# as the id so each window is uniquely addressable: `:win/com.foo.Bar/2` exact;
+# `:win:report` fuzzy-by-title. Same vendor type → existing app verbs
+# (activate / close / maximize / minimize / fullscreen / move-to) apply via
+# accepts dispatch — no new verbs needed.
+[[sources]]
+name = "windows"
+prefix = "win"
+icon = "preferences-system-windows"
+emits = "application/vnd.cos-cli.app"
+list_cmd = '''$HOME/.cargo/bin/cos-cli info --json 2>/dev/null \
+  | jq -c '[.apps[] | {
+      id: "\(.app_id)/\(.index)",
+      title: (.title // .app_id),
+      subtitle: "\(.app_id) · ws \(.workspaces[0] // "?")",
+      metadata: .
+    }]' '''
+
 # The focused app, as an IMPLICIT subject: when a handle verb is run with no
 # positional (e.g. a hotkey-bound `goo maximize`), the engine consults
 # implicit=true sources emitting an accepted type and takes the first item.
