@@ -135,6 +135,17 @@ EOF
     [ ! -f "$ENTITY_MARKER" ]
 }
 
+@test "entity-inference: MEDIUM picker lists the actual addresses to re-type" {
+    # The picker's value is showing addresses the user can verbatim re-run.
+    # With 4 candidates all in misc/note-*, we expect numbered lines like
+    # `1) :misc/note-1` etc. Cap is MAX_ALTERNATIVES (5) in engine; 4 here
+    # so no "… N more" tail.
+    GOO_INFER_STRICTNESS=tty run "$GOO" note </dev/null
+    [ "$status" -eq 2 ]
+    [[ "$output" =~ "1) :misc/note-" ]]
+    [[ "$output" =~ "re-run with the explicit address" ]]
+}
+
 # ---------- shape gate: ineligible shapes skip the source enumeration ----------
 
 @test "entity-inference: pure arithmetic stays text (no source scan)" {

@@ -193,16 +193,13 @@ fn act_on_inference(
             InferAction::FallThrough
         }
         Band::Medium if interactive => {
-            // Picker UI is post-v1; for now, surface the top candidates and
-            // exit non-zero so automation doesn't silently proceed.
-            eprintln!(
-                "goo: '{raw}' is ambiguous — closest match: :{}/{}  (top score {:.0}, {} candidates)",
-                reason.winner_source,
-                subject.get("id").and_then(Value::as_str).unwrap_or(""),
-                reason.top_score,
-                reason.candidate_count
-            );
-            eprintln!("     re-run with the explicit address, or set GOO_INFER_STRICTNESS=tty");
+            // Numbered candidate list — the user-visible part of the
+            // §3.5 picker. Real interactive picker (read a number, dispatch
+            // accordingly) is post-v1; for now, the user re-runs with the
+            // explicit form they see in the list.
+            if !nudge_suppressed {
+                emit_medium_picker(raw, reason);
+            }
             InferAction::Resolved(2)
         }
         Band::Medium | Band::Low => InferAction::FallThrough,
@@ -226,6 +223,24 @@ fn emit_script_nudge(raw: &str, subject: &Value, reason: &inference::Reason) {
         reason.winner_source
     );
     eprintln!("     in script context. Use the explicit form, or GOO_INFER_STRICTNESS=tty.");
+}
+
+/// MEDIUM-band picker render (§3.5 inline picker format). Numbered list of
+/// the top alternatives; user re-runs with the explicit address they see.
+/// Real interactive number-pick is post-v1 (would need stdin handling +
+/// a stdout-vs-stdin separation we don't have today).
+fn emit_medium_picker(raw: &str, reason: &inference::Reason) {
+    eprintln!("goo: '{raw}' is ambiguous — pick one:");
+    for (i, (src, id, label)) in reason.alternatives.iter().enumerate() {
+        // 1-indexed for human readability; pad address column for alignment.
+        let addr = format!(":{src}/{id}");
+        eprintln!("  {n}) {addr:<32}  {label}", n = i + 1, addr = addr, label = label);
+    }
+    let extra = reason.candidate_count.saturating_sub(reason.alternatives.len());
+    if extra > 0 {
+        eprintln!("  … {extra} more (top {} of {})", reason.alternatives.len(), reason.candidate_count);
+    }
+    eprintln!("re-run with the explicit address; suppress this list with GOO_INFER_NO_NUDGE=1.");
 }
 
 /// Hand the inferred subject to GOO default-verb dispatch by rebuilding it as

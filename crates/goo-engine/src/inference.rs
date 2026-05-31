@@ -94,9 +94,13 @@ pub struct Candidate {
     pub pattern: MatchedPattern,
 }
 
-/// Explanation of the inference decision — enough to power §3.5's nudge log
-/// and to assert correctness in tests. Deliberately small (no `alternatives`
-/// vec; that's picker-UI data, deferred with the picker).
+/// Explanation of the inference decision — enough to power §3.5's nudge log,
+/// the MEDIUM-band picker message, and tests asserting correctness.
+///
+/// `alternatives` carries up to `MAX_ALTERNATIVES` of the top candidates
+/// (INCLUDING the winner at index 0), as `(source_prefix, id, title)` tuples
+/// — small payload, no `Candidate` type leak, enough for a numbered picker
+/// render. Capped because picker UX gets useless past ~5 choices anyway.
 #[derive(Debug, Clone)]
 pub struct Reason {
     pub band: Band,
@@ -106,7 +110,16 @@ pub struct Reason {
     pub winner_source: String, // the source's `prefix` (e.g. "app"); name if no prefix
     pub winner_label: String,  // the candidate's `title`
     pub matched_pattern: MatchedPattern,
+    /// Top-N (prefix, id, title). `[0]` is the winner. Length is min(N,
+    /// total candidates). Useful for the MEDIUM-band picker; HIGH and
+    /// DEFINITIVE consumers can ignore it.
+    pub alternatives: Vec<(String, String, String)>,
 }
+
+/// Cap on `Reason::alternatives` length — picker UX past 5 choices stops
+/// being useful (the user starts re-typing instead). Engine-side cap so the
+/// payload stays small whether the caller wants it or not.
+pub const MAX_ALTERNATIVES: usize = 5;
 
 // ---------- public API ----------
 
@@ -248,18 +261,28 @@ pub fn assign_band(candidates: &[Candidate]) -> (Band, Reason) {
         Band::Low
     };
 
+    let source_id = |c: &Candidate| -> String {
+        if c.source_prefix.is_empty() {
+            c.source_name.clone()
+        } else {
+            c.source_prefix.clone()
+        }
+    };
+    let alternatives: Vec<(String, String, String)> = candidates
+        .iter()
+        .take(MAX_ALTERNATIVES)
+        .map(|c| (source_id(c), c.id.clone(), c.title.clone()))
+        .collect();
+
     let reason = Reason {
         band,
         top_score: top.score,
         second_score,
         candidate_count: candidates.len(),
-        winner_source: if top.source_prefix.is_empty() {
-            top.source_name.clone()
-        } else {
-            top.source_prefix.clone()
-        },
+        winner_source: source_id(top),
         winner_label: top.title.clone(),
         matched_pattern: top.pattern,
+        alternatives,
     };
     (band, reason)
 }
@@ -541,6 +564,31 @@ mod tests {
         assert_eq!(r.top_score, 600.0);
         assert_eq!(r.second_score, Some(400.0));
         assert_eq!(r.candidate_count, 3);
+    }
+
+    #[test]
+    fn reason_alternatives_cap_at_max_and_winner_first() {
+        // 7 candidates → alternatives capped at MAX_ALTERNATIVES (5);
+        // alternatives[0] is the winner by score (sorted desc).
+        let mut cs: Vec<Candidate> = (0..7)
+            .map(|i| cand(&format!("s{i}"), &format!("id{i}"), &format!("T{i}"), 700.0 - i as f64 * 50.0, MatchedPattern::WordBoundary))
+            .collect();
+        cs.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap()); // assign_band assumes sorted
+        let (_, r) = assign_band(&cs);
+        assert_eq!(r.alternatives.len(), MAX_ALTERNATIVES);
+        assert_eq!(r.alternatives[0].1, "id0"); // winner
+        assert_eq!(r.candidate_count, 7); // total stays in candidate_count
+    }
+
+    #[test]
+    fn reason_alternatives_carry_prefix_id_label_tuples() {
+        let cs = vec![
+            cand("app", "firefox", "Firefox Browser", 800.0, MatchedPattern::ExactTitle),
+            cand("recent", "fox-doc.md", "Fox doc", 200.0, MatchedPattern::IdSubstring),
+        ];
+        let (_, r) = assign_band(&cs);
+        assert_eq!(r.alternatives[0], ("app".into(), "firefox".into(), "Firefox Browser".into()));
+        assert_eq!(r.alternatives[1], ("recent".into(), "fox-doc.md".into(), "Fox doc".into()));
     }
 
     // ---------- infer_entity (orchestration) ----------
