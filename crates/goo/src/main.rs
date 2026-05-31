@@ -89,6 +89,12 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
         Some("validate") => cmd_validate(),
         Some("--explain") => cmd_explain(&args[1..]),
         Some("options") => cmd_options(&args[1..]),
+        // `goo what <addr>` — applicable-verbs listing for a subject. Same OPTIONS
+        // projection `cmd_goo`'s error path consumes (SSOT). See completion-polish.md.
+        Some("what") => match args.get(1) {
+            Some(addr) if !addr.is_empty() => cmd_what(&registry::load_all(), addr),
+            _ => die("what: usage: goo what <subject>"),
+        },
         Some("dispatch") => cmd_dispatch(args.get(1).map(String::as_str)),
         Some("__complete") => cmd_complete(&args[1..]),
         Some("-h") | Some("--help") | Some("help") => {
@@ -126,8 +132,12 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
 
 /// The `GOO` default verb: resolve `addr` to a subject, look up its type's
 /// `default_for` verb, and run it (with any trailing `--adverbs` / object).
-/// No applicable default → a clean error (the CLI analog of the protocol's
-/// 415/300). Never guesses; only `default_for` verbs run this way.
+/// No applicable default → a helpful error listing the top-5 applicable verbs
+/// (the CLI analog of the protocol's 415/300). The top-5 are pulled from
+/// `options::options_for(reg, &subject).allow`, the SAME projection
+/// `goo what` and `goo options` consume — divergence between surfaces would
+/// be a projection bug, not a UI preference. See completion-polish.md §6
+/// slice 3 + Gate 4 (the triple-equality test that locks this property).
 fn cmd_goo(reg: &Value, addr: &str, rest: &[String]) -> i32 {
     let subject = match address::resolve(addr, reg, None) {
         Ok(s) => s,
@@ -136,7 +146,27 @@ fn cmd_goo(reg: &Value, addr: &str, rest: &[String]) -> i32 {
     let type_ = subject.get("type").and_then(|t| t.as_str()).unwrap_or("text/plain");
     let verb = match verbs::default_for(reg, type_) {
         Some(v) => v,
-        None => return die(format!("no default verb for type '{type_}'")),
+        None => {
+            let mut msg = format!("no default verb for type '{type_}'");
+            let (listing, total) = applicable_verbs_listing(reg, &subject, Some(5));
+            if !listing.is_empty() {
+                // Header is count-aware: show "top 5" only when truncation actually
+                // hides additional verbs. With ≤5 applicable, "top 5 applicable
+                // verbs" alongside 1-2 entries reads as misleading.
+                let header = if total > 5 {
+                    "  top 5 applicable verbs:".to_string()
+                } else {
+                    "  applicable verbs:".to_string()
+                };
+                msg.push_str(&format!("\n{header}\n"));
+                msg.push_str(&listing);
+                // Only point to `goo what` when there's actually more to see.
+                if total > 5 {
+                    msg.push_str(&format!("\n  full list:  goo what {addr}"));
+                }
+            }
+            return die(msg);
+        }
     };
     let (positionals, adverbs) = parse_args(rest);
     let object_arg = positionals.first().cloned().unwrap_or_default();
@@ -150,6 +180,89 @@ fn cmd_goo(reg: &Value, addr: &str, rest: &[String]) -> i32 {
         Value::Null
     };
     exec_verb(reg, &verb, &subject, &object, &adverbs)
+}
+
+/// `goo what <addr>` — informational: print the applicable-verbs list for a
+/// subject, with chips and descriptions. The same projection (`options::options_for`)
+/// the dispatch-error path consumes — divergence is a bug. Single-source-of-truth
+/// surface for "what can I do with this thing" in the CLI; per `OPTIONS.allow`
+/// ordering. See completion-polish.md §6 slice 3.
+fn cmd_what(reg: &Value, addr: &str) -> i32 {
+    let subject = match address::resolve(addr, reg, None) {
+        Ok(s) => s,
+        Err(e) => return die(e.replace("address: ", "")),
+    };
+    let type_ = subject.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let (listing, _total) = applicable_verbs_listing(reg, &subject, None);
+    if listing.is_empty() {
+        println!("no applicable verbs for {addr}  (type: {type_})");
+        return 0;
+    }
+    println!("applicable verbs for {addr}  (type: {type_})");
+    println!("{listing}");
+    0
+}
+
+/// Build the printable per-verb listing for a subject: chips + name + description,
+/// in `OPTIONS.allow` order, optionally truncated to a max count. Reused by
+/// `cmd_what` and `cmd_goo`'s "no default verb" error path so the two surfaces
+/// can NEVER drift in ordering — the SSOT property Gate 4 verifies with the
+/// triple-equality test (slice 3 error top-5 == `goo what` first-5 ==
+/// `OPTIONS.allow` first-5). See completion-polish.md §6 slice 3.
+///
+/// Returns `(listing_string, total_applicable)` so callers can adapt the header
+/// to whether truncation actually hid anything ("top 5 of 12" vs "applicable
+/// verbs"). The listing reflects `max`; the total reflects the full count.
+///
+/// Format mirrors the chip vocabulary in completion-polish.md §2:
+/// `    <name>  <chips>    <description>` (4-space indent, chips after name,
+/// chips suffix in `goo describe` style so future zsh/fish ports can match
+/// glyphs verbatim).
+fn applicable_verbs_listing(reg: &Value, subject: &Value, max: Option<usize>) -> (String, usize) {
+    let view = options::options_for(reg, subject);
+    let names: Vec<&str> = view
+        .get("allow")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let total = names.len();
+    let verbs_map = view.get("verbs").and_then(Value::as_object);
+    // Description isn't projected through OPTIONS (it's a verb internal — kept
+    // out by the projection-leak test). Look it up from the registry instead.
+    // For polymorphic verbs we pick the first contributor's description as a
+    // representative — `goo describe <name>` is the right surface for
+    // per-impl detail.
+    let registry_verbs = reg.get("verbs").and_then(Value::as_array);
+    let description_for = |name: &str| -> Option<String> {
+        registry_verbs?
+            .iter()
+            .find(|v| v.get("name").and_then(Value::as_str) == Some(name))
+            .and_then(|v| v.get("description").and_then(Value::as_str))
+            .map(String::from)
+    };
+
+    let mut lines: Vec<String> = Vec::new();
+    let iter: Box<dyn Iterator<Item = &&str>> = match max {
+        Some(n) => Box::new(names.iter().take(n)),
+        None => Box::new(names.iter()),
+    };
+    for name in iter {
+        let v = verbs_map.and_then(|m| m.get(*name));
+        let confirm = v.and_then(|v| v.get("confirm")).and_then(Value::as_bool).unwrap_or(false);
+        let destructive = v.and_then(|v| v.get("destructive")).and_then(Value::as_bool).unwrap_or(false);
+        // Chip rule matches `cmd_describe`: destructive subsumes confirm.
+        let chip = if destructive {
+            "  [!!]"
+        } else if confirm {
+            "  [!]"
+        } else {
+            ""
+        };
+        let desc = description_for(name).unwrap_or_default();
+        let sep = if desc.is_empty() { "" } else { "    " };
+        lines.push(format!("    {name}{chip}{sep}{desc}"));
+    }
+    (lines.join("\n"), total)
 }
 
 /// Split a verb/GOO argument tail into positionals and an adverbs object:
@@ -1186,7 +1299,7 @@ fn cmd_validate() -> i32 {
     // Reserved subcommands an alias can never shadow.
     const RESERVED: &[&str] = &[
         "compose", "list", "describe", "plugins", "validate", "dispatch", "__complete", "help",
-        "options", "-h", "--help",
+        "options", "what", "-h", "--help",
     ];
 
     // 1. Verbs: a declared accept pattern list can't contain empty strings.
@@ -1379,7 +1492,7 @@ fn cmd_complete(args: &[String]) -> i32 {
     let arg = args.get(1).map(String::as_str).unwrap_or("");
     match stage {
         "subcommands" => {
-            println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nhelp");
+            println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nwhat\nhelp");
             for v in arr("verbs") {
                 if let Some(n) = v.get("name").and_then(|n| n.as_str()) {
                     println!("{n}");

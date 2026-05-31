@@ -72,6 +72,26 @@ EOF
     [[ "$output" =~ "no default verb" ]]
 }
 
+# Slice 3 of completion-polish: the "no default verb" error gains a helpful
+# listing of applicable verbs. Same OPTIONS.allow projection `goo what`
+# consumes — see tests/integration/what.bats for the triple-equality SSOT
+# proof. The error format is count-aware: with ≤5 applicable verbs the header
+# says "applicable verbs:" (no truncation suggested) and there's no pointer to
+# `goo what` (nothing additional to see). With >5 the header says "top 5
+# applicable verbs:" and points to `goo what` for the rest.
+@test "GOO: no default_for prints applicable verbs (count-aware header)" {
+    # The test-gd fixture has ONE text-applicable verb (echo-text). Header
+    # therefore reads "applicable verbs:" (no truncation), no `goo what` pointer.
+    run "$GOO" "+just some text" </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "no default verb" ]]
+    [[ "$output" =~ "applicable verbs:" ]]
+    [[ "$output" =~ "echo-text" ]]
+    # Single-applicable case must NOT promise "top 5" or a fuller list.
+    [[ ! "$output" =~ "top 5" ]]
+    [[ ! "$output" =~ "full list:" ]]
+}
+
 @test "GOO: a bare word is still an unknown verb (not a GOO subject)" {
     run "$GOO" "definitely-not-a-verb" </dev/null
     [ "$status" -ne 0 ]
