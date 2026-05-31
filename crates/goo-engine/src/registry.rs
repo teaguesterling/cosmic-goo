@@ -272,6 +272,28 @@ pub fn load_all() -> Value {
     reg
 }
 
+/// Count of registry contributors per verb name — a registry-level (NOT
+/// per-subject) projection that powers `goo describe`'s polymorphism display
+/// (`×N` chip + stacked contributors). Lives in `registry.rs`, NOT
+/// `options.rs`: per-subject `OPTIONS` answers "what can I do with X" and has
+/// already dispatched to the matching impl, where contributor count is no
+/// longer a meaningful signal. See `doc/design/completion-polish.md` §3 D2.
+///
+/// Polymorphic verbs (e.g. `stop` declared across `network`, `bluetooth`,
+/// `mpris`) are kept as separate entries in `reg["verbs"]` by `merge_verbs`'s
+/// `(name, accepts)` key; this fn just bucket-counts them.
+pub fn verb_contributor_counts(reg: &Value) -> BTreeMap<String, usize> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    if let Some(arr) = reg.get("verbs").and_then(Value::as_array) {
+        for v in arr {
+            if let Some(name) = v.get("name").and_then(Value::as_str) {
+                *counts.entry(name.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
+}
+
 /// Extra config paths from `COSMIC_GOO_EXTRA_CONFIG` (colon-separated; set by the
 /// `-c/--config` flag). Each entry is a `.toml` file, or a directory whose
 /// `*.toml` are all loaded (alphabetical). Unset → none.
@@ -579,5 +601,25 @@ mod tests {
         assert_eq!(d.len(), 2);
         assert_eq!(d[0]["verb"], json!("v1")); // reg first
         assert_eq!(d[1]["verb"], json!("v2")); // then new
+    }
+
+    // Polymorphism count helper for `goo describe`'s `×N` chip — see
+    // `completion-polish.md` §3 D2. The (name, accepts) merge key keeps multiple
+    // contributors as distinct entries in `reg["verbs"]`; this fn just rolls them
+    // up by name. Subject-OPTIONS doesn't carry this — different surface.
+    #[test]
+    fn verb_contributor_counts_buckets_polymorphic_verbs_by_name() {
+        let net = contrib_of("network", "name=\"network\"\n[[verbs]]\nname=\"stop\"\naccepts=[\"vnd.cosmic-goo.network/*\"]\ncmd=\"nmcli\"\n");
+        let bt = contrib_of("bluetooth", "name=\"bluetooth\"\n[[verbs]]\nname=\"stop\"\naccepts=[\"vnd.cosmic-goo.bluetooth/*\"]\ncmd=\"bluetoothctl\"\n[[verbs]]\nname=\"connect\"\naccepts=[\"vnd.cosmic-goo.bluetooth/*\"]\ncmd=\"bluetoothctl connect\"\n");
+        let mpris = contrib_of("mpris", "name=\"mpris\"\n[[verbs]]\nname=\"stop\"\naccepts=[\"vnd.cosmic-goo.mpris/*\"]\ncmd=\"playerctl stop\"\n");
+        let solo = contrib_of("p", "name=\"p\"\n[[verbs]]\nname=\"solo\"\naccepts=[\"text/*\"]\ncmd=\"x\"\n");
+        let reg = [net, bt, mpris, solo].iter().fold(empty_registry(), |acc, c| merge(&acc, c));
+        let counts = verb_contributor_counts(&reg);
+        assert_eq!(counts.get("stop"), Some(&3), "stop has 3 contributors: {counts:?}");
+        assert_eq!(counts.get("connect"), Some(&1));
+        assert_eq!(counts.get("solo"), Some(&1));
+        // empty registry → empty map (no panic).
+        let empty_counts = verb_contributor_counts(&empty_registry());
+        assert!(empty_counts.is_empty());
     }
 }

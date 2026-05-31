@@ -7,19 +7,28 @@
 //! **The JSON shape is UNSTABLE through v1** — `schema_version` + `stable:false`
 //! let consumers gate on it while it settles.
 //!
-//! Scope (v1): `allow` + per-verb `using` / `with` / `object_type`. The `with`
-//! slots mirror the *run-path* adverb gate (`uses_adverbs`, per [`crate::adverbs`]),
-//! not the `applies_to` offer-scope, so OPTIONS never promises a slot that wouldn't
-//! actually take effect. `to:` (write-destination choices) is deferred to v2 with
-//! the declared `{write}`-domain framework — file/clip are reachable today via
-//! `--to`/`-o` regardless of OPTIONS.
+//! Scope (v1): `allow` + per-verb `using` / `with` / `object_type` / `confirm` /
+//! `destructive`. The `with` slots mirror the *run-path* adverb gate
+//! (`uses_adverbs`, per [`crate::adverbs`]), not the `applies_to` offer-scope, so
+//! OPTIONS never promises a slot that wouldn't actually take effect. `to:`
+//! (write-destination choices) is deferred to v2 with the declared
+//! `{write}`-domain framework — file/clip are reachable today via `--to`/`-o`
+//! regardless of OPTIONS.
+//!
+//! **Field-shape convention** (locked in `completion-polish.md` §6 slice 1):
+//! per-verb boolean metadata (`confirm`, `destructive`) is always present and
+//! defaults to `false` when the verb's TOML doesn't declare it — NOT
+//! `Option<bool>`. Consumers (compose-gui, `goo describe`, future zsh/fish)
+//! rely on presence; no branching on missing-vs-set.
 
 use crate::verbs;
 use serde_json::{json, Map, Value};
 
 /// Schema version of the OPTIONS JSON — bumped on any shape change so consumers
 /// (compose-gui, …) can gate. Paired with `stable:false` until the shape settles.
-const SCHEMA_VERSION: &str = "0.1";
+/// **0.2** (this revision): per-verb `confirm` and `destructive` boolean fields
+/// added; both default-false-always-present. See `doc/design/completion-polish.md`.
+const SCHEMA_VERSION: &str = "0.2";
 
 /// The OPTIONS view for `subject`: `allow` (applicable verbs in `for_subject`
 /// order), the type's `default` verb, and a per-verb slot map. A pure projection —
@@ -83,10 +92,17 @@ fn verb_options(reg: &Value, verb: &Value) -> Value {
         .filter(|s| !s.is_empty())
         .map(String::from);
 
+    // Per-verb boolean metadata, default-false-always-present (see module docs).
+    // Consumers can rely on the field being there; UI glyphs map cleanly.
+    let confirm = verb.get("confirm").and_then(Value::as_bool).unwrap_or(false);
+    let destructive = verb.get("destructive").and_then(Value::as_bool).unwrap_or(false);
+
     json!({
         "using": using,
         "with": Value::Object(with),
         "object_type": object_type,
+        "confirm": confirm,
+        "destructive": destructive,
     })
 }
 
@@ -124,7 +140,8 @@ mod tests {
                   "cmd": "mv {subject.id} {object.id}" },
                 { "name": "say", "accepts": ["text/*"], "usage": ["loud", "quiet"] },
                 { "name": "view-img", "accepts": ["image/*"], "cmd": "x" },
-                { "name": "open", "accepts": ["text/*"], "default_for": "text/plain", "cmd": "xdg-open" }
+                { "name": "open", "accepts": ["text/*"], "default_for": "text/plain", "cmd": "xdg-open" },
+                { "name": "delete", "accepts": ["text/*"], "confirm": true, "destructive": true, "cmd": "rm" }
             ],
             "adverbs": [
                 { "name": "via", "kind": "selector", "applies_to": ["text/*"], "default": "clipboard",
@@ -154,7 +171,7 @@ mod tests {
         assert_eq!(o["default"], j!("open")); // default_for text/plain
         assert_eq!(o["type"], j!("text/plain"));
         assert_eq!(o["stable"], j!(false));
-        assert_eq!(o["schema_version"], j!("0.1"));
+        assert_eq!(o["schema_version"], j!("0.2"));
     }
 
     #[test]
@@ -189,17 +206,49 @@ mod tests {
     // The projection guarantee: OPTIONS exposes ONLY the documented slots — never
     // the verb's cmd/prompt/description/internal fields. This is the contract the
     // daemon-as-transport will wrap, so it must hold exactly.
+    //
+    // **Explicit allow-list** of every projected key (per `completion-polish.md`
+    // Gate 2): the leak test should fail on a new key landing without being added
+    // here — never relaxed by loosening `len()`. When OPTIONS grows a field,
+    // extend ALLOWED, bump SCHEMA_VERSION, and add a positive presence test.
     #[test]
     fn projection_never_leaks_internal_verb_fields() {
+        const ALLOWED: &[&str] = &["using", "with", "object_type", "confirm", "destructive"];
         let o = options_for(&reg(), &subj("text/plain"));
         let v = &o["verbs"]["summarize"];
-        let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
-        assert_eq!(keys.len(), 3, "exactly the documented slots: {keys:?}");
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        for k in &keys {
+            assert!(ALLOWED.contains(k), "OPTIONS surfaced unexpected key verb.{k} — add to ALLOWED or remove it");
+        }
+        assert_eq!(keys.len(), ALLOWED.len(), "missing key from projection: have {keys:?}, expect {ALLOWED:?}");
         for leaked in ["cmd", "prompt", "description", "accepts", "name"] {
             assert!(v.get(leaked).is_none(), "OPTIONS leaked verb.{leaked}");
         }
         // and the rendered JSON string contains none of the secret bodies.
         let s = serde_json::to_string(&o).unwrap();
         assert!(!s.contains("SECRET PROMPT") && !s.contains("secret-cmd"));
+    }
+
+    // The positive counterpart to the leak test (per Gate 2): every projected
+    // verb carries `confirm` and `destructive` as plain bools, presence-always
+    // (default-false). Consumers gate on field shape, not field presence.
+    #[test]
+    fn confirm_and_destructive_present_on_every_verb_default_false() {
+        let o = options_for(&reg(), &subj("text/plain"));
+        let verbs = o["verbs"].as_object().expect("verbs map present");
+        for (name, v) in verbs {
+            let c = v.get("confirm").unwrap_or_else(|| panic!("verb {name} missing confirm field"));
+            let d = v.get("destructive").unwrap_or_else(|| panic!("verb {name} missing destructive field"));
+            assert!(c.is_boolean(), "verb.{name}.confirm must be bool, got {c:?}");
+            assert!(d.is_boolean(), "verb.{name}.destructive must be bool, got {d:?}");
+        }
+        // A verb that DECLARED confirm/destructive surfaces them true.
+        assert_eq!(verbs["delete"]["confirm"], j!(true));
+        assert_eq!(verbs["delete"]["destructive"], j!(true));
+        // A verb that did NOT declare them surfaces default-false (presence guaranteed).
+        assert_eq!(verbs["summarize"]["confirm"], j!(false));
+        assert_eq!(verbs["summarize"]["destructive"], j!(false));
+        assert_eq!(verbs["open"]["confirm"], j!(false));
+        assert_eq!(verbs["open"]["destructive"], j!(false));
     }
 }

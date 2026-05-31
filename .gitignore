@@ -37,3 +37,6 @@ crates/target/
 
 # Session handoff log (local; resume notes for an assistant session)
 SESSION-LOG.md
+
+# Claude Code scheduled-tasks lock (runtime state)
+.claude/scheduled_tasks.lock

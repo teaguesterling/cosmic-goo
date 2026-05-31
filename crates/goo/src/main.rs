@@ -1051,48 +1051,118 @@ fn cmd_describe(verb_name: Option<&str>) -> i32 {
         _ => return die("describe: expected a verb name"),
     };
     let reg = registry::load_all();
-    let verb = match verbs::lookup(&reg, name, None) {
-        Some(v) => v,
-        None => return die(format!("describe: no verb named '{name}'")),
-    };
+    // Walk every (name, accepts) contributor — for a polymorphic verb (e.g. `stop`
+    // declared by network/bluetooth/mpris) we render ALL impls stacked under one
+    // header, not just the first match. The header carries chips (`[!]`, `[!!]`,
+    // `×N`) that summarize the language-level facts; per-contributor blocks carry
+    // the impl-specific details (accepts, cmd, prompt, plugin, confirm flag).
+    // See `doc/design/completion-polish.md` §6 slice 1 for the locked format and
+    // §2 for the chip vocabulary.
+    let contributors: Vec<&Value> = reg
+        .get("verbs")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter(|v| v.get("name").and_then(Value::as_str) == Some(name)).collect())
+        .unwrap_or_default();
+    if contributors.is_empty() {
+        return die(format!("describe: no verb named '{name}'"));
+    }
+
+    // Header chips: `[!!]` (any contributor destructive) > `[!]` (any contributor
+    // confirms) > `×N` (when N > 1). Aggregation is INTENTIONALLY CONSERVATIVE — a
+    // verb name is "destructive" / "confirm" if ANY impl declares it. A polymorphic
+    // `stop` that destroys data in plugin A but only signals exit in plugin B
+    // displays `[!!]` regardless of which subject the user will hand it. After
+    // dispatch the chip may have over-warned, but at language-level pick time the
+    // user hasn't picked a subject yet — over-warning is the correct safety bias.
+    // DO NOT "fix" this to be subject-aware: that's a per-subject OPTIONS concern
+    // (where `confirm`/`destructive` already surface per-impl-correctly), not the
+    // language-level describe surface.
+    let any_confirm = contributors.iter().any(|v| v.get("confirm").and_then(Value::as_bool) == Some(true));
+    let any_destructive = contributors.iter().any(|v| v.get("destructive").and_then(Value::as_bool) == Some(true));
+    let n = contributors.len();
+    let mut chips: Vec<String> = Vec::new();
+    if any_destructive {
+        chips.push("[!!]".into());
+    }
+    if any_confirm && !any_destructive {
+        // `[!]` is subsumed by `[!!]` (destructive implies confirm-worthy); don't
+        // render both — the stronger chip wins.
+        chips.push("[!]".into());
+    }
+    if n > 1 {
+        chips.push(format!("×{n}"));
+    }
+    let chip_suffix = if chips.is_empty() { String::new() } else { format!("  {}", chips.join(" ")) };
+    let mut out = format!("{name}{chip_suffix}");
+
+    // Per-contributor block. Single-impl verbs collapse to today's format (minus
+    // the verb header — already on the chip line). Polymorphic verbs get each
+    // contributor as an indented block; the order is registry order (the same
+    // order `verbs::for_subject` and `lookup` will see, so display matches dispatch).
+    for v in &contributors {
+        out.push('\n');
+        out.push_str(&render_contributor_block(v, n > 1));
+    }
+    println!("{out}");
+    0
+}
+
+/// Render one verb-contributor block. With `indent` true (polymorphic case),
+/// each line is prefixed for visual grouping under the header.
+fn render_contributor_block(verb: &Value, indent: bool) -> String {
+    let prefix = if indent { "  " } else { "" };
     let s = |k: &str| verb.get(k).and_then(|v| v.as_str());
-    let mut out = format!("verb: {}", s("name").unwrap_or(""));
+    let mut lines: Vec<String> = Vec::new();
+    if indent {
+        // Section sub-header: the plugin provenance — humans recognize plugins faster
+        // than `accepts` patterns, so it leads.
+        if let Some(p) = s("_plugin") {
+            lines.push(format!("[{p}]"));
+        }
+    }
     if let Some(d) = s("description") {
-        out += &format!("\ndescription: {d}");
+        lines.push(format!("description: {d}"));
     }
     let accepts = verb
         .get("accepts")
         .and_then(|a| a.as_array())
         .map(|arr| arr.iter().filter_map(|p| p.as_str()).collect::<Vec<_>>().join(", "))
         .unwrap_or_default();
-    out += &format!("\naccepts: {accepts}");
+    lines.push(format!("accepts: {accepts}"));
     if let Some(ot) = s("object_type") {
-        out += &format!("\nobject_type: {ot}");
+        lines.push(format!("object_type: {ot}"));
     }
     match verb.get("default_for") {
         Some(Value::Array(a)) => {
             let joined = a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ");
-            out += &format!("\ndefault_for: {joined}");
+            lines.push(format!("default_for: {joined}"));
         }
-        Some(Value::String(d)) => out += &format!("\ndefault_for: {d}"),
+        Some(Value::String(d)) => lines.push(format!("default_for: {d}")),
         _ => {}
     }
     if let Some(ua) = verb.get("uses_adverbs").and_then(|u| u.as_array()) {
         let joined = ua.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ");
-        out += &format!("\nuses_adverbs: {joined}");
+        lines.push(format!("uses_adverbs: {joined}"));
     }
     if let Some(cmd) = s("cmd") {
-        out += &format!("\ncmd: {cmd}");
+        lines.push(format!("cmd: {cmd}"));
     }
     if let Some(prompt) = s("prompt") {
-        out += &format!("\nprompt:\n  {}", prompt.replace('\n', "\n  "));
+        lines.push(format!("prompt:\n  {}", prompt.replace('\n', "\n  ")));
     }
     if verb.get("confirm").and_then(|c| c.as_bool()) == Some(true) {
-        out += "\nconfirm: true";
+        lines.push("confirm: true".to_string());
     }
-    out += &format!("\nprovided by plugin: {}", s("_plugin").unwrap_or(""));
-    println!("{out}");
-    0
+    if verb.get("destructive").and_then(|c| c.as_bool()) == Some(true) {
+        lines.push("destructive: true".to_string());
+    }
+    if !indent {
+        // Single-impl case: keep today's trailing provenance line.
+        if let Some(p) = s("_plugin") {
+            lines.push(format!("provided by plugin: {p}"));
+        }
+    }
+    lines.iter().map(|l| format!("{prefix}{l}")).collect::<Vec<_>>().join("\n")
 }
 
 // ---------------- subcommand: validate ----------------
@@ -1313,7 +1383,24 @@ fn cmd_complete(args: &[String]) -> i32 {
                 }
             }
         }
-        "verbs" => print_names(&arr("verbs"), "name"),
+        // Dedupe: polymorphic verbs are kept as distinct (name, accepts) entries in
+        // the merged registry (see `registry::merge_verbs`). For tab-completion the
+        // verb NAME is what matters; emitting `stop` three times would clutter the
+        // bash menu without disambiguating (display-vs-insert makes a chip impossible).
+        // Polymorphism reveals itself at the SUBJECT stage (the heterogeneous menu
+        // at `goo <verb> <TAB>`) and via `goo describe <verb>`; see
+        // `doc/design/completion-polish.md` §3 D3.
+        "verbs" => {
+            let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            for v in arr("verbs") {
+                if let Some(n) = v.get("name").and_then(Value::as_str) {
+                    seen.insert(n.to_string());
+                }
+            }
+            for n in &seen {
+                println!("{n}");
+            }
+        }
         "sources" => print_names(&arr("sources"), "name"),
         "adverbs" => {
             if arg.is_empty() {

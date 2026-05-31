@@ -29,6 +29,51 @@ default = "dump"
 template = "printf '%s' '{verb.prompt}' > '$DUMP_FILE'"
 EOF
 
+    # Fixture plugins for the `goo describe` chip + polymorphism tests below.
+    # Polymorphism requires multiple [[verbs]] declarations of the SAME name from
+    # different plugins (the registry merges by (name, accepts), so they coexist).
+    # `bang` is single-impl + confirm:true → `[!]` chip; `boom` is single-impl
+    # + destructive:true → `[!!]` chip; `ring` is declared by two plugins → `×2`.
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/test-chips-a.toml" <<'EOF'
+name = "test-chips-a"
+
+[[verbs]]
+name = "bang"
+accepts = ["text/*"]
+confirm = true
+cmd = "printf bang"
+
+[[verbs]]
+name = "boom"
+accepts = ["text/*"]
+destructive = true
+cmd = "printf boom"
+
+# Both confirm AND destructive — the chip must render only `[!!]` (stronger
+# wins; `[!]` is subsumed). Guards against a future "render both for
+# emphasis" refactor slipping past the chip-vocabulary contract.
+[[verbs]]
+name = "obliterate"
+accepts = ["text/*"]
+confirm = true
+destructive = true
+cmd = "printf obliterate"
+
+[[verbs]]
+name = "ring"
+accepts = ["application/vnd.test.bell"]
+cmd = "printf ring-a"
+EOF
+
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/test-chips-b.toml" <<'EOF'
+name = "test-chips-b"
+
+[[verbs]]
+name = "ring"
+accepts = ["application/vnd.test.chime"]
+cmd = "printf ring-b"
+EOF
+
     cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/test-verbs.toml" <<'EOF'
 name = "test-verbs"
 
@@ -213,11 +258,85 @@ EOF
 }
 
 @test "goo describe shows verb details" {
+    # Format: header line is the verb name (with chip suffix if applicable),
+    # followed by per-contributor blocks. Locked in doc/design/completion-polish.md
+    # §6 slice 1. Single-impl verbs (`wrap`) render without chips and with the
+    # trailing "provided by plugin: …" line.
     run "$GOO" describe wrap </dev/null
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "verb: wrap" ]]
+    # First line is just the verb name (no `verb: ` prefix anymore).
+    [[ "${lines[0]}" == "wrap" ]]
     [[ "$output" =~ "accepts: text/*" ]]
     [[ "$output" =~ "uses_adverbs: via" ]]
+    [[ "$output" =~ "provided by plugin: " ]]
+}
+
+@test "goo describe shows ×N chip and stacked contributors for polymorphic verbs" {
+    # `ring` is declared in test-chips-a.toml AND test-chips-b.toml with different
+    # accepts, so the registry merges them as two contributors of the same name.
+    # The polymorphism affordance: the header carries `×N`, each contributor
+    # renders as its own indented block under `[plugin]`. See
+    # completion-polish.md §3 D2 + §6 slice 1.
+    run "$GOO" describe ring </dev/null
+    [ "$status" -eq 0 ]
+    [[ "${lines[0]}" =~ ^ring[[:space:]] ]]
+    [[ "${lines[0]}" =~ ×2 ]]
+    # Each contributor block leads with its plugin name in brackets.
+    [[ "$output" =~ \[test-chips-a\] ]]
+    [[ "$output" =~ \[test-chips-b\] ]]
+}
+
+@test "goo describe shows [!] chip for confirm-flagged verbs" {
+    # `bang` is single-impl with confirm = true in test-chips-a.toml.
+    run "$GOO" describe bang </dev/null
+    [ "$status" -eq 0 ]
+    [[ "${lines[0]}" =~ \[!\] ]]
+    [[ "$output" =~ "confirm: true" ]]
+}
+
+@test "goo describe shows [!!] chip for destructive-flagged verbs (stronger wins)" {
+    # `boom` is single-impl with destructive = true. The chip rule: destructive
+    # implies confirm-worthy, so we render `[!!]` only (not both `[!]` and `[!!]`).
+    # Locked in main.rs cmd_describe + completion-polish.md §2.
+    run "$GOO" describe boom </dev/null
+    [ "$status" -eq 0 ]
+    [[ "${lines[0]}" =~ \[!!\] ]]
+    [[ ! "${lines[0]}" =~ \[!\][[:space:]] ]]
+    [[ "$output" =~ "destructive: true" ]]
+}
+
+@test "goo describe shows only [!!] when a verb is BOTH confirm AND destructive" {
+    # `obliterate` declares both flags. Guard against any future refactor that
+    # would render `[!] [!!]` together — the stronger chip subsumes the weaker.
+    run "$GOO" describe obliterate </dev/null
+    [ "$status" -eq 0 ]
+    [[ "${lines[0]}" =~ \[!!\] ]]
+    # The header must NOT contain a bare `[!]` followed by whitespace — that
+    # would mean both chips rendered. The `[!!]` is allowed to match `[!` as
+    # substring, so we check explicitly that no `[!]` chip stands on its own.
+    [[ ! "${lines[0]}" =~ \[!\]( |$) ]]
+    [[ "$output" =~ "confirm: true" ]]
+    [[ "$output" =~ "destructive: true" ]]
+}
+
+@test "__complete verbs emits each name exactly once, sorted" {
+    # Dedup + sort contract (per cmd_complete's "verbs" stage). Polymorphic verb
+    # names — present multiple times in the merged registry by (name, accepts) —
+    # collapse to a single entry. Output order is alphabetical: a contract bash
+    # tab-completion + future zsh/fish ports can rely on without re-sorting.
+    run "$GOO" __complete verbs </dev/null
+    [ "$status" -eq 0 ]
+    # Each non-empty line is unique (no duplicates leak from polymorphic verbs).
+    local total unique
+    total=$(printf '%s\n' "$output" | grep -c .)
+    unique=$(printf '%s\n' "$output" | sort -u | grep -c .)
+    [ "$total" -eq "$unique" ]
+    # Output is sorted: passing through `sort` is a no-op.
+    [ "$(printf '%s\n' "$output")" = "$(printf '%s\n' "$output" | sort)" ]
+    # `ring` (declared by two test plugins) appears exactly once.
+    local ring_count
+    ring_count=$(printf '%s\n' "$output" | grep -c '^ring$')
+    [ "$ring_count" -eq 1 ]
 }
 
 @test "goo describe unknown verb fails cleanly" {
