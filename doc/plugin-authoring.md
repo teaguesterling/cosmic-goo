@@ -102,6 +102,8 @@ enumerate = false              # optional; default true
 
 `list_cmd` must produce JSON on stdout — an array of objects, each at minimum with `id` and `title`. Optional fields: `subtitle`, `metadata` (free-form, opaque to the dispatcher but available to verb templates as `{subject.metadata.field}`).
 
+**Pick a short, distinctive `prefix`** — lowercase, 2–5 chars, avoid common English words. The address layer infers a domain from the bare shape `prefix/rest` (so `app/firefox` resolves through the apps source even without `:app/` sigil — see [`doc/design/data-entry-ux.md`](design/data-entry-ux.md) §3.1). A prefix like `to` or `is` would hijack user text containing `to/something`; the shipped prefixes (`app`, `bt`, `ssh`, `mnt`, `win`, `ctr`, `svc`, …) deliberately avoid this.
+
 **`enumerate`** (default `true`) controls whether the source is *bulk-listed*. Contexts that gather candidates from many sources at once — the `goo compose` subject picker, and bare-positional tab completion (`goo VERB <TAB>`) — run every enumerable source's `list_cmd`. Set `enumerate = false` for sources that are slow (a network probe), huge (clipboard history), or noisy (every file in the tree): they're then **reachable on demand** via `:prefix:query` and `:prefix:<TAB>`, but never run in bulk. The built-in `bluetooth`, `files`, `services`, `repos`, and `clipboard-history` sources use this.
 
 ```json

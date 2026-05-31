@@ -50,14 +50,53 @@ fn starts_builtin(s: &str) -> bool {
     s.starts_with("goo://") || s.starts_with(':') || s.starts_with('+') || s.starts_with('^')
 }
 
+/// **Prefix-shape inference** (data-entry-ux.md §3.1, roadmap slice #4).
+/// A bare input of the shape `<prefix>/<rest>` where `<prefix>` matches a
+/// registered source's `prefix` field — treated as if the user had typed
+/// `:<prefix>/<rest>`. Examples (given `apps` source with `prefix = "app"`):
+///   `app/firefox`  → `(Some("app"), Some("firefox"))`  → routes to `goo://app/firefox`
+///   `app/`         → `(Some("app"), Some(""))`         → source default
+///   `usr/foo`      → `None`                             → no source `usr`, falls through
+///   `hello world`  → `None`                             → no `/`, bare text
+///   `app` (alone)  → `None`                             → no `/`, slice-#7 territory
+///
+/// **The `/` is required.** Bare `app` (no slash) does NOT route to the apps
+/// source — `:app` would (via `colon_sigil`), but the bare form belongs to
+/// entity-name inference (slice #7). The slash is the disambiguator that
+/// says "I mean a domain reference, not a free word." A future slice #7
+/// will resolve `firefox` to `:app/firefox` via scoring; that's *additive*
+/// to this slice, not a replacement.
+///
+/// Deterministic — no source enumeration, no scoring, no fuzzy matching: just
+/// a string split + registry lookup. **Cost is O(n_sources)** per call
+/// (linear scan of the sources array). Fine at current scale (~20 sources);
+/// if a profile ever shows it, build a `HashSet<&str>` of prefixes once per
+/// dispatch and pass it through.
+fn match_source_prefix<'a>(raw: &'a str, reg: &Value) -> Option<(&'a str, &'a str)> {
+    let (prefix, rest) = raw.split_once('/')?;
+    if prefix.is_empty() {
+        return None; // leading slash is a native path, handled by starts_native
+    }
+    let sources = reg.get("sources")?.as_array()?;
+    let known = sources.iter().any(|s| s.get("prefix").and_then(Value::as_str) == Some(prefix));
+    if known {
+        Some((prefix, rest))
+    } else {
+        None
+    }
+}
+
 /// True if RAW carries an explicit sigil / native shape / canonical URI (vs a
 /// bare word, which routes through the bin's subject inference). `+foo` (force
-/// text) and `^` (clip) are explicit; a bare `foo` is not.
+/// text) and `^` (clip) are explicit; a bare `foo` is not. **`app/firefox` IS**
+/// explicit when `app` is a known source prefix (prefix-shape inference, §3.1)
+/// — that's what makes GOO default-verb dispatch fire for the inferred subject.
 pub fn is_explicit(raw: &str, reg: &Value) -> bool {
     starts_builtin(raw)
         || starts_native(raw)
         || has_scheme_sep(raw)
         || raw.chars().next().is_some_and(|c| sigil_expand(c, reg).is_some())
+        || match_source_prefix(raw, reg).is_some()
 }
 
 /// Absolutize a path without resolving symlinks; expand a leading `~`.
@@ -137,6 +176,12 @@ pub fn canonicalize(raw: &str, reg: &Value) -> String {
         format!("goo://file/{raw}")
     } else if has_scheme_sep(raw) {
         format!("goo://url/{raw}")
+    } else if let Some((prefix, rest)) = match_source_prefix(raw, reg) {
+        // Prefix-shape inference (§3.1): same canonical form `:prefix/rest` would
+        // produce. Only fires when the prefix is a registered source — bare text
+        // that happens to contain a `/` (e.g. `path/to/file` with no `tmp` source)
+        // falls through to the text fallback below.
+        format!("goo://{prefix}/{rest}")
     } else {
         format!("goo://text/{raw}")
     }
@@ -575,5 +620,92 @@ mod tests {
         assert_eq!(resolve(":things?title=*Alpha*", &r, None).unwrap()["id"], "alpha"); // * stripped
         // unknown field excludes
         assert!(resolve(":things/alpha?foo=bar", &r, None).is_err());
+    }
+
+    // ---- prefix-shape inference (§3.1, roadmap slice #4) ----
+    //
+    // Bare `<known-prefix>/<rest>` resolves as `:<prefix>/<rest>` would —
+    // cheap, deterministic, no source enumeration. Same canonical form, same
+    // resolution path, same downstream errors. The keystone: entity-name
+    // inference (slice #7) builds on this with scoring / bands; this slice
+    // is the cheap prequel.
+
+    #[test]
+    fn canon_prefix_shape_routes_bare_input_to_source() {
+        let r = things_reg(); // sources: [{name: "things", prefix: "thing", …}]
+        // Bare `thing/alpha` canonicalizes identically to `:thing/alpha`.
+        assert_eq!(canonicalize("thing/alpha", &r), "goo://thing/alpha");
+        assert_eq!(canonicalize(":thing/alpha", &r), "goo://thing/alpha");
+        // Empty rest → source default (matches existing `:thing/` behavior).
+        assert_eq!(canonicalize("thing/", &r), "goo://thing/");
+    }
+
+    #[test]
+    fn canon_prefix_shape_falls_through_when_prefix_unknown() {
+        let r = things_reg(); // no source with prefix `path`
+        // `path/to/file` looks shape-y but `path` isn't a registered prefix.
+        // Falls to text fallback. This is what protects accidental bare
+        // multi-component text strings from getting hijacked.
+        assert_eq!(canonicalize("path/to/file", &r), "goo://text/path/to/file");
+        // Same input with empty registry — definitely text.
+        assert_eq!(canonicalize("path/to/file", &json!({})), "goo://text/path/to/file");
+    }
+
+    #[test]
+    fn canon_prefix_shape_does_not_steal_native_paths() {
+        let r = things_reg();
+        // Leading `./` `../` `/` `~/` all hit starts_native FIRST — file domain
+        // wins, prefix inference never runs. (We deliberately don't want
+        // `./thing/foo` to suddenly mean `:thing/foo`.)
+        assert_eq!(canonicalize("/thing/foo", &r), "goo://file//thing/foo");
+        assert_eq!(canonicalize("./thing/foo", &r), "goo://file/./thing/foo");
+        assert_eq!(canonicalize("~/thing/foo", &r), "goo://file/~/thing/foo");
+    }
+
+    #[test]
+    fn canon_prefix_shape_does_not_match_source_name_only_prefix() {
+        // Source name is "things"; its prefix is "thing". Only the `prefix`
+        // field is checked — using the full name as a bare prefix doesn't
+        // count (matching the spec's "source-prefix" wording and the user
+        // convention that `:` sigils use prefix not name).
+        let r = things_reg();
+        assert_eq!(canonicalize("thing/alpha", &r), "goo://thing/alpha");      // prefix → matched
+        assert_eq!(canonicalize("things/alpha", &r), "goo://text/things/alpha"); // name → NOT matched
+    }
+
+    #[test]
+    fn canon_prefix_shape_bare_word_without_slash_stays_text() {
+        let r = things_reg();
+        // `thing` alone (no `/`) is bare text — that's entity-name inference's
+        // territory (slice #7), not §3.1's. Stays text/plain.
+        assert_eq!(canonicalize("thing", &r), "goo://text/thing");
+    }
+
+    #[test]
+    fn is_explicit_recognizes_prefix_shape_so_goo_default_fires() {
+        // The whole point of teaching `is_explicit`: `goo app/firefox` should
+        // route through GOO default-verb dispatch (cmd_goo) rather than verb
+        // lookup (cmd_verb → "unknown verb"). This test locks that.
+        let r = things_reg();
+        assert!(is_explicit("thing/alpha", &r), "known prefix should be explicit");
+        assert!(!is_explicit("unknown/alpha", &r), "unknown prefix should NOT be explicit");
+        assert!(!is_explicit("hello", &r), "bare word should NOT be explicit");
+        // Explicit forms remain explicit regardless of prefix-shape.
+        assert!(is_explicit(":thing/alpha", &r));
+        assert!(is_explicit("/tmp/foo", &r));
+        assert!(is_explicit("goo://thing/alpha", &r));
+    }
+
+    #[test]
+    fn resolve_prefix_shape_yields_same_subject_as_colon_form() {
+        // End-to-end: resolving `thing/alpha` produces the same subject as
+        // resolving `:thing/alpha`. Locks "prefix-shape inference is sugar,
+        // not a parallel resolution path."
+        let r = things_reg();
+        let bare = resolve("thing/alpha", &r, None).unwrap();
+        let colon = resolve(":thing/alpha", &r, None).unwrap();
+        assert_eq!(bare, colon);
+        assert_eq!(bare["id"], "alpha");
+        assert_eq!(bare["type"], "application/vnd.test.thing");
     }
 }

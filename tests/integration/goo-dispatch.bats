@@ -97,3 +97,32 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" =~ "unknown verb" ]]
 }
+
+# Roadmap slice #4: prefix-shape inference (§3.1 of data-entry-ux.md).
+# Bare `<known-prefix>/<rest>` resolves as if the user had typed `:<prefix>/<rest>`
+# — same canonical form, same dispatch path, same downstream behavior. The
+# fixture has `gadgets` source with `prefix = "gad"` and `name-of` as its
+# default_for verb. So `goo gad/sprocket` ⇄ `goo :gad/sprocket`.
+@test "GOO: prefix-shape — bare gad/sprocket dispatches like :gad/sprocket" {
+    run "$GOO" "gad/sprocket" </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "sprocket" ]
+}
+
+@test "GOO: prefix-shape — unknown prefix still surfaces as 'unknown verb'" {
+    # `nosuch` is not a registered source prefix; falls through is_explicit
+    # (false), routes to verb lookup, which fails cleanly.
+    run "$GOO" "nosuch/foo" </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "unknown verb" ]]
+}
+
+@test "GOO: prefix-shape — native paths are NEVER intercepted" {
+    # `/tmp/...` and `./gad/foo` start with native path characters; the address
+    # layer's starts_native check fires BEFORE prefix-shape inference, so file
+    # resolution wins (and errors on a missing file — that's the test's signal
+    # that we routed through the file domain, not the gad source).
+    run "$GOO" "/tmp/nonexistent-goo-test-file-xyz" </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "no such file" ]] || [[ "$output" =~ "file" ]]
+}
