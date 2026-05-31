@@ -143,36 +143,127 @@ For a bare input that is NOT a verb name and NOT a subcommand:
   F. Fall back to text/plain content (existing default).
 ```
 
-### 3.2 Entity-name inference — how it ranks
+### 3.2 Entity-name inference — confidence bands (the threshold model)
 
-For a bare token `t`:
+The scoring algorithm produces a numeric score, but the *user-facing model
+is four bands* (locked: see "threshold-design walk" elsewhere in the
+session record). Bands map directly to UX response; the numeric floors are
+implementation detail and can shift without renaming the bands.
+
+#### 3.2.1 The bands
+
+| Band | Formal rule | UX response |
+|---|---|---|
+| **DEFINITIVE** | exactly one candidate with `score ≥ EXACT_FLOOR` (an exact id match, an exact title match, or a canonical id-substring in a single-source-only) | resolve silently; safe even non-interactively |
+| **HIGH** | top score `≥ HIGH_FLOOR` AND top `≥ 2 × second` AND result-count `≤ 3` | interactive: resolve + one-line nudge log; script: nudge-then-fallback (see §3.2.3) |
+| **MEDIUM** | top score `≥ MEDIUM_FLOOR` AND (top `< 2 × second` OR result-count `> 3`) | surface a picker — inline numbered "Did you mean: 1) :a/x  2) :b/y  …" |
+| **LOW** | top score `< MEDIUM_FLOOR` | fall through to text/plain content (today's default behaviour) |
+
+Notes on the rule:
+- The `2 ×` ratio for HIGH is *relative*, not absolute — addresses the
+  brittleness of pure absolute thresholds (the gaps in the scoring
+  distribution are what matter, not the constant numbers).
+- Result-count gates (≤3 for HIGH, >3 for MEDIUM) keep "a clear winner
+  amid noise" from feeling like a guess.
+- DEFINITIVE is *single*-candidate by construction — there is no scenario
+  where two candidates both qualify (the rule requires uniqueness).
+
+#### 3.2.2 The numeric scoring (implementation detail)
+
+This feeds the bands; can change without breaking the user-facing model.
 
 ```
-candidates = []
-for each enumerable source in registry (or all sources if expensive lookup OK):
-    items = cached_list_cmd(source)         // §3.3 caching
-    for each item in items:
-        score = 0
-        if item.id == t:                    score = ∞ (exact)
-        elif item.id contains t (whole):    score += 1000
-        elif item.title == t:                score += 800
-        elif item.title contains t:          score += 100 * (matchlen / titlelen)
-        elif item.id contains t:             score += 50
-        // Source-priority weight (user-configurable; defaults below)
-        score *= source.weight (default 1.0; :app ~ 1.2, :hist ~ 0.6, :ps ~ 0.7)
-        // Recency: bonus if source items are sorted by recency and idx is small
-        if source.recency_ordered and item.idx < 10:  score += 20 - 2*item.idx
-        candidates.push({source, item, score})
+For a bare token t, for each enumerable source's cached items:
+  score = 0
+  if item.id == t:                     score = 1000  (exact id)
+  elif item.title == t:                score = 800   (exact title)
+  elif word_boundary_match(t, item):   score = 400 * (len(t) / len(item.title))
+  elif item.id contains t:             score = 200 * (len(t) / len(item.id))
+  elif item.title contains t:          score = 100 * (len(t) / len(item.title))
+  else:                                score = 0
 
-candidates.sort_by_score_desc
-if top.score < THRESHOLD:                                → fall through to text/plain
-elif top.score - second.score < MARGIN:                  → ambiguous: picker / "did you mean: …"
-else:                                                    → resolve as top.source/top.item
+  // Source-priority weight (multiplicative)
+  score *= source.weight              // §3.2.4 defaults
+
+  // Recency bonus
+  if source.recency_ordered and item.idx < 10:
+      score += max(0, 20 - 2 * item.idx)
 ```
 
-Threshold + margin are tunable knobs (CLI: `goo --config inference.threshold=500`). Sensible defaults:
-- `THRESHOLD = 80` (substring on a title, anything weaker is text content).
-- `MARGIN = 300` (one clear winner vs. multiple plausible).
+The proposed floors:
+
+| Floor | Value | Picked to clear |
+|---|---|---|
+| `EXACT_FLOOR` | **800** | exact title (800) or exact id (1000) — natural gap to substring-based scores |
+| `HIGH_FLOOR` | **200** | id-substring (200 max) and decent title-substrings (100 max × something with high source.weight) — anything weaker is fuzzy guess territory |
+| `MEDIUM_FLOOR` | **60** | weakest meaningful substring match (a third-of-a-title hit on a default-weight source ≈ 33; with a recency bonus or source-weight boost, lands above 60) |
+
+These floors clear the natural gaps in the scoring distribution; small
+changes to scoring constants (within ±50%) don't change which band any
+candidate falls into.
+
+#### 3.2.3 Context adaptation (the script/TTY/GUI split)
+
+Same bands, but the band boundaries shift by detected context:
+
+| Context | Detection | DEFINITIVE | HIGH | MEDIUM | LOW |
+|---|---|---|---|---|---|
+| **Script** | stdout is not a TTY AND `GOO_INFER_STRICTNESS != "tty"` | resolve silently | **nudge-then-fallback** (log "would have resolved firefox → :app/firefox; use the explicit form in scripts") | always fall through | fall through |
+| **Interactive** | stdout is a TTY OR `--infer-strictness=tty` | resolve silently | resolve + log a brief one-line nudge | inline numbered picker | fall through |
+| **GUI** | called from compose-GUI / inline launcher (entry surface tag) | autoselect with visible "change" affordance | autoselect with visible nudge | picker is the primary UI | "nothing matched" message |
+
+**Detection mechanism:**
+- Default: `isatty(stdout)` → interactive; non-TTY → script.
+- `--infer-strictness=script|tty|gui` CLI flag overrides.
+- `GOO_INFER_STRICTNESS=script|tty|gui` env var overrides (lower priority than the flag).
+- GUI contexts pass the mode explicitly via an entry-surface tag in the request.
+
+**Safety property**: the only context where bare entity resolution can
+fire silently in a non-interactive setting is DEFINITIVE — exact ID,
+unique. Scripts cannot be surprised by a fuzzy match that happens to
+have the right shape today.
+
+#### 3.2.4 Source weights (per-source priority)
+
+`source.weight` defaults — picked to give "obvious launcher targets" a
+slight boost over noisier sources, but no source can over-power an exact
+match (the rule structure protects exact matches as DEFINITIVE
+regardless of weight):
+
+| Source | Weight | Why |
+|---|---|---|
+| `:app` | 1.3 | apps are the canonical noun-first target |
+| `:win` | 1.2 | per-toplevel; specific |
+| `:ssh` | 1.2 | exact host names from config |
+| `:mnt` | 1.1 | mount points are distinctive |
+| `:recent` | 1.1 | recently-touched > all-time |
+| `:repo`, `:br` | 1.0 | dev domain, mid-priority |
+| `:bt`, `:net` | 1.0 | device/connection names |
+| `:svc`, `:ctr` | 1.0 | system services |
+| `:emo` | 0.8 | emoji titles often substring-collide; demote |
+| `:hist` | 0.6 | clipboard fragments often look like other things; demote |
+| `:ps` | 0.7 | (opt-in only; if enabled, demote — process names overlap) |
+
+Users override per-source via `[[sources]] weight = 1.4` in plugin
+config.
+
+#### 3.2.5 Walked through the test inputs
+
+How the band model behaves on the 10 representative inputs from §3.0:
+
+| Input | Context | Band | Resolution |
+|---|---|---|---|
+| `firefox` | TTY | DEFINITIVE | `:app/firefox` silent |
+| `firefox` | script | DEFINITIVE | `:app/firefox` silent (exact id; safe) |
+| `fox` | TTY | MEDIUM | picker: `1) :app/firefox  2) :recent/fox-recipe.md  …` |
+| `chrome` | TTY | LOW | fall through to text |
+| `com.system76.CosmicEdit` | any | DEFINITIVE | silent exact id |
+| `notes` | TTY | MEDIUM | picker across windows/recent/clip |
+| `Notes.md` | TTY | DEFINITIVE | `:recent/Notes.md` silent (exact title) |
+| `build1` | TTY | DEFINITIVE | `:ssh/build1` silent (exact `Host`) |
+| `nginx` | TTY | MEDIUM | picker (3 sources tie unless one source's weight breaks it) |
+| long phrase | any | LOW | text content |
+| `2+2` | any | LOW | text content (calc verb consumes) |
 
 ### 3.3 Performance & caching
 
@@ -205,31 +296,54 @@ When the bare token follows a verb (`goo connect fox`), the inference
 This dramatically narrows the candidate pool and improves both relevance
 and performance.
 
-### 3.5 Ambiguity handling
+### 3.5 Ambiguity handling — by band & context
 
-When the top match's lead over the second isn't decisive (`MARGIN` not
-met):
+The band model already encodes the response:
 
-- **CLI**: don't silently pick. Print: `firefox is ambiguous — pick one:`
-  followed by a numbered list. User can repeat the command with the
-  picked address. Or pass `--fuzzy` to accept the top.
-- **Compose-GUI**: surface the picker UI directly; user picks; flow
-  continues.
-- **Inline launcher**: ranked list as suggestions; user picks with arrow keys.
+| Band | Interactive (TTY) | Script (non-TTY) | GUI |
+|---|---|---|---|
+| DEFINITIVE | silent | silent (safe — exact id, unique) | autoselect; "change" visible |
+| HIGH | resolve + one-line nudge | nudge-then-fallback (see below) | autoselect with nudge |
+| MEDIUM | inline numbered picker | always fall through | picker UI (primary mode) |
+| LOW | fall through to text/plain | fall through | "nothing matched" |
 
-Threshold-not-met (no real candidate): silently fall through to text/plain.
+**Nudge log format** (for HIGH bands):
+```
+goo: inferred 'firefox' → :app/firefox  (band: HIGH; use :app/firefox to suppress)
+```
 
-### 3.6 Privacy & determinism
+**Inline picker format** (for MEDIUM in TTY):
+```
+goo: 'fox' is ambiguous — pick one:
+  1) :app/firefox            Firefox
+  2) :recent/fox-recipe.md   Fox recipe
+  3) :hist/14                "fox news headline"
+Re-run with the explicit address, or set GOO_INFER_STRICTNESS=tty and
+add --pick=N.
+```
 
-- **Privacy**: by-default inferable sources are those a user expects to
-  query interactively. Sensitive sources (clipboard-history, ssh,
-  containers) are opt-in. Surfacing what's queried at completion time is
-  honest; the `inferable` flag is documented.
-- **Determinism for automation**: scripts should still use explicit
-  sigils. The CLI prints a *one-shot deprecation-style nudge* when an
-  inference fires non-interactively: `inferred firefox → :app/firefox
-  (use :app/firefox in scripts for stability)`. Suppressible with
-  `--no-inference-warning` or env var.
+**Script nudge-then-fallback** (HIGH-band in script context):
+```
+goo: would have inferred 'firefox' → :app/firefox (HIGH band) — not
+     auto-resolving in script context. Use :app/firefox explicitly,
+     or pass --infer-strictness=tty to opt in.
+[falls through to text/plain — verb sees subject as bare text]
+```
+
+### 3.6 Privacy & determinism — what the band model guarantees
+
+- **Privacy**: only the `inferable = true` sources participate in the
+  scan; sensitive sources (clipboard-history, ssh, containers) ship
+  `inferable = false` by default. Listed in §3.3.
+- **Determinism for automation**: scripts get one safe class only —
+  DEFINITIVE (exact id, unique). Everything fuzzier degrades to a nudge
+  log + fallback. No surprise resolutions in pipes / CI / cron.
+- **Override**: `--infer-strictness=tty` (CLI flag) or
+  `GOO_INFER_STRICTNESS=tty` (env) escalates a script context to
+  interactive permissiveness, opt-in.
+- **Suppression**: `--no-infer-nudge` silences the nudge log when an
+  automation actively wants the inferred behaviour but doesn't want the
+  noise.
 
 ### 3.7 Subject-position only (not verb-position)
 
@@ -458,7 +572,7 @@ unless noted).
 | 4 | **Prefix-shape inference** (§3.1) | small | `address::resolve` — `app/firefox` ↦ `:app/firefox` |
 | 5 | **Subject-shape-aware listing** (§5.1) | medium | extend `__complete verb-subject-items` to rank by accepts-specificity |
 | 6 | **Implicit-subject preview** | medium | bin + shell hint |
-| 7 | **Entity-name inference v1** (§3.2 with caching) | substantial | new `address::infer_entity` + cache layer |
+| 7 | **Entity-name inference v1** (§3.2 spec: scoring + bands + context adaptation + caching) | substantial | new `address::infer_entity` returning `(Subject, Band, Reason)`; `Band` drives the caller's UX response; caching layer per §3.3 |
 | 8 | **Verb-aware bias** (§3.4) | medium-substantial | layered on top of #7 |
 | 9 | **Compose-GUI v2 noun-first flow** | substantial | the GUI payoff slice |
 | 10 | **"Speak it back" live preview** in compose-GUI | small once #9 lands | |
@@ -477,10 +591,13 @@ the next big arc, depending on appetite.
 
 ## 9. Open questions
 
-1. **Inference threshold/margin defaults** — I proposed 80/300, but the
-   right numbers come from instrumenting real use. Start with these,
-   adjust based on "ambiguous picker fires too often / not often
-   enough."
+1. ~~Inference threshold/margin defaults~~ — **resolved**: the threshold
+   model is now bands (DEFINITIVE / HIGH / MEDIUM / LOW) with
+   context-adaptive boundaries (script / TTY / GUI). Internal floors
+   (`EXACT_FLOOR=800`, `HIGH_FLOOR=200`, `MEDIUM_FLOOR=60`) and the 2×
+   HIGH ratio are picked to clear the natural gaps in the scoring
+   distribution; per-source weights override per-source. See §3.2 for
+   the full spec.
 2. **`inferable` per-source default policy** — listed defaults in §3.3;
    verify by walking each shipped source.
 3. **Cache invalidation** for the entity cache — per-source signals
