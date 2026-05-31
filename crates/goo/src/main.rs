@@ -8,7 +8,7 @@
 //! XDG dirs `registry::dirs()` reads); no path magic. Exit codes: 0 / 1
 //! (catch-all) / 130 (cancel).
 
-use goo_engine::{address, dispatch as disp, exec, mime, negotiation, options, registry, selection, verbs};
+use goo_engine::{address, dispatch as disp, exec, inference, mime, negotiation, options, registry, selection, verbs};
 use serde_json::{json, Map, Value};
 use std::io::IsTerminal;
 
@@ -125,8 +125,161 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
             if address::is_explicit(first, &reg) {
                 return cmd_goo(&reg, first, &args[1..]);
             }
+            // Entity-name inference (slice #7, data-entry-ux.md §3.2). Fires
+            // only when `first` is an inferable SHAPE and NOT a known verb —
+            // the noun-first dispatch path. Per §3.2.3 the (band, context) →
+            // action mapping happens here in the bin layer; the engine returns
+            // the same band regardless of context.
+            if inference::is_inferable_shape(first) && verbs::lookup(&reg, first, None).is_none() {
+                let ctx = detect_inference_context();
+                if let Ok((subject, band, reason)) = inference::infer_entity(first, &reg, ctx) {
+                    match act_on_inference(&reg, first, &subject, band, &reason, ctx, &args[1..]) {
+                        InferAction::Resolved(code) => return code,
+                        InferAction::FallThrough => {}
+                    }
+                }
+            }
             cmd_verb(&reg, args)
         }
+    }
+}
+
+/// What the dispatch layer did with an inference result. `Resolved` means we
+/// either ran the verb or printed a handled message (caller returns the code);
+/// `FallThrough` means inference declined to act (Low band, or HIGH-in-script
+/// without an override — fall to today's "unknown verb" path).
+enum InferAction {
+    Resolved(i32),
+    FallThrough,
+}
+
+/// Map (band, context) → action per §3.2.3 + §3.5.
+///
+/// **Safety property** (§3.6): only DEFINITIVE fires silently in script
+/// context. Everything fuzzier degrades to a nudge log or falls through, so
+/// pipes / CI / cron cannot be surprised by a fuzzy match.
+fn act_on_inference(
+    reg: &Value,
+    raw: &str,
+    subject: &Value,
+    band: inference::Band,
+    reason: &inference::Reason,
+    ctx: inference::Context,
+    rest: &[String],
+) -> InferAction {
+    use inference::{Band, Context};
+    let interactive = matches!(ctx, Context::Interactive | Context::Gui);
+    let nudge_suppressed = std::env::var("GOO_INFER_NO_NUDGE").is_ok();
+
+    match band {
+        Band::Definitive => {
+            // Safe in all contexts (exact match, unique). Resolve silently.
+            InferAction::Resolved(run_inferred(reg, subject, rest))
+        }
+        Band::High if interactive => {
+            // Resolve + one-line nudge so the user learns the explicit form.
+            if !nudge_suppressed {
+                emit_nudge(raw, subject, reason);
+            }
+            InferAction::Resolved(run_inferred(reg, subject, rest))
+        }
+        Band::High => {
+            // Script context (no override): emit "would have resolved" log to
+            // stderr and fall through. Caller will hit the "unknown verb"
+            // path — that's the safe, explicit failure mode.
+            if !nudge_suppressed {
+                emit_script_nudge(raw, subject, reason);
+            }
+            InferAction::FallThrough
+        }
+        Band::Medium if interactive => {
+            // Picker UI is post-v1; for now, surface the top candidates and
+            // exit non-zero so automation doesn't silently proceed.
+            eprintln!(
+                "goo: '{raw}' is ambiguous — closest match: :{}/{}  (top score {:.0}, {} candidates)",
+                reason.winner_source,
+                subject.get("id").and_then(Value::as_str).unwrap_or(""),
+                reason.top_score,
+                reason.candidate_count
+            );
+            eprintln!("     re-run with the explicit address, or set GOO_INFER_STRICTNESS=tty");
+            InferAction::Resolved(2)
+        }
+        Band::Medium | Band::Low => InferAction::FallThrough,
+    }
+}
+
+/// One-line stderr nudge for HIGH-band interactive resolutions (§3.5).
+fn emit_nudge(raw: &str, subject: &Value, reason: &inference::Reason) {
+    let id = subject.get("id").and_then(Value::as_str).unwrap_or("");
+    eprintln!(
+        "goo: inferred '{raw}' → :{}/{id}  (band: HIGH; use the explicit form to suppress)",
+        reason.winner_source
+    );
+}
+
+/// Script-context nudge-then-fallback log for HIGH band (§3.5).
+fn emit_script_nudge(raw: &str, subject: &Value, reason: &inference::Reason) {
+    let id = subject.get("id").and_then(Value::as_str).unwrap_or("");
+    eprintln!(
+        "goo: would have inferred '{raw}' → :{}/{id} (HIGH band) — not auto-resolving",
+        reason.winner_source
+    );
+    eprintln!("     in script context. Use the explicit form, or GOO_INFER_STRICTNESS=tty.");
+}
+
+/// Hand the inferred subject to GOO default-verb dispatch by rebuilding it as
+/// the canonical `:<prefix>/<id>` form and calling `cmd_goo`. That path
+/// re-resolves through `address::resolve` — small extra cost; cache layer
+/// (slice 7b) will eliminate the redundant source enumeration.
+fn run_inferred(reg: &Value, subject: &Value, rest: &[String]) -> i32 {
+    let prefix = subject.get("type").and_then(Value::as_str).unwrap_or("");
+    let _ = prefix; // type isn't the addressing prefix; reconstruct from reason instead
+    // We have the subject already; build a canonical goo:// URI by looking up
+    // the source whose `emits` matches the subject's type. Avoids encoding the
+    // prefix in the subject and matches cmd_goo's existing entry point.
+    let subj_type = subject.get("type").and_then(Value::as_str).unwrap_or("");
+    let id = subject.get("id").and_then(Value::as_str).unwrap_or("");
+    let prefix = reg
+        .get("sources")
+        .and_then(Value::as_array)
+        .and_then(|arr| {
+            arr.iter().find_map(|s| {
+                if s.get("emits").and_then(Value::as_str) == Some(subj_type) {
+                    s.get("prefix").and_then(Value::as_str).or_else(|| s.get("name").and_then(Value::as_str))
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or("");
+    if prefix.is_empty() || id.is_empty() {
+        return die(format!("inference: cannot rebuild address for type '{subj_type}'"));
+    }
+    let addr = format!(":{prefix}/{id}");
+    cmd_goo(reg, &addr, rest)
+}
+
+/// Detect the inference Context for this invocation (§3.2.3): env override
+/// first (`GOO_INFER_STRICTNESS=script|tty|gui`), then `isatty(stdout)`. CLI
+/// flag (`--infer-strictness`) is deferred — env covers automation cleanly.
+fn detect_inference_context() -> inference::Context {
+    if let Ok(v) = std::env::var("GOO_INFER_STRICTNESS") {
+        return match v.as_str() {
+            "script" => inference::Context::Script,
+            "tty" | "interactive" => inference::Context::Interactive,
+            "gui" => inference::Context::Gui,
+            _ => detect_inference_context_from_isatty(), // unknown value → fall back
+        };
+    }
+    detect_inference_context_from_isatty()
+}
+
+fn detect_inference_context_from_isatty() -> inference::Context {
+    if std::io::stdout().is_terminal() {
+        inference::Context::Interactive
+    } else {
+        inference::Context::Script
     }
 }
 
