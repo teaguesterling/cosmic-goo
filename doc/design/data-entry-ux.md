@@ -587,6 +587,11 @@ unless noted).
 either #7 (the keystone — entity inference) or #9 (compose-GUI v2) as
 the next big arc, depending on appetite.
 
+**Active build**: #1 + #2 + #3 — full spec and check-in plan in
+[completion-polish.md](completion-polish.md). That doc owns the
+chip-vocabulary single-source-of-truth that future ports (zsh, fish,
+compose-GUI) must cite.
+
 ---
 
 ## 9. Open questions
