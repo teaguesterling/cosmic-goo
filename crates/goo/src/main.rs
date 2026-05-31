@@ -1123,12 +1123,20 @@ fn render_contributor_block(verb: &Value, indent: bool) -> String {
     if let Some(d) = s("description") {
         lines.push(format!("description: {d}"));
     }
-    let accepts = verb
-        .get("accepts")
-        .and_then(|a| a.as_array())
-        .map(|arr| arr.iter().filter_map(|p| p.as_str()).collect::<Vec<_>>().join(", "))
-        .unwrap_or_default();
-    lines.push(format!("accepts: {accepts}"));
+    // accepts: render `(no subject)` for empty arrays (subjectless verbs like
+    // lock / volume-up); render the patterns joined otherwise. This closes the
+    // slice-1 papercut where subjectless verbs displayed blank `accepts: `.
+    // `accepts = ["*/*"]` is a catch-all that DOES take a subject (xdg-open) —
+    // it renders as `*/*`, not `(no subject)`. See completion-polish.md §6 slice 2.
+    let accepts_line = match verb.get("accepts").and_then(Value::as_array) {
+        Some(a) if a.is_empty() => "accepts: (no subject)".to_string(),
+        Some(a) => {
+            let joined = a.iter().filter_map(|p| p.as_str()).collect::<Vec<_>>().join(", ");
+            format!("accepts: {joined}")
+        }
+        None => "accepts: (no subject)".to_string(),
+    };
+    lines.push(accepts_line);
     if let Some(ot) = s("object_type") {
         lines.push(format!("object_type: {ot}"));
     }
@@ -1448,6 +1456,36 @@ fn cmd_complete(args: &[String]) -> i32 {
                     .unwrap_or(false);
                 println!("{}", if has_handle { "yes" } else { "no" });
             }
+        }
+        // Reads `accepts` from the registry directly — does NOT go through
+        // `options::options_for`, which would filter to subject-applicable verbs
+        // and could exclude the verb being asked about (the verb's own subjectless
+        // verbs aren't applicable to ANY typed subject, so any dummy-subject query
+        // would drop them). Subjectless ↔ `accepts == []` (verified across current
+        // plugins: volume-up, mute-toggle, play-pause, lock, suspend, …);
+        // `accepts = ["*/*"]` is a catch-all that DOES take a subject (xdg-open is
+        // the example) — render as `yes`. See doc/design/completion-polish.md §6
+        // slice 2 for the derivation lock.
+        //
+        // For polymorphic verbs (multiple contributors of the same name) the answer
+        // is `yes` if ANY contributor requires a subject — symmetric with
+        // `cmd_describe`'s conservative chip-aggregation rule.
+        "verb-needs-subject" => {
+            if arg.is_empty() {
+                return 0;
+            }
+            let needs = arr("verbs")
+                .iter()
+                .filter(|v| v.get("name").and_then(Value::as_str) == Some(arg))
+                .any(|v| match v.get("accepts").and_then(Value::as_array) {
+                    Some(a) => !a.is_empty(),
+                    None => true, // conservative — missing accepts treated as "needs one"
+                });
+            // Also handle the unknown-verb case (no contributors at all): conservative
+            // `yes` so a typo doesn't accidentally claim "no subject needed."
+            let any_contributor = arr("verbs").iter().any(|v| v.get("name").and_then(Value::as_str) == Some(arg));
+            let answer = if any_contributor { needs } else { true };
+            println!("{}", if answer { "yes" } else { "no" });
         }
         "verb-subject-items" => {
             if arg.is_empty() {

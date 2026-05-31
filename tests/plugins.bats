@@ -229,10 +229,13 @@ assert '$v' in d['allow'], f'$v not in allow for $vtype: ' + str(d['allow'])
 }
 
 @test "real plugins: capture verbs take no subject" {
+    # Slice-2 of completion-polish: subjectless verbs now render
+    # `accepts: (no subject)` instead of blank `accepts:`. Closes the slice-1
+    # UI papercut. See doc/design/completion-polish.md §6 slice 2.
     for v in screenshot capture-region ocr-region scan-qr; do
         run "$GOO" describe "$v" </dev/null
         [ "$status" -eq 0 ]
-        echo "$output" | grep -q "^accepts: *$" || { echo "$v should have empty accepts" >&2; return 1; }
+        echo "$output" | grep -qF "accepts: (no subject)" || { echo "$v should be subjectless" >&2; return 1; }
     done
 }
 
@@ -276,11 +279,13 @@ assert '$v' in d['allow'], f'$v not in allow for $vtype: ' + str(d['allow'])
 }
 
 @test "real plugins: media/audio transport verbs take no subject" {
+    # Slice-2 of completion-polish: subjectless verbs now render
+    # `accepts: (no subject)` instead of blank. See plugins/media.toml +
+    # plugins/audio.toml; the `(no subject)` render is the slice-1 papercut fix.
     for v in play-pause volume-up mute-toggle; do
         run "$GOO" describe "$v" </dev/null
         [ "$status" -eq 0 ]
-        # empty accepts renders as "accepts: " with nothing after
-        echo "$output" | grep -q "^accepts: *$" || { echo "$v should have empty accepts" >&2; return 1; }
+        echo "$output" | grep -qF "accepts: (no subject)" || { echo "$v should be subjectless" >&2; return 1; }
     done
 }
 

@@ -32,6 +32,20 @@ accepts = ["text/*"]
 uses_adverbs = ["tone"]
 prompt = "{tone_prefix}: {subject.text}"
 
+# Subjectless verb fixture (accepts = []) — drives the slice-2 needs_subject
+# stage tests. The catch-all `*/*` case is tested via shout/poke (they have
+# concrete types) since `verb-needs-subject` shouldn't need its own catch-all
+# fixture — the logic is "empty ↔ subjectless; non-empty ↔ wants subject".
+[[verbs]]
+name = "ring"
+accepts = []
+cmd = "true"
+
+[[verbs]]
+name = "any-thing"
+accepts = ["*/*"]
+cmd = "true"
+
 [[adverbs]]
 name = "tone"
 kind = "selector"
@@ -116,6 +130,46 @@ EOF
     [ "$output" = "yes" ]
     run "$GOO" __complete verb-accepts-handle shout </dev/null
     [ "$output" = "no" ]
+}
+
+# Slice 2: `__complete verb-needs-subject <verb>` — `no` iff the verb's accepts
+# is empty (subjectless), `yes` otherwise. Powers the bash completion's
+# subjectless-verb hint. See doc/design/completion-polish.md §6 slice 2.
+@test "complete verb-needs-subject: subjectless verb returns no" {
+    run "$GOO" __complete verb-needs-subject ring </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "no" ]
+}
+
+@test "complete verb-needs-subject: text verb returns yes" {
+    run "$GOO" __complete verb-needs-subject shout </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "yes" ]
+}
+
+@test "complete verb-needs-subject: catch-all (*/*) returns yes (xdg-open shape)" {
+    # `accepts = ["*/*"]` means the verb wants a subject and doesn't care
+    # about the type — not subjectless. Distinct from accepts = [].
+    run "$GOO" __complete verb-needs-subject any-thing </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "yes" ]
+}
+
+@test "complete verb-needs-subject: unknown verb returns yes (conservative)" {
+    # Typo / unknown verb name — return yes so a stray completion doesn't
+    # claim "no subject needed" for something we don't recognize.
+    run "$GOO" __complete verb-needs-subject totally-fake-name </dev/null
+    [ "$status" -eq 0 ]
+    [ "$output" = "yes" ]
+}
+
+@test "complete verb-needs-subject: empty arg is silent (no answer)" {
+    # Shell-safety pattern from `options-allow`: degrade to empty output rather
+    # than guessing. The shell script never calls this stage with empty arg,
+    # but the engine must not panic if it does.
+    run "$GOO" __complete verb-needs-subject "" </dev/null
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }
 
 @test "complete verb-subject-items: items for a handle verb" {

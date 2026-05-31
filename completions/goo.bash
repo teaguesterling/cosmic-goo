@@ -120,6 +120,25 @@ _goo() {
         return 0
     fi
 
+    # Subjectless verbs (`accepts = []` in TOML — e.g. lock, suspend, volume-up,
+    # play-pause). The user has typed `goo <verb> <TAB>` expecting subjects but
+    # the verb takes none — surface a hint so they know Enter executes.
+    #
+    # Mechanism: write the hint to stderr (visible, never typed) + return empty
+    # COMPREPLY. The display position varies a bit by terminal/bash version but
+    # is reliably non-destructive — never inserted into the command line, never
+    # corrupts state. The richer story (per-verb metadata in describe-style
+    # completion menus) lives in `goo describe <verb>` and lands natively when
+    # zsh/fish ports arrive (their `_describe` / `complete -d` carry hints
+    # cleanly without this workaround). See doc/design/completion-polish.md §3
+    # D3 + §6 slice 2.
+    local needs_subject
+    needs_subject=$(goo __complete verb-needs-subject "$first" 2>/dev/null)
+    if [ "$needs_subject" = "no" ] && [ -z "$cur" ]; then
+        printf '\n[%s — Enter to execute]\n' "$first takes no subject" >&2
+        return 0
+    fi
+
     # Bare positional after a verb: if the verb accepts a handle type, offer
     # items from the matching sources. For text verbs we don't complete (the
     # subject is freeform prose / a path / stdin).

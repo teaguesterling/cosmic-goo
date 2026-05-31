@@ -25,19 +25,21 @@ setup() {
 }
 
 @test "options: =TYPE prints a JSON view with allow + schema_version" {
-    # SCHEMA_VERSION 0.2 added per-verb `confirm` / `destructive` fields (see
-    # doc/design/completion-polish.md, slice 1). Still `stable: false` — bump is
-    # dev hygiene so consumers can gate; not a stability claim.
+    # SCHEMA_VERSION 0.2 added per-verb `confirm` / `destructive` (slice 1);
+    # 0.3 added `needs_subject` (slice 2). Still `stable: false` — bumps are dev
+    # hygiene so consumers can gate; not stability claims. See
+    # doc/design/completion-polish.md.
     run "$GOO" options =text/markdown </dev/null
     [ "$status" -eq 0 ]
-    [[ "$output" == *'"schema_version": "0.2"'* ]]
+    [[ "$output" == *'"schema_version": "0.3"'* ]]
     [[ "$output" == *'"stable": false'* ]]
     [[ "$output" == *'"type": "text/markdown"'* ]]
     [[ "$output" == *'"allow":'* ]]
     [[ "$output" == *'"verbs":'* ]]
-    # Per-verb `confirm` / `destructive` always present (bool, default false).
+    # Per-verb metadata always present (bool, default per derivation).
     [[ "$output" == *'"confirm":'* ]]
     [[ "$output" == *'"destructive":'* ]]
+    [[ "$output" == *'"needs_subject":'* ]]
 }
 
 @test "options: with-slots populate from a verb's uses_adverbs (critique/via)" {

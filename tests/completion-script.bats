@@ -8,7 +8,20 @@
 
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
-    export PATH="$REPO_ROOT/bin:$PATH"          # so `goo` resolves in _goo
+    # Make `goo` resolve to the engine the harness was launched against. When
+    # GOO_BIN is set (the canonical `make test` path → Rust debug binary), we
+    # symlink it into BATS_TEST_TMPDIR and put that dir FIRST on PATH so the
+    # _goo function's shell-outs hit the same engine as the other bats files.
+    # Falling back to bin/goo (bash legacy, feature-frozen) lets the suite
+    # still run for the parity-checking tests, but Rust-only stages
+    # (options-*, verb-needs-subject, …) will naturally fail unless gated.
+    if [ -n "${GOO_BIN:-}" ] && [ -x "${GOO_BIN:-}" ]; then
+        mkdir -p "$BATS_TEST_TMPDIR/bin"
+        ln -sf "$GOO_BIN" "$BATS_TEST_TMPDIR/bin/goo"
+        export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+    else
+        export PATH="$REPO_ROOT/bin:$PATH"      # so `goo` resolves in _goo (bash legacy)
+    fi
     export COSMIC_GOO_BUILTIN_PLUGINS_DIR="$BATS_TEST_TMPDIR/builtin"
     export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/xdg"
     export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/runtime"
@@ -34,6 +47,21 @@ name = "shout"
 accepts = ["text/*"]
 uses_adverbs = ["tone"]
 prompt = "x"
+
+# Subjectless verb fixture for slice-2 hint tests (accepts = []). The completion
+# script should detect needs_subject == no and surface a stderr hint without
+# emitting any COMPREPLY entries that would be inserted on TAB.
+[[verbs]]
+name = "ping"
+accepts = []
+cmd = "true"
+
+# Catch-all (`*/*`) — DOES take a subject (xdg-open is the production example).
+# Distinct from subjectless; the bash completion must treat this as needs_subject.
+[[verbs]]
+name = "any-open"
+accepts = ["*/*"]
+cmd = "true"
 
 [[adverbs]]
 name = "tone"
@@ -149,4 +177,41 @@ reply_has() {
 @test "glue: plugins/validate take no argument completion" {
     complete_line "goo validate "
     [ "${#COMPREPLY[@]}" -eq 0 ]
+}
+
+# Slice 2: subjectless verb hint. The contract is two-fold:
+#   1. COMPREPLY stays empty (nothing typed when TAB is pressed).
+#   2. A hint is emitted to STDERR (visible to the user, never inserted).
+# We capture stderr by redirecting at the _goo call site. See
+# doc/design/completion-polish.md §6 slice 2 for the design (and §3 D3 for the
+# bash display-vs-insert constraint that drives the stderr-only approach).
+@test "subjectless verb: emits stderr hint, no COMPREPLY" {
+    local err
+    # Run _goo in a subshell so we can capture stderr while still inspecting
+    # COMPREPLY in the same shell — accomplished by writing COMPREPLY to a
+    # tempfile (subshell loses array assignments otherwise).
+    local count
+    err=$(complete_line "goo ping " 2>&1 >/dev/null; printf '%d' "${#COMPREPLY[@]}" > "$BATS_TEST_TMPDIR/n")
+    count=$(cat "$BATS_TEST_TMPDIR/n")
+    [ "$count" -eq 0 ]
+    [[ "$err" =~ "ping takes no subject" ]]
+    [[ "$err" =~ "Enter to execute" ]]
+}
+
+@test "subjectless verb: catch-all (*/*) is NOT subjectless" {
+    # `any-open` has accepts = ["*/*"] — catch-all, still wants a subject. The
+    # completion must not emit the subjectless hint for it. (xdg-open is the
+    # production example of this case.)
+    local err
+    err=$(complete_line "goo any-open " 2>&1 >/dev/null)
+    [[ ! "$err" =~ "takes no subject" ]]
+}
+
+@test "subjectless verb: text verb with non-empty accepts is NOT subjectless" {
+    # `shout` has accepts = ["text/*"]. Sanity check that the hint only fires
+    # for genuinely subjectless verbs, not anything where the bare-positional
+    # completion happens to yield nothing.
+    local err
+    err=$(complete_line "goo shout " 2>&1 >/dev/null)
+    [[ ! "$err" =~ "takes no subject" ]]
 }

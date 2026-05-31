@@ -8,27 +8,31 @@
 //! let consumers gate on it while it settles.
 //!
 //! Scope (v1): `allow` + per-verb `using` / `with` / `object_type` / `confirm` /
-//! `destructive`. The `with` slots mirror the *run-path* adverb gate
-//! (`uses_adverbs`, per [`crate::adverbs`]), not the `applies_to` offer-scope, so
-//! OPTIONS never promises a slot that wouldn't actually take effect. `to:`
-//! (write-destination choices) is deferred to v2 with the declared
-//! `{write}`-domain framework — file/clip are reachable today via `--to`/`-o`
-//! regardless of OPTIONS.
+//! `destructive` / `needs_subject`. The `with` slots mirror the *run-path*
+//! adverb gate (`uses_adverbs`, per [`crate::adverbs`]), not the `applies_to`
+//! offer-scope, so OPTIONS never promises a slot that wouldn't actually take
+//! effect. `to:` (write-destination choices) is deferred to v2 with the
+//! declared `{write}`-domain framework — file/clip are reachable today via
+//! `--to`/`-o` regardless of OPTIONS.
 //!
 //! **Field-shape convention** (locked in `completion-polish.md` §6 slice 1):
-//! per-verb boolean metadata (`confirm`, `destructive`) is always present and
-//! defaults to `false` when the verb's TOML doesn't declare it — NOT
-//! `Option<bool>`. Consumers (compose-gui, `goo describe`, future zsh/fish)
-//! rely on presence; no branching on missing-vs-set.
+//! per-verb boolean metadata (`confirm`, `destructive`, `needs_subject`) is
+//! always present and defaults to a sensible value when the verb's TOML
+//! doesn't declare it — NOT `Option<bool>`. Consumers (compose-gui,
+//! `goo describe`, future zsh/fish) rely on presence; no branching on
+//! missing-vs-set.
 
 use crate::verbs;
 use serde_json::{json, Map, Value};
 
 /// Schema version of the OPTIONS JSON — bumped on any shape change so consumers
 /// (compose-gui, …) can gate. Paired with `stable:false` until the shape settles.
-/// **0.2** (this revision): per-verb `confirm` and `destructive` boolean fields
-/// added; both default-false-always-present. See `doc/design/completion-polish.md`.
-const SCHEMA_VERSION: &str = "0.2";
+/// **0.3** (this revision): per-verb `needs_subject` boolean field added
+/// (derived from `accepts`: subjectless ↔ `accepts == []`; `accepts = ["*/*"]`
+/// is catch-all that DOES take a subject, e.g. xdg-open).
+/// **0.2** (prior): per-verb `confirm` and `destructive` fields added.
+/// See `doc/design/completion-polish.md`.
+const SCHEMA_VERSION: &str = "0.3";
 
 /// The OPTIONS view for `subject`: `allow` (applicable verbs in `for_subject`
 /// order), the type's `default` verb, and a per-verb slot map. A pure projection —
@@ -92,10 +96,22 @@ fn verb_options(reg: &Value, verb: &Value) -> Value {
         .filter(|s| !s.is_empty())
         .map(String::from);
 
-    // Per-verb boolean metadata, default-false-always-present (see module docs).
+    // Per-verb boolean metadata, always-present (see module docs).
     // Consumers can rely on the field being there; UI glyphs map cleanly.
     let confirm = verb.get("confirm").and_then(Value::as_bool).unwrap_or(false);
     let destructive = verb.get("destructive").and_then(Value::as_bool).unwrap_or(false);
+
+    // `needs_subject` — derived from `accepts`. Subjectless iff `accepts == []`
+    // (verified pattern in current plugins: volume-up, mute-toggle, play-pause,
+    // lock, suspend, …). `accepts = ["*/*"]` is a catch-all that DOES take a
+    // subject (e.g. xdg-open accepts any file); don't conflate the two.
+    // Default-true when accepts is missing entirely — conservative: a TOML
+    // omitting `accepts` is more likely a malformed verb than a deliberate
+    // subjectless declaration.
+    let needs_subject = match verb.get("accepts").and_then(Value::as_array) {
+        Some(arr) => !arr.is_empty(),
+        None => true,
+    };
 
     json!({
         "using": using,
@@ -103,6 +119,7 @@ fn verb_options(reg: &Value, verb: &Value) -> Value {
         "object_type": object_type,
         "confirm": confirm,
         "destructive": destructive,
+        "needs_subject": needs_subject,
     })
 }
 
@@ -141,7 +158,17 @@ mod tests {
                 { "name": "say", "accepts": ["text/*"], "usage": ["loud", "quiet"] },
                 { "name": "view-img", "accepts": ["image/*"], "cmd": "x" },
                 { "name": "open", "accepts": ["text/*"], "default_for": "text/plain", "cmd": "xdg-open" },
-                { "name": "delete", "accepts": ["text/*"], "confirm": true, "destructive": true, "cmd": "rm" }
+                { "name": "delete", "accepts": ["text/*"], "confirm": true, "destructive": true, "cmd": "rm" },
+                // Subjectless verb: `accepts == []` (e.g. volume-up, lock, suspend in
+                // current plugins). Lives in `verbs` array of every for_subject call
+                // (per `verbs::for_subject`'s no-type early return); but the OPTIONS
+                // projection for a TYPED subject won't include it. We assert `needs_subject`
+                // surfaces correctly when the verb IS applicable (a `*/*`-accepting verb
+                // covers the catch-all case below).
+                { "name": "lock", "accepts": [], "cmd": "loginctl lock-session" },
+                // Catch-all: `accepts = ["*/*"]` DOES take a subject (e.g. xdg-open).
+                // `needs_subject` should be true — distinct from subjectless.
+                { "name": "any-open", "accepts": ["*/*"], "cmd": "xdg-open" }
             ],
             "adverbs": [
                 { "name": "via", "kind": "selector", "applies_to": ["text/*"], "default": "clipboard",
@@ -171,7 +198,7 @@ mod tests {
         assert_eq!(o["default"], j!("open")); // default_for text/plain
         assert_eq!(o["type"], j!("text/plain"));
         assert_eq!(o["stable"], j!(false));
-        assert_eq!(o["schema_version"], j!("0.2"));
+        assert_eq!(o["schema_version"], j!("0.3"));
     }
 
     #[test]
@@ -213,7 +240,7 @@ mod tests {
     // extend ALLOWED, bump SCHEMA_VERSION, and add a positive presence test.
     #[test]
     fn projection_never_leaks_internal_verb_fields() {
-        const ALLOWED: &[&str] = &["using", "with", "object_type", "confirm", "destructive"];
+        const ALLOWED: &[&str] = &["using", "with", "object_type", "confirm", "destructive", "needs_subject"];
         let o = options_for(&reg(), &subj("text/plain"));
         let v = &o["verbs"]["summarize"];
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
@@ -250,5 +277,38 @@ mod tests {
         assert_eq!(verbs["summarize"]["destructive"], j!(false));
         assert_eq!(verbs["open"]["confirm"], j!(false));
         assert_eq!(verbs["open"]["destructive"], j!(false));
+    }
+
+    // `needs_subject` derivation lock (per completion-polish.md §6 slice 2):
+    // empty `accepts == []` is subjectless (false); `["*/*"]` is catch-all that
+    // DOES take a subject (true); missing `accepts` defaults to true
+    // (conservative — malformed verb is more likely than deliberate subjectless).
+    #[test]
+    fn needs_subject_distinguishes_subjectless_from_catch_all_accepts() {
+        // For a text/plain subject, `any-open` (accepts=["*/*"]) is applicable;
+        // `lock` (accepts=[]) is filtered OUT by `for_subject` (no type match).
+        let o = options_for(&reg(), &subj("text/plain"));
+        let verbs = o["verbs"].as_object().unwrap();
+        // Catch-all verb: needs_subject = true (the verb wants a subject; "*/*"
+        // just means it doesn't care what kind).
+        assert_eq!(verbs["any-open"]["needs_subject"], j!(true));
+        // A normal typed verb: needs_subject = true.
+        assert_eq!(verbs["summarize"]["needs_subject"], j!(true));
+        assert_eq!(verbs["open"]["needs_subject"], j!(true));
+        // Subjectless verb (`lock`) is correctly absent from this typed projection —
+        // for_subject filters it because its empty accepts doesn't match text/plain.
+        assert!(verbs.get("lock").is_none(), "subjectless verb not applicable to typed subject");
+
+        // verb_options() is the field-derivation site; we can invoke it directly
+        // on a synthetic subjectless verb to assert needs_subject = false at the
+        // projection layer (separating "derivation correctness" from "applicability").
+        let lock = j!({ "name": "lock", "accepts": [] });
+        let view = super::verb_options(&j!({}), &lock);
+        assert_eq!(view["needs_subject"], j!(false), "accepts=[] → subjectless");
+
+        // Missing accepts entirely → default-true (conservative).
+        let weird = j!({ "name": "weird" });
+        let view = super::verb_options(&j!({}), &weird);
+        assert_eq!(view["needs_subject"], j!(true), "missing accepts → conservative true");
     }
 }
