@@ -1787,25 +1787,74 @@ fn cmd_complete(args: &[String]) -> i32 {
             let answer = if any_contributor { needs } else { true };
             println!("{}", if answer { "yes" } else { "no" });
         }
+        // Subject candidates for `goo <verb> <TAB>`, ranked by accepts-specificity
+        // (slice #5 / §5.1). Two improvements over a flat per-pattern walk:
+        //  1. Polymorphic union — gather EVERY impl of the verb name and union
+        //     their `accepts`, so a polymorphic verb (`connect` over ssh/bt/net)
+        //     offers subjects from all its dispatch targets, not just the first
+        //     impl's. (A single `find` would miss the rest.)
+        //  2. Specificity ranking — sources whose `emits` matches a more-specific
+        //     accept pattern lead (`accepts_specificity`, the same SSOT scoring
+        //     `lookup`/`for_subject` use). Ranking is per-SOURCE (all items of a
+        //     higher-spec source precede a lower one's), with registry order as a
+        //     stable tiebreak. Grouped consumers (zsh/fish/compose-GUI) present
+        //     this order; bash re-sorts its flat menu alphabetically (by design).
+        // Ids are deduped globally (first-seen wins, preserving rank) — which also
+        // fixes the old nested loop's incidental double-listing of a source that
+        // matched more than one accept pattern.
         "verb-subject-items" => {
             if arg.is_empty() {
                 return 0;
             }
-            let verb = arr("verbs").into_iter().find(|v| v.get("name").and_then(|n| n.as_str()) == Some(arg));
-            if let Some(verb) = verb {
-                let accepts: Vec<String> = verb
-                    .get("accepts")
-                    .and_then(|a| a.as_array())
-                    .map(|arr| arr.iter().filter_map(|p| p.as_str().map(str::to_string)).collect())
-                    .unwrap_or_default();
-                for pattern in &accepts {
-                    for source in arr("sources").iter().filter(|s| s.get("enumerate") != Some(&json!(false))) {
-                        let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
-                        if emits.is_empty() || !mime::is_subtype(emits, pattern, &reg) {
-                            continue;
+            let patterns: Vec<String> = {
+                let mut seen = std::collections::BTreeSet::new();
+                let mut out = Vec::new();
+                for v in arr("verbs").iter().filter(|v| v.get("name").and_then(|n| n.as_str()) == Some(arg)) {
+                    if let Some(a) = v.get("accepts").and_then(|a| a.as_array()) {
+                        for p in a.iter().filter_map(|p| p.as_str()) {
+                            if seen.insert(p.to_string()) {
+                                out.push(p.to_string());
+                            }
                         }
-                        if let Some(lc) = source.get("list_cmd").and_then(|c| c.as_str()) {
-                            print_ids(&bash_capture(lc));
+                    }
+                }
+                out
+            };
+            if patterns.is_empty() {
+                return 0;
+            }
+            let pat_refs: Vec<&str> = patterns.iter().map(String::as_str).collect();
+            // Rank enumerable sources whose emits the verb accepts (skip
+            // `enumerate = false` — bulk completion never bulk-lists them).
+            let sources = arr("sources");
+            let mut ranked: Vec<(i32, usize)> = Vec::new();
+            for (i, source) in sources.iter().enumerate() {
+                if source.get("enumerate") == Some(&json!(false)) {
+                    continue;
+                }
+                let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
+                if emits.is_empty() {
+                    continue;
+                }
+                if let Some(spec) = verbs::accepts_specificity(&pat_refs, emits, &reg) {
+                    ranked.push((spec, i));
+                }
+            }
+            ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            // NOTE(perf): uncached `bash_capture` per source on every <TAB> — the
+            // same per-keystroke fan-out the 7b entity cache covers for inference,
+            // over the same sources. Sharing that cache here is a tracked follow-up.
+            let mut printed = std::collections::HashSet::new();
+            for (_, i) in &ranked {
+                let Some(lc) = sources[*i].get("list_cmd").and_then(|c| c.as_str()) else {
+                    continue;
+                };
+                if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(bash_capture(lc).trim()) {
+                    for it in items {
+                        if let Some(id) = it.get("id").and_then(|i| i.as_str()) {
+                            if printed.insert(id.to_string()) {
+                                println!("{id}");
+                            }
                         }
                     }
                 }

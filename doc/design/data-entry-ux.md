@@ -435,6 +435,18 @@ These came out of the input walk. Each is small-to-medium scope; most
 are independent.
 
 ### 5.1 Subject-shape-aware listing (§B-8, B-9, C-15)
+
+> **Built (slice #5).** `__complete verb-subject-items` now unions a
+> polymorphic verb's impls' `accepts` and ranks matching enumerable sources by
+> `verbs::accepts_specificity` (the SSOT scoring `lookup`/`for_subject` use —
+> exact > lattice > glob-by-prefix-length); ids are deduped globally
+> (first-seen wins, preserving rank). Ranking is per-source. Grouped consumers
+> (zsh `_describe`, fish, compose-GUI) present the order; **bash keeps its flat
+> menu alphabetical by design** (a 100-entry unsorted `apps` menu is harder to
+> scan, and "most-specific-accept" ≠ "most-relevant"). The per-source
+> `list_cmd` fan-out here is uncached — sharing slice 7b's entity cache is a
+> tracked follow-up.
+
 After a verb is on the line, subject suggestions should be **ranked by**:
 1. Whether the source's `emits` would dispatch under the verb's
    `accepts` (specificity-aware — the OPTIONS-style projection).
@@ -621,8 +633,10 @@ single-source-of-truth future ports must cite); #4 (prefix-shape inference,
 dispatch, MEDIUM picker) **plus its 7b caching layer** (per-source TTL cache
 at `$XDG_RUNTIME_DIR/cosmic-goo/entities/<name>.json` + the `inferable` opt-in
 field; see §3.3); #8 (verb-aware bias — `infer_entity_for_verb` narrows the
-scan to sources the verb accepts, wired into `resolve_subject`; see §3.4).
-**Next**: #5 (subject-shape-aware listing), or the #9 compose-GUI v2 arc.
+scan to sources the verb accepts, wired into `resolve_subject`; see §3.4); #5
+(subject-shape-aware listing — `verb-subject-items` ranks by accepts-
+specificity + polymorphic-union; see §5.1). **Next**: the #9 compose-GUI v2
+arc, or smaller wins (#6 implicit-subject preview, #13 recent-actions).
 
 ---
 

@@ -102,14 +102,29 @@ fn pattern_specificity(t: &str, pattern: &str, reg: &Value) -> Option<i32> {
 
 /// A verb's specificity for type `t` = the max across its `accepts` patterns.
 fn verb_specificity(verb: &Value, t: &str, reg: &Value) -> Option<i32> {
-    let accepts = verb.get("accepts").and_then(Value::as_array)?;
+    accepts_specificity(
+        &verb
+            .get("accepts")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .unwrap_or_default(),
+        t,
+        reg,
+    )
+}
+
+/// Best specificity of type `t` against any of `patterns` — `None` if none
+/// match, higher = more specific (exact > lattice > glob-by-prefix-length).
+/// The same scoring `lookup`/`for_subject` rank with, exposed so subject-shape
+/// completion (slice #5 / §5.1) can rank candidates by accepts-specificity
+/// without re-implementing the lattice. `patterns` is a verb's `accepts` (or,
+/// for a polymorphic verb, the UNION across its impls).
+pub fn accepts_specificity(patterns: &[&str], t: &str, reg: &Value) -> Option<i32> {
     let mut best: Option<i32> = None;
-    for p in accepts {
-        if let Some(ps) = p.as_str() {
-            if let Some(s) = pattern_specificity(t, ps, reg) {
-                if best.is_none_or(|b| s > b) {
-                    best = Some(s);
-                }
+    for p in patterns {
+        if let Some(s) = pattern_specificity(t, p, reg) {
+            if best.is_none_or(|b| s > b) {
+                best = Some(s);
             }
         }
     }
@@ -600,6 +615,29 @@ template_var = { depth_prefix = "Ultrathink about" }
         let reg = fixture();
         assert!(lookup(&reg, "echo-text", Some("text/plain")).is_some());
         assert!(lookup(&reg, "echo-text", Some("application/vnd.fixture.thing")).is_none());
+    }
+
+    // ---- accepts_specificity (slice #5 ranking SSOT) ----
+
+    #[test]
+    fn accepts_specificity_exact_beats_glob_beats_none() {
+        let reg = json!({});
+        let pats = ["inode/*", "text/x-uri"];
+        // Exact match (text/x-uri == pattern) outranks a glob match (inode/*).
+        let exact = accepts_specificity(&pats, "text/x-uri", &reg).unwrap();
+        let glob = accepts_specificity(&pats, "inode/file", &reg).unwrap();
+        assert!(exact > glob, "exact {exact} should beat glob {glob}");
+        // A type no pattern admits → None (skip the source).
+        assert!(accepts_specificity(&pats, "audio/mpeg", &reg).is_none());
+    }
+
+    #[test]
+    fn accepts_specificity_longer_glob_prefix_is_more_specific() {
+        let reg = json!({});
+        let pats = ["*/*", "image/*"];
+        let specific = accepts_specificity(&pats, "image/png", &reg).unwrap(); // image/* (len 5)
+        let catchall = accepts_specificity(&pats, "audio/mpeg", &reg).unwrap(); // */* (0)
+        assert!(specific > catchall);
     }
 
     // ---- default_for ----

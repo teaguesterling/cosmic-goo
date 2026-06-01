@@ -24,6 +24,10 @@ crates/target/
 # mkdocs build output (gitignore has no inline comments — keep it on its own line)
 /site/
 
+# Scratch / workspace for assistant sessions (test output, debug fixtures) —
+# in-repo (not /tmp) so it travels with the checkout, but never committed.
+.scratch/
+
 # Local overrides
 .cosmic-goo.local/
 .env
