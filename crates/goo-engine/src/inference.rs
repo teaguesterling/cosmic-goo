@@ -9,8 +9,12 @@
 //!
 //! **v1 scope** (slice #7):
 //!  - scoring + bands + per-source weights ✓
-//!  - source enumeration (calls `list_cmd` per inferable source) — no caching;
-//!    cache layer is slice 7b (task #24) per §3.3
+//!  - source enumeration (calls `list_cmd` per inferable source), now with a
+//!    per-source TTL cache at `$XDG_RUNTIME_DIR/cosmic-goo/entities/<name>.json`
+//!    (slice 7b, task #24, §3.3) + the `inferable` opt-in field. The cache is
+//!    an optimization, never a correctness gate: any IO/parse miss falls back
+//!    to running `list_cmd` directly. mtime/dbus-signal invalidation hooks are
+//!    deferred — the TTL is §3.3's stated universal fallback for every source.
 //!  - verb-position only (noun-first dispatch); subject-position inference is
 //!    slice #8 (verb-aware bias) — caller passes the bare token, not a
 //!    verb+token pair
@@ -22,6 +26,8 @@
 
 use crate::shell::bash_capture;
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 // ---------- bands and floors (§3.2.1, §3.2.2) ----------
 
@@ -78,6 +84,13 @@ const HIGH_FLOOR: f64 = 200.0;
 /// **MEDIUM_FLOOR**: above this is "ambiguous but plausible" territory. Below =
 /// noise; fall through to text.
 const MEDIUM_FLOOR: f64 = 60.0;
+
+/// Default per-source list-cache TTL (seconds) when a source declares no
+/// `cache_ttl`. 5s matches §3.3's stated fallback for the cheap-but-volatile
+/// launcher sources (apps/windows/workspaces/focused). A source can override
+/// (a quieter source raises it; `cache_ttl = 0` opts a volatile source out of
+/// caching entirely — always re-run `list_cmd`).
+const DEFAULT_CACHE_TTL_SECS: u64 = 5;
 
 // ---------- public output types ----------
 
@@ -287,25 +300,129 @@ pub fn assign_band(candidates: &[Candidate]) -> (Band, Reason) {
     (band, reason)
 }
 
+// ---------- per-source list cache (§3.3) ----------
+
+/// Pure freshness predicate, factored out so the TTL policy is unit-testable
+/// without touching disk. `age_secs` is the cache entry's age; `None` means
+/// the age couldn't be determined (missing/future mtime → treat as stale, not
+/// an error). `ttl_secs == 0` means "never cache" → always stale.
+pub fn cache_is_fresh(age_secs: Option<u64>, ttl_secs: u64) -> bool {
+    if ttl_secs == 0 {
+        return false;
+    }
+    match age_secs {
+        Some(age) => age < ttl_secs,
+        None => false,
+    }
+}
+
+/// `$XDG_RUNTIME_DIR/cosmic-goo/entities/`, or `None` if the runtime dir is
+/// unset (then caching is disabled and we always run `list_cmd`).
+fn entity_cache_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")?;
+    Some(PathBuf::from(base).join("cosmic-goo").join("entities"))
+}
+
+/// Fetch a source's list items, served from the per-source TTL cache when warm.
+/// The cache is an optimization, never a correctness gate: an unset
+/// `XDG_RUNTIME_DIR`, `ttl == 0`, an empty source name, or any IO/parse failure
+/// all fall back to running `list_cmd` directly. We store the `cmd` alongside
+/// the `items` so a changed `list_cmd` busts the entry, and we never write an
+/// empty result (a transient `list_cmd` failure must not pin a source out of
+/// inference for the whole TTL).
+fn fetch_source_items(name: &str, list_cmd: &str, ttl_secs: u64) -> Vec<Value> {
+    let cache_file = if ttl_secs > 0 && !name.is_empty() {
+        entity_cache_dir().map(|d| d.join(format!("{name}.json")))
+    } else {
+        None
+    };
+
+    if let Some(ref path) = cache_file {
+        if let Some(items) = read_fresh_cache(path, list_cmd, ttl_secs) {
+            return items;
+        }
+    }
+
+    let output = bash_capture(list_cmd);
+    let items: Vec<Value> = serde_json::from_str(output.trim()).unwrap_or_default();
+
+    if let Some(ref path) = cache_file {
+        if !items.is_empty() {
+            write_cache_atomic(path, list_cmd, &items);
+        }
+    }
+    items
+}
+
+/// Read `<name>.json` if it's fresh AND was written for this exact `list_cmd`.
+/// Any failure (missing, stale, parse error, cmd mismatch) returns `None` →
+/// the caller re-runs `list_cmd`.
+fn read_fresh_cache(path: &Path, list_cmd: &str, ttl_secs: u64) -> Option<Vec<Value>> {
+    let meta = std::fs::metadata(path).ok()?;
+    // `duration_since` errs on a future mtime (clock skew / `touch -d future`);
+    // `.ok()` maps that to `None` → `cache_is_fresh(None, _) == false` → stale.
+    let age = SystemTime::now().duration_since(meta.modified().ok()?).ok();
+    if !cache_is_fresh(age.map(|d| d.as_secs()), ttl_secs) {
+        return None;
+    }
+    let cached: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    // Bust if the source's command changed since this entry was written.
+    if cached.get("cmd").and_then(Value::as_str) != Some(list_cmd) {
+        return None;
+    }
+    Some(cached.get("items")?.as_array()?.clone())
+}
+
+/// Write `{cmd, items}` to `<name>.json` atomically (temp + rename) so a reader
+/// — or an overlapping per-keystroke writer — never sees a half-written file.
+/// Best-effort: every failure is swallowed (the cache is non-load-bearing).
+fn write_cache_atomic(path: &Path, list_cmd: &str, items: &[Value]) {
+    let Some(dir) = path.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let Ok(serialized) = serde_json::to_string(&json!({ "cmd": list_cmd, "items": items })) else {
+        return;
+    };
+    // pid-unique temp in the same dir → rename is atomic on the same filesystem.
+    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    if std::fs::write(&tmp, serialized.as_bytes()).is_ok() {
+        if std::fs::rename(&tmp, path).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    } else {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
 // ---------- orchestration (touches IO) ----------
 
-/// Enumerate every inferable source (currently: every source with
-/// `enumerate != false`), run its `list_cmd`, score each item against `raw`,
-/// apply the source's weight. Returns the candidates sorted by score
-/// descending (so `[0]` is the winner). Deliberately leaves the `inferable`
-/// opt-in field (per §3.3) as a defer — for v1 every enumerable source
-/// participates. Slice 7b tightens this.
+/// Enumerate every inferable source, run its `list_cmd` (through the per-source
+/// TTL cache), score each item against `raw`, apply the source's weight.
+/// Returns the candidates sorted by score descending (so `[0]` is the winner).
+///
+/// **Participation rule** (§3.3): a source participates if its `inferable`
+/// field is set, honored verbatim; if absent, it falls back to `enumerate !=
+/// false`. This is opt-*out* semantics under an opt-*in* spec — a deliberate
+/// v1 choice so the spec's default-true sources (apps/windows/recent/…) and
+/// every existing test fixture participate without per-source tagging, while
+/// the genuinely-undesirable sources (processes/containers/branches/hist —
+/// already `enumerate = false`) stay out for free. The two sources §3.3 wants
+/// participating *despite* `enumerate = false` (bluetooth, services) are slow
+/// (a timeout-bounded probe / a full unit scan) and stay deferred under this
+/// TTL-only cache — they opt back in with `inferable = true` once the entity
+/// cache grows signal-based invalidation (§3.3).
 fn enumerate_and_score(raw: &str, reg: &Value) -> Vec<Candidate> {
     let Some(sources) = reg.get("sources").and_then(Value::as_array) else {
         return Vec::new();
     };
     let mut out: Vec<Candidate> = Vec::new();
     for source in sources {
-        // Honor `enumerate = false` (per plugin-authoring.md): sources that
-        // explicitly opt out of bulk listing don't participate in inference.
-        // (When slice 7b adds the dedicated `inferable` flag, that takes
-        // precedence; for v1 we reuse the existing signal.)
-        if source.get("enumerate") == Some(&json!(false)) {
+        let participates = match source.get("inferable").and_then(Value::as_bool) {
+            Some(flag) => flag,
+            None => source.get("enumerate") != Some(&json!(false)),
+        };
+        if !participates {
             continue;
         }
         let Some(list_cmd) = source.get("list_cmd").and_then(Value::as_str) else {
@@ -318,9 +435,12 @@ fn enumerate_and_score(raw: &str, reg: &Value) -> Vec<Candidate> {
         let source_name = source.get("name").and_then(Value::as_str).unwrap_or("").to_string();
         let source_prefix = source.get("prefix").and_then(Value::as_str).unwrap_or("").to_string();
         let emits = source.get("emits").and_then(Value::as_str).unwrap_or("").to_string();
+        let ttl = source
+            .get("cache_ttl")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_CACHE_TTL_SECS);
 
-        let output = bash_capture(list_cmd);
-        let items: Vec<Value> = serde_json::from_str(output.trim()).unwrap_or_default();
+        let items = fetch_source_items(&source_name, list_cmd, ttl);
         for item in items {
             let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
             let title = item.get("title").and_then(Value::as_str).unwrap_or("").to_string();
@@ -598,22 +718,27 @@ mod tests {
     // items. Real sources call real tools (cos-cli, findmnt, …); we don't
     // exercise those here.
 
+    // `cache_ttl: 0` keeps these orchestration tests hermetic — they exercise
+    // the live `list_cmd` path (deterministic `echo`s) without writing to the
+    // dev's real `$XDG_RUNTIME_DIR`. The caching path itself is proven in
+    // `tests/integration/entity-inference.bats` (witness-file reuse) + the
+    // `cache_is_fresh` unit tests below.
     fn fixture_reg() -> Value {
         j!({
             "sources": [
                 {
                     "name": "apps", "prefix": "app", "emits": "application/vnd.app",
-                    "weight": 1.3,
+                    "weight": 1.3, "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"Firefox Browser\"},{\"id\":\"thunderbird\",\"title\":\"Thunderbird Mail\"}]'"
                 },
                 {
                     "name": "recent", "prefix": "recent", "emits": "text/plain",
-                    "weight": 1.1,
+                    "weight": 1.1, "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"fox-recipe.md\",\"title\":\"Fox recipe\"},{\"id\":\"Notes.md\",\"title\":\"Notes.md\"}]'"
                 },
                 {
                     "name": "hist", "prefix": "hist", "emits": "text/plain",
-                    "weight": 0.6,
+                    "weight": 0.6, "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"14\",\"title\":\"fox news headline\"}]'"
                 }
             ]
@@ -675,12 +800,12 @@ mod tests {
             "sources": [
                 {
                     "name": "apps", "prefix": "app", "emits": "x/app",
-                    "weight": 1.3,
+                    "weight": 1.3, "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"thing\",\"title\":\"App thing\"}]'"
                 },
                 {
                     "name": "hist", "prefix": "hist", "emits": "x/hist",
-                    "weight": 0.6,
+                    "weight": 0.6, "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"thing\",\"title\":\"Hist thing\"}]'"
                 }
             ]
@@ -700,11 +825,11 @@ mod tests {
             "sources": [
                 {
                     "name": "skipped", "prefix": "skip", "emits": "x/skip",
-                    "enumerate": false,
+                    "enumerate": false, "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"shouldn't see this\"}]'"
                 },
                 {
-                    "name": "apps", "prefix": "app", "emits": "x/app",
+                    "name": "apps", "prefix": "app", "emits": "x/app", "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"Firefox\"}]'"
                 }
             ]
@@ -712,6 +837,58 @@ mod tests {
         let (subj, _, reason) = infer_entity("firefox", &r, Context::Interactive).unwrap();
         assert_eq!(reason.winner_source, "app");
         assert_eq!(subj["type"], "x/app");
+    }
+
+    #[test]
+    fn infer_inferable_false_overrides_enumerate_true() {
+        // `inferable = false` keeps a normally-enumerable source out of
+        // inference (the opt-out half of §3.3's participation field).
+        let r = j!({
+            "sources": [
+                {
+                    "name": "noisy", "prefix": "noisy", "emits": "x/noisy",
+                    "inferable": false, "cache_ttl": 0,
+                    "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"shouldn't see this\"}]'"
+                },
+                {
+                    "name": "apps", "prefix": "app", "emits": "x/app", "cache_ttl": 0,
+                    "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"Firefox\"}]'"
+                }
+            ]
+        });
+        let (subj, _, reason) = infer_entity("firefox", &r, Context::Interactive).unwrap();
+        assert_eq!(reason.winner_source, "app");
+        assert_eq!(subj["type"], "x/app");
+    }
+
+    #[test]
+    fn infer_inferable_true_overrides_enumerate_false() {
+        // `inferable = true` opts an `enumerate = false` source back IN — the
+        // bluetooth/services case from §3.3. The lone candidate must surface.
+        let r = j!({
+            "sources": [
+                {
+                    "name": "bluetooth", "prefix": "bt", "emits": "x/bt",
+                    "enumerate": false, "inferable": true, "cache_ttl": 0,
+                    "list_cmd": "echo '[{\"id\":\"earbuds\",\"title\":\"Earbuds\"}]'"
+                }
+            ]
+        });
+        let (subj, _, reason) = infer_entity("earbuds", &r, Context::Interactive).unwrap();
+        assert_eq!(reason.winner_source, "bt");
+        assert_eq!(subj["type"], "x/bt");
+    }
+
+    // ---------- cache_is_fresh (pure TTL policy) ----------
+
+    #[test]
+    fn cache_freshness_respects_ttl_and_edge_cases() {
+        assert!(cache_is_fresh(Some(0), 5), "just-written entry is fresh");
+        assert!(cache_is_fresh(Some(4), 5), "within TTL is fresh");
+        assert!(!cache_is_fresh(Some(5), 5), "at TTL boundary is stale");
+        assert!(!cache_is_fresh(Some(9), 5), "past TTL is stale");
+        assert!(!cache_is_fresh(Some(0), 0), "ttl=0 (never-cache) is always stale");
+        assert!(!cache_is_fresh(None, 5), "unknown/future mtime is stale, not an error");
     }
 
     #[test]

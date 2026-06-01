@@ -267,6 +267,22 @@ How the band model behaves on the 10 representative inputs from §3.0:
 
 ### 3.3 Performance & caching
 
+> **Built (slice 7b, `inference.rs`).** Per-source TTL cache at
+> `$XDG_RUNTIME_DIR/cosmic-goo/entities/<source>.json`, with the `inferable`
+> opt-in field and a per-source `cache_ttl` (seconds; `0` = never cache).
+> Writes are atomic (temp + rename); the cmd is stored alongside the items so
+> a changed `list_cmd` busts the entry; empty results are never cached (a
+> transient failure must not pin a source out for the TTL). The cache is an
+> optimization, never a correctness gate — any miss re-runs `list_cmd`. The
+> cache serves the **inference enumerate scan** (the per-keystroke hot path
+> that scores every source); a subsequent DEFINITIVE *resolution* still pays
+> one uncached `list_cmd` on the dispatch path — fine, since dispatch is the
+> once-per-action cold path, not the hot one. The per-source **mtime/dbus
+> invalidation hooks** below are the deferred refinement: v1 uses the TTL,
+> which the table already names as every source's fallback — so the slow
+> signal-cached sources (bluetooth/services) stay out of inference until those
+> hooks land (they ship the `inferable` field but leave it unset for now).
+
 Scanning every source's `list_cmd` on every keystroke is unacceptable.
 Strategy: **per-source list caching** with explicit invalidation hooks.
 
@@ -587,10 +603,14 @@ unless noted).
 either #7 (the keystone — entity inference) or #9 (compose-GUI v2) as
 the next big arc, depending on appetite.
 
-**Active build**: #1 + #2 + #3 — full spec and check-in plan in
-[completion-polish.md](completion-polish.md). That doc owns the
-chip-vocabulary single-source-of-truth that future ports (zsh, fish,
-compose-GUI) must cite.
+**Shipped**: #1 + #2 + #3 (completion polish — spec/check-in plan in
+[completion-polish.md](completion-polish.md), which owns the chip-vocabulary
+single-source-of-truth future ports must cite); #4 (prefix-shape inference,
+`address::resolve`); #7 (entity-name inference — engine `inference.rs`, bin
+dispatch, MEDIUM picker) **plus its 7b caching layer** (per-source TTL cache
+at `$XDG_RUNTIME_DIR/cosmic-goo/entities/<name>.json` + the `inferable` opt-in
+field; see §3.3). **Next**: #8 (verb-aware bias, layered on #7) or #5
+(subject-shape-aware listing), or the #9 compose-GUI v2 arc.
 
 ---
 

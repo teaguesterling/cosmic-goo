@@ -98,6 +98,8 @@ emits = "application/vnd.my-tool.thing"
 list_cmd = "my-tool list --json"
 preview_cmd = "my-tool show {subject.id}"   # optional
 enumerate = false              # optional; default true
+inferable = true               # optional; participate in bare-name inference
+cache_ttl = 30                 # optional; entity-list cache TTL in seconds
 ```
 
 `list_cmd` must produce JSON on stdout — an array of objects, each at minimum with `id` and `title`. Optional fields: `subtitle`, `metadata` (free-form, opaque to the dispatcher but available to verb templates as `{subject.metadata.field}`).
@@ -105,6 +107,10 @@ enumerate = false              # optional; default true
 **Pick a short, distinctive `prefix`** — lowercase, 2–5 chars, avoid common English words. The address layer infers a domain from the bare shape `prefix/rest` (so `app/firefox` resolves through the apps source even without `:app/` sigil — see [`doc/design/data-entry-ux.md`](design/data-entry-ux.md) §3.1). A prefix like `to` or `is` would hijack user text containing `to/something`; the shipped prefixes (`app`, `bt`, `ssh`, `mnt`, `win`, `ctr`, `svc`, …) deliberately avoid this.
 
 **`enumerate`** (default `true`) controls whether the source is *bulk-listed*. Contexts that gather candidates from many sources at once — the `goo compose` subject picker, and bare-positional tab completion (`goo VERB <TAB>`) — run every enumerable source's `list_cmd`. Set `enumerate = false` for sources that are slow (a network probe), huge (clipboard history), or noisy (every file in the tree): they're then **reachable on demand** via `:prefix:query` and `:prefix:<TAB>`, but never run in bulk. The built-in `bluetooth`, `files`, `services`, `repos`, and `clipboard-history` sources use this.
+
+**`inferable`** controls whether the source participates in **bare-name entity inference** — the layer that resolves a sigil-less `goo firefox` to `:app/firefox` (see [`doc/design/data-entry-ux.md`](design/data-entry-ux.md) §3.2–3.3). If set, it's honored verbatim. If **absent**, it defaults to `enumerate != false` — so most sources Just Work, and the slow/huge/noisy ones already opted out of bulk listing also stay out of inference. Set `inferable = true` to opt a source *back in* despite `enumerate = false` (good for a source whose items are strong bare-name targets but too numerous/slow to bulk-list, *once its `list_cmd` is cheap enough or its `cache_ttl` long enough to live on the per-keystroke path*). Set `inferable = false` to keep a normally-enumerable source out of inference.
+
+**`cache_ttl`** (seconds; default `5`) is how long an inference run reuses a cached snapshot of this source's `list_cmd` output before re-running it. The cache lives at `$XDG_RUNTIME_DIR/cosmic-goo/entities/<name>.json` and exists so bare-name inference doesn't fan out a subprocess per source on every invocation. Raise it for quiet sources (`cache_ttl = 30` for ssh-hosts); set `cache_ttl = 0` to **never cache** a volatile source (the process table, say). The cache is purely an optimization — it self-busts when `list_cmd` changes and is bypassed entirely if `$XDG_RUNTIME_DIR` is unset.
 
 ```json
 [

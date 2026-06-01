@@ -13,6 +13,11 @@ prefix = "bt"
 icon = "bluetooth"
 emits = "application/vnd.bluez.device"
 enumerate = false   # timeout-bounded probe; reach via :bt: on demand
+# NB: §3.3 lists bluetooth as inference-default-true, but only once it has a
+# dbus-signal cache — a timeout-bounded probe under a TTL-only cache would
+# re-probe whenever the snapshot expires (and a device-absent host, whose []
+# result is never cached, re-probes every call). Opt back in with `inferable =
+# true` when the signal-invalidation refinement lands (data-entry-ux.md §3.3).
 # `timeout` keeps a stalled/absent controller from hanging the compose dialog.
 # `bluetoothctl devices Paired` lines look like: "Device AA:BB:.. Name Here".
 list_cmd = """timeout 2 bluetoothctl devices Paired 2>/dev/null \\

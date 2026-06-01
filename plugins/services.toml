@@ -13,6 +13,9 @@ prefix = "svc"
 icon = "applications-system"
 emits = "application/vnd.systemd.unit"
 enumerate = false   # many units; reach via :svc: on demand
+# §3.3 lists services as inference-default-true; deferred with bluetooth until
+# the entity cache grows signal-based invalidation (a TTL-only cache re-runs
+# this full unit scan on expiry). Opt in with `inferable = true` then.
 list_cmd = """systemctl --user list-units --type=service --no-legend --output=json 2>/dev/null \\
   | jq '[.[] | {id: .unit, title: (.description // .unit), subtitle: .active}]'"""
 
