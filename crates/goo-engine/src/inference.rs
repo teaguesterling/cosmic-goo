@@ -149,11 +149,40 @@ pub const MAX_ALTERNATIVES: usize = 5;
 ///  - `Err("no candidates")` — no inferable source had ANY matching item.
 ///    Caller should fall through.
 pub fn infer_entity(raw: &str, reg: &Value, ctx: Context) -> Result<(Value, Band, Reason), String> {
+    infer_impl(raw, reg, ctx, None)
+}
+
+/// Verb-aware entity inference (slice 8 / §3.4). Same as `infer_entity` but
+/// the candidate pool is biased toward sources the verb can actually consume:
+/// a source participates only if it passes the §3.3 participation gate **AND**
+/// the verb `accepts` its `emits` type. The accepts-filter *narrows*; it does
+/// not widen past the privacy gate — §3.6 guarantees `inferable = false`
+/// sources (clipboard-history, …) never enter the scan, even when a verb
+/// accepts their type. (`enumerate = false` sources a verb accepts therefore
+/// drop out of *scored* inference too; the bin resolves those via its ungated
+/// `handle_search` fallback until they earn `inferable = true`.)
+pub fn infer_entity_for_verb(
+    raw: &str,
+    reg: &Value,
+    ctx: Context,
+    verb: &Value,
+) -> Result<(Value, Band, Reason), String> {
+    infer_impl(raw, reg, ctx, Some(verb))
+}
+
+/// Shared orchestration for the noun-first (`verb_filter = None`) and
+/// verb-aware (`Some(verb)`) entry points.
+fn infer_impl(
+    raw: &str,
+    reg: &Value,
+    ctx: Context,
+    verb_filter: Option<&Value>,
+) -> Result<(Value, Band, Reason), String> {
     let _ = ctx; // accepted for symmetry / future use; v1 engine is ctx-agnostic
     if !is_inferable_shape(raw) {
         return Err("not an inferable shape".into());
     }
-    let candidates = enumerate_and_score(raw, reg);
+    let candidates = enumerate_and_score(raw, reg, verb_filter);
     if candidates.is_empty() {
         return Err("no candidates".into());
     }
@@ -412,7 +441,12 @@ fn write_cache_atomic(path: &Path, list_cmd: &str, items: &[Value]) {
 /// (a timeout-bounded probe / a full unit scan) and stay deferred under this
 /// TTL-only cache — they opt back in with `inferable = true` once the entity
 /// cache grows signal-based invalidation (§3.3).
-fn enumerate_and_score(raw: &str, reg: &Value) -> Vec<Candidate> {
+///
+/// `verb_filter` (slice 8 / §3.4): when `Some(verb)`, a source ALSO has to have
+/// its `emits` accepted by the verb. This *narrows* on top of the participation
+/// gate — never widens past it — so §3.6's privacy guarantee (no `inferable =
+/// false` source ever enters the scan) holds in verb-aware mode too.
+fn enumerate_and_score(raw: &str, reg: &Value, verb_filter: Option<&Value>) -> Vec<Candidate> {
     let Some(sources) = reg.get("sources").and_then(Value::as_array) else {
         return Vec::new();
     };
@@ -424,6 +458,13 @@ fn enumerate_and_score(raw: &str, reg: &Value) -> Vec<Candidate> {
         };
         if !participates {
             continue;
+        }
+        // Verb-aware bias: keep only sources whose emit type the verb accepts.
+        if let Some(verb) = verb_filter {
+            let emits = source.get("emits").and_then(Value::as_str).unwrap_or("");
+            if emits.is_empty() || !verb_accepts_emits(verb, emits, reg) {
+                continue;
+            }
         }
         let Some(list_cmd) = source.get("list_cmd").and_then(Value::as_str) else {
             continue;
@@ -462,6 +503,22 @@ fn enumerate_and_score(raw: &str, reg: &Value) -> Vec<Candidate> {
     }
     out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     out
+}
+
+/// True when the verb's `accepts` admits a source's `emits` type — subtype-
+/// aware (mirrors the bin's `handle_search` accept test). A verb with no
+/// `accepts` (subjectless) admits nothing, which is correct here: the
+/// verb-aware path is only reached for verbs that take a subject.
+fn verb_accepts_emits(verb: &Value, emits: &str, reg: &Value) -> bool {
+    verb.get("accepts")
+        .and_then(Value::as_array)
+        .map(|accepts| {
+            accepts
+                .iter()
+                .filter_map(|p| p.as_str())
+                .any(|pat| crate::mime::is_subtype(emits, pat, reg))
+        })
+        .unwrap_or(false)
 }
 
 /// Build the subject Value for the winning candidate — same shape
@@ -900,5 +957,89 @@ mod tests {
         let (_, band_gui, _) = infer_entity("firefox", &r, Context::Gui).unwrap();
         assert_eq!(band_tty, band_script);
         assert_eq!(band_tty, band_gui);
+    }
+
+    // ---------- infer_entity_for_verb (slice 8 / §3.4 verb-aware bias) ----------
+
+    // Two sources emitting distinct types; verbs that accept one or the other
+    // let us prove the accepts-filter narrows the pool.
+    fn verb_fixture_reg() -> Value {
+        j!({
+            "sources": [
+                {
+                    "name": "devices", "prefix": "dev", "emits": "application/vnd.bt.device",
+                    "cache_ttl": 0,
+                    "list_cmd": "echo '[{\"id\":\"foxbuds\",\"title\":\"Foxbuds\"}]'"
+                },
+                {
+                    "name": "recent", "prefix": "recent", "emits": "text/plain",
+                    "cache_ttl": 0,
+                    "list_cmd": "echo '[{\"id\":\"foxnote\",\"title\":\"Foxnote\"}]'"
+                }
+            ]
+        })
+    }
+
+    fn verb_accepting(types: &[&str]) -> Value {
+        j!({ "name": "v", "accepts": types })
+    }
+
+    #[test]
+    fn verb_aware_keeps_only_sources_the_verb_accepts() {
+        let r = verb_fixture_reg();
+        // A verb that only accepts the device type must never surface the
+        // recent/text item — even though "fox" substring-matches both.
+        let connect = verb_accepting(&["application/vnd.bt.device"]);
+        let (subj, _, reason) = infer_entity_for_verb("fox", &r, Context::Interactive, &connect).unwrap();
+        assert_eq!(reason.winner_source, "dev");
+        assert_eq!(subj["type"], "application/vnd.bt.device");
+        // The text source contributed no candidate.
+        assert_eq!(reason.candidate_count, 1);
+    }
+
+    #[test]
+    fn verb_aware_glob_accept_admits_subtype_source() {
+        let r = verb_fixture_reg();
+        // `text/*` accepts the recent source (text/plain) but not the device.
+        let summarize = verb_accepting(&["text/*"]);
+        let (subj, _, reason) = infer_entity_for_verb("fox", &r, Context::Interactive, &summarize).unwrap();
+        assert_eq!(reason.winner_source, "recent");
+        assert_eq!(subj["type"], "text/plain");
+        assert_eq!(reason.candidate_count, 1);
+    }
+
+    #[test]
+    fn verb_aware_no_accepted_source_yields_no_candidates() {
+        let r = verb_fixture_reg();
+        // A verb accepting a type no source emits → fall-through signal.
+        let v = verb_accepting(&["application/vnd.nonesuch"]);
+        let err = infer_entity_for_verb("fox", &r, Context::Interactive, &v).unwrap_err();
+        assert!(err.contains("no candidates"), "got {err:?}");
+    }
+
+    #[test]
+    fn verb_aware_respects_participation_gate_over_accepts() {
+        // §3.6 privacy guarantee: an `inferable = false` source NEVER enters the
+        // scan, even when the verb accepts its emit type. The accepts-filter
+        // narrows; it must not widen past the participation gate.
+        let r = j!({
+            "sources": [
+                {
+                    "name": "hist", "prefix": "hist", "emits": "text/plain",
+                    "inferable": false, "cache_ttl": 0,
+                    "list_cmd": "echo '[{\"id\":\"foxclip\",\"title\":\"fox clipboard fragment\"}]'"
+                },
+                {
+                    "name": "recent", "prefix": "recent", "emits": "text/plain",
+                    "cache_ttl": 0,
+                    "list_cmd": "echo '[{\"id\":\"foxnote\",\"title\":\"Foxnote\"}]'"
+                }
+            ]
+        });
+        let summarize = verb_accepting(&["text/*"]);
+        let (_, _, reason) = infer_entity_for_verb("fox", &r, Context::Interactive, &summarize).unwrap();
+        // Only the participating recent source survives — hist is gated out.
+        assert_eq!(reason.candidate_count, 1);
+        assert_eq!(reason.winner_source, "recent");
     }
 }

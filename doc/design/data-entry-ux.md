@@ -302,6 +302,17 @@ Refresh policy per source:
 
 ### 3.4 Verb-aware bias
 
+> **Built (slice 8).** `inference::infer_entity_for_verb` filters the scan to
+> sources whose `emits` the verb `accepts` (subtype-aware), wired into the
+> verb-position bare-token path (`resolve_subject`, before the text fallback)
+> with the same band model as noun-first. The accepts-filter *narrows* on top
+> of the §3.3 participation gate — it never widens past it, so §3.6's privacy
+> guarantee holds (an `inferable = false` source never enters the scan even
+> when a verb accepts its type). Sources a verb accepts but that are
+> `enumerate = false` (`:bt`, `:file`) drop out of *scored* inference and are
+> resolved by the ungated `handle_search` first-match fallback until they earn
+> `inferable = true` — same deferral as slice 7b.
+
 When the bare token follows a verb (`goo connect fox`), the inference
 *biases toward sources whose emits matches the verb's accepts*:
 
@@ -609,8 +620,9 @@ single-source-of-truth future ports must cite); #4 (prefix-shape inference,
 `address::resolve`); #7 (entity-name inference — engine `inference.rs`, bin
 dispatch, MEDIUM picker) **plus its 7b caching layer** (per-source TTL cache
 at `$XDG_RUNTIME_DIR/cosmic-goo/entities/<name>.json` + the `inferable` opt-in
-field; see §3.3). **Next**: #8 (verb-aware bias, layered on #7) or #5
-(subject-shape-aware listing), or the #9 compose-GUI v2 arc.
+field; see §3.3); #8 (verb-aware bias — `infer_entity_for_verb` narrows the
+scan to sources the verb accepts, wired into `resolve_subject`; see §3.4).
+**Next**: #5 (subject-shape-aware listing), or the #9 compose-GUI v2 arc.
 
 ---
 

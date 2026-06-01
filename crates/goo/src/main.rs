@@ -153,6 +153,25 @@ enum InferAction {
     FallThrough,
 }
 
+/// Outcome of resolving a verb's subject. `Value` is the resolved subject;
+/// `Exit` means a message was already printed (the MEDIUM-band inference
+/// picker) and `cmd_verb` should return that code instead of running the verb.
+enum Subject {
+    Value(Value),
+    Exit(i32),
+}
+
+/// What verb-aware inference (slice 8 / §3.4) decided for a bare subject token.
+enum VerbInfer {
+    /// Resolve the verb's subject to this value.
+    Use(Value),
+    /// A picker was printed — `resolve_subject` should signal `Subject::Exit(2)`.
+    Picker,
+    /// Inference declined (LOW, HIGH-in-script, or no match) — continue the
+    /// resolution chain (text content, then the `handle_search` fallback).
+    FallThrough,
+}
+
 /// Map (band, context) → action per §3.2.3 + §3.5.
 ///
 /// **Safety property** (§3.6): only DEFINITIVE fires silently in script
@@ -2044,7 +2063,8 @@ fn cmd_verb(reg: &Value, args: &[String]) -> i32 {
     let accepts_count = verb.get("accepts").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0);
     let subject = if accepts_count > 0 {
         match resolve_subject(reg, &verb, &subject_arg, &stdin_text) {
-            Ok(s) => s,
+            Ok(Subject::Value(s)) => s,
+            Ok(Subject::Exit(code)) => return code,
             Err(e) => return die(e),
         }
     } else if !subject_arg.is_empty() {
@@ -2076,11 +2096,11 @@ fn read_stdin() -> String {
 }
 
 /// Turn a positional (or the implicit subject chain) into a subject JSON.
-/// Port of `resolve_subject` in `bin/goo`.
-fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str) -> Result<Value, String> {
+/// Port of `resolve_subject` in `bin/goo`, plus slice-8 verb-aware inference.
+fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str) -> Result<Subject, String> {
     // 1. Explicit positional → the addressing resolver.
     if !positional.is_empty() && address::is_explicit(positional, reg) {
-        return address::resolve(positional, reg, Some(verb));
+        return address::resolve(positional, reg, Some(verb)).map(Subject::Value);
     }
 
     // 1b. A bare positional that names an existing path → resolve it as that
@@ -2089,25 +2109,49 @@ fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str
     // file shadowing a source name) is disambiguated with an explicit sigil
     // (`:apps/x`) or forced to text with `+`.
     if !positional.is_empty() && std::path::Path::new(positional).exists() {
-        return address::resolve(&format!("./{positional}"), reg, Some(verb));
+        return address::resolve(&format!("./{positional}"), reg, Some(verb)).map(Subject::Value);
     }
 
     // 2. Bare positional.
     if !positional.is_empty() {
-        // Context-sensitive inference: a positive structural signal (JSON shape)
-        // for a type the verb accepts wins ahead of the text/handle fallbacks.
-        // Returns None for unstructured content, so the text path below is
-        // reached exactly as before.
+        // 2a. Context-sensitive inference: a positive structural signal (JSON
+        // shape) for a type the verb accepts wins ahead of everything below.
         if let Some(mt) = mime::infer_for(positional, verb, reg) {
-            return Ok(json!({ "type": mt, "text": positional }));
+            return Ok(Subject::Value(json!({ "type": mt, "text": positional })));
         }
+        // 2b. Verb-aware entity inference (slice 8 / §3.4): score the bare token
+        // across the sources this verb accepts; band+context decides the action.
+        // Runs BEFORE the text fallback so an exact entity match (DEFINITIVE)
+        // can win for a text/* verb (`summarize <recent-file>`) — but band
+        // safety means no fuzzy guess fires silently, and a non-match falls
+        // straight through to the text path below (unchanged behaviour).
+        // TODO(polymorphic accepts): `verb` is one impl from verbs::lookup
+        // (best for an untyped lookup). A polymorphic verb (`connect` over
+        // ssh/bt/net) biases toward only that impl's `accepts`, not the union
+        // §3.4 implies. Pre-existing — `handle_search` has the same limitation
+        // — so it's a follow-up, not a slice-8 fix.
+        if inference::is_inferable_shape(positional) {
+            let ctx = detect_inference_context();
+            if let Ok((subj, band, reason)) = inference::infer_entity_for_verb(positional, reg, ctx, verb) {
+                match act_on_verb_inference(reg, verb, positional, &subj, band, &reason, ctx) {
+                    VerbInfer::Use(s) => return Ok(Subject::Value(s)),
+                    VerbInfer::Picker => return Ok(Subject::Exit(2)),
+                    VerbInfer::FallThrough => {}
+                }
+            }
+        }
+        // 2c. Text content (verbs that accept text/*).
         if accepts_text(verb, reg) {
             let mt = mime::detect_content(positional);
-            return Ok(json!({ "type": mt, "text": positional }));
+            return Ok(Subject::Value(json!({ "type": mt, "text": positional })));
         }
-        // Handle resolution: a source emitting an accepted type, item by id/title.
+        // 2d. Handle resolution (ungated first-match): a source emitting an
+        // accepted type, item by id/title. This is the fallback that still
+        // reaches the `enumerate = false` sources a verb accepts (`:bt`, `:file`)
+        // — they're excluded from scored inference at 2b by the §3.6 privacy
+        // gate, so without this `connect :bt-device` / `open file` would regress.
         if let Some(item) = handle_search(reg, verb, positional) {
-            return Ok(item);
+            return Ok(Subject::Value(item));
         }
         return Err(format!(
             "could not resolve '{positional}' against any source for verb's accepted types"
@@ -2119,7 +2163,7 @@ fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str
     // and infer_for only fires on a positive signal the verb accepts).
     if !stdin_text.is_empty() {
         if let Some(mt) = mime::infer_for(stdin_text, verb, reg) {
-            return Ok(json!({ "type": mt, "text": stdin_text }));
+            return Ok(Subject::Value(json!({ "type": mt, "text": stdin_text })));
         }
     }
     if accepts_text(verb, reg) {
@@ -2132,14 +2176,83 @@ fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str
         }
         if !text.is_empty() {
             let mt = mime::detect_content(&text);
-            return Ok(json!({ "type": mt, "text": text }));
+            return Ok(Subject::Value(json!({ "type": mt, "text": text })));
         }
     }
     // Non-text accepts: implicit=true sources emitting an accepted type, first item.
     if let Some(item) = implicit_source_item(reg, verb) {
-        return Ok(item);
+        return Ok(Subject::Value(item));
     }
     Err("no subject provided and no implicit subject available (stdin/selection/clipboard/implicit-source all empty)".into())
+}
+
+/// Map a verb-aware inference result (band + context) to an action, mirroring
+/// the noun-first `act_on_inference` so the two surfaces behave identically
+/// (§3.5). The only difference: a resolved subject feeds the verb in progress
+/// (we re-resolve it to a full subject), rather than dispatching a default verb.
+#[allow(clippy::too_many_arguments)]
+fn act_on_verb_inference(
+    reg: &Value,
+    verb: &Value,
+    raw: &str,
+    subject: &Value,
+    band: inference::Band,
+    reason: &inference::Reason,
+    ctx: inference::Context,
+) -> VerbInfer {
+    use inference::{Band, Context};
+    let interactive = matches!(ctx, Context::Interactive | Context::Gui);
+    let nudge_suppressed = std::env::var("GOO_INFER_NO_NUDGE").is_ok();
+
+    match band {
+        Band::Definitive => VerbInfer::Use(reresolve_inferred(reg, verb, subject, reason)),
+        Band::High if interactive => {
+            if !nudge_suppressed {
+                emit_nudge(raw, subject, reason);
+            }
+            VerbInfer::Use(reresolve_inferred(reg, verb, subject, reason))
+        }
+        Band::High => {
+            // Script context: log and fall through (the safe, explicit failure
+            // mode — the bare token becomes text or hits "could not resolve").
+            if !nudge_suppressed {
+                emit_script_nudge(raw, subject, reason);
+            }
+            VerbInfer::FallThrough
+        }
+        Band::Medium if interactive => {
+            if !nudge_suppressed {
+                // KNOWN LIMITATION: emit_medium_picker is shared with noun-first
+                // and says "re-run with the explicit address". In verb-position
+                // the user typed `goo <verb> <token>`, so the correct re-run is
+                // `goo <verb> :prefix/id` (the bare address would do noun-first
+                // default-verb dispatch instead). The addresses shown are right;
+                // only the instruction line is verb-agnostic. Deferred with the
+                // rest of the real interactive picker (post-v1).
+                emit_medium_picker(raw, reason);
+            }
+            VerbInfer::Picker
+        }
+        Band::Medium | Band::Low => VerbInfer::FallThrough,
+    }
+}
+
+/// Turn the inference winner into a FULL subject by re-resolving its canonical
+/// `:<prefix>/<id>` address (the engine's `build_subject` is intentionally
+/// lossy — id/title/type only — so a verb template referencing
+/// `{subject.metadata.*}` needs the address layer's complete item). Falls back
+/// to the lossy subject if the re-resolve fails. `reason.winner_source` is the
+/// winning source's prefix (or name), which is the correct disambiguator when
+/// several sources emit the same type.
+fn reresolve_inferred(reg: &Value, verb: &Value, subject: &Value, reason: &inference::Reason) -> Value {
+    let id = subject.get("id").and_then(Value::as_str).unwrap_or("");
+    if !reason.winner_source.is_empty() && !id.is_empty() {
+        let addr = format!(":{}/{}", reason.winner_source, id);
+        if let Ok(full) = address::resolve(&addr, reg, Some(verb)) {
+            return full;
+        }
+    }
+    subject.clone()
 }
 
 /// Walk sources whose `emits` matches an accepted (handle) type; return the
