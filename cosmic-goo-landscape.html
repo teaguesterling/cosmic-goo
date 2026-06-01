@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cosmic-goo — landscape map</title>
+<style>
+  :root{
+    --bg:#0b0e1a; --bg2:#121734; --panel:#161b3a; --panel2:#1d2450;
+    --ink:#e8ecff; --dim:#9aa3d4; --faint:#646db0;
+    --line:#2a3266; --acc:#7c6cff; --acc2:#36d6c3; --warn:#ffb454;
+    --ok:#46e08a; --core:#36d6c3; --desktop:#7c9cff; --cosmic:#c77dff;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#241a4d 0%,var(--bg) 55%) fixed,var(--bg);
+       color:var(--ink);font:15px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  a{color:var(--acc2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,.mono{font-family:var(--mono);font-size:.86em}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 22px}
+
+  header.hero{padding:46px 0 26px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(124,108,255,.10),transparent)}
+  .logo{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .logo h1{margin:0;font-size:40px;letter-spacing:-.5px;
+    background:linear-gradient(90deg,#fff,#b9b1ff 55%,var(--acc2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .logo .sub{color:var(--dim);font-size:15px}
+  .tag{margin:12px 0 18px;color:var(--dim);max-width:760px}
+  .tag b{color:var(--ink)}
+  .stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:9px 14px;min-width:84px}
+  .stat .n{font-size:21px;font-weight:700}
+  .stat .l{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.6px}
+
+  nav.tabs{position:sticky;top:0;z-index:20;background:rgba(11,14,26,.86);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);margin-bottom:30px}
+  nav.tabs .wrap{display:flex;gap:4px;overflow-x:auto;padding-top:8px;padding-bottom:8px}
+  nav.tabs button{background:none;border:0;color:var(--dim);font:inherit;font-weight:600;cursor:pointer;
+    padding:8px 14px;border-radius:9px;white-space:nowrap}
+  nav.tabs button:hover{color:var(--ink);background:var(--panel)}
+  nav.tabs button.on{color:#fff;background:var(--acc)}
+
+  section.view{display:none;animation:fade .25s ease}
+  section.view.on{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  h2.h{font-size:24px;margin:6px 0 4px}
+  .lede{color:var(--dim);margin:0 0 22px;max-width:820px}
+  h3.sh{font-size:15px;letter-spacing:.4px;text-transform:uppercase;color:var(--faint);margin:30px 0 12px}
+
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:820px){.g2,.g3{grid-template-columns:1fr}}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .card h4{margin:0 0 4px;font-size:16px;display:flex;align-items:center;gap:8px}
+  .card p{margin:6px 0 0;color:var(--dim);font-size:14px}
+  .pill{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+    padding:2px 8px;border-radius:20px;border:1px solid var(--line)}
+  .pill.done{color:var(--ok);border-color:rgba(70,224,138,.4);background:rgba(70,224,138,.08)}
+  .pill.next{color:var(--warn);border-color:rgba(255,180,84,.4);background:rgba(255,180,84,.08)}
+  .pill.later{color:var(--faint)}
+  .pill.core{color:var(--core);border-color:rgba(54,214,195,.4)}
+  .pill.desktop{color:var(--desktop);border-color:rgba(124,156,255,.4)}
+  .pill.cosmic{color:var(--cosmic);border-color:rgba(199,125,255,.4)}
+
+  pre,.code{background:#0a0d1c;border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto;
+    font-family:var(--mono);font-size:13px;color:#d6dcff;margin:10px 0}
+  pre .c{color:var(--faint)}
+  pre .k{color:var(--acc2)}
+  pre .s{color:var(--warn)}
+  pre .v{color:#ff9ed8}
+
+  table.grammar{width:100%;border-collapse:collapse;margin:8px 0}
+  table.grammar td,table.grammar th{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  table.grammar th{color:var(--faint);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  table.grammar td:first-child{white-space:nowrap}
+
+  /* composer */
+  .composer{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;margin-top:8px}
+  .composer .cols{display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:14px}
+  @media(max-width:820px){.composer .cols{grid-template-columns:1fr}}
+  .colhd{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);margin:0 0 8px}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 11px;cursor:pointer;font-size:13px}
+  .chip:hover{border-color:var(--acc)}
+  .chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  .chip .mt{display:block;font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+  .chip.on .mt{color:#dcd8ff}
+  .verblist{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow:auto}
+  .vrow{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:9px;padding:8px 11px;cursor:pointer}
+  .vrow:hover{border-color:var(--acc2)}
+  .vrow.on{border-color:var(--acc2);background:rgba(54,214,195,.1)}
+  .vrow .vn{font-family:var(--mono);font-size:13px;color:var(--ink)}
+  .vrow .vd{font-size:11.5px;color:var(--faint);margin-top:2px}
+  .vrow .badges{display:flex;gap:4px;flex-shrink:0}
+  .tagdot{font-size:9px;font-weight:700;padding:1px 6px;border-radius:12px}
+  .tagdot.two{background:rgba(199,125,255,.18);color:var(--cosmic)}
+  .tagdot.def{background:rgba(70,224,138,.16);color:var(--ok)}
+  .preview{background:#0a0d1c;border:1px solid var(--line);border-radius:11px;padding:14px;min-height:120px}
+  .preview .lbl{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
+  .preview .cmd{font-family:var(--mono);font-size:14px;color:#d6dcff;margin-top:8px;word-break:break-all}
+  .preview .cmd .pr{color:var(--acc2)}
+  .preview .cmd .vb{color:#fff;font-weight:600}
+  .preview .cmd .ar{color:var(--warn)}
+  .preview .note{font-size:12.5px;color:var(--dim);margin-top:12px}
+  .empty{color:var(--faint);font-size:13px;padding:10px 2px}
+
+  /* plugins */
+  .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 16px}
+  .filters input{flex:1;min-width:180px;background:var(--panel);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:9px 13px;font:inherit}
+  .fbtn{background:var(--panel);border:1px solid var(--line);color:var(--dim);border-radius:20px;
+    padding:6px 14px;cursor:pointer;font-weight:600;font-size:13px}
+  .fbtn.on{color:#fff}
+  .fbtn[data-tier=all].on{background:var(--acc);border-color:var(--acc)}
+  .fbtn[data-tier=core].on{background:rgba(54,214,195,.2);border-color:var(--core);color:var(--core)}
+  .fbtn[data-tier=desktop].on{background:rgba(124,156,255,.2);border-color:var(--desktop);color:var(--desktop)}
+  .fbtn[data-tier=cosmic].on{background:rgba(199,125,255,.2);border-color:var(--cosmic);color:var(--cosmic)}
+  .pcard{background:var(--panel);border:1px solid var(--line);border-radius:13px;margin-bottom:10px;overflow:hidden}
+  .pcard summary{cursor:pointer;list-style:none;padding:13px 16px;display:flex;align-items:center;gap:10px}
+  .pcard summary::-webkit-details-marker{display:none}
+  .pcard summary .pn{font-weight:700;font-size:15px}
+  .pcard summary .pd{color:var(--dim);font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pcard summary .cnt{color:var(--faint);font-size:12px;white-space:nowrap}
+  .pcard .body{padding:0 16px 14px;border-top:1px solid var(--line)}
+  .pcard .body .sect{margin-top:11px}
+  .pcard .body .sect .t{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--faint);margin-bottom:6px}
+  .verbchips{display:flex;flex-wrap:wrap;gap:6px}
+  .vc{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-family:var(--mono);font-size:12px}
+  .vc small{color:var(--faint);font-family:system-ui}
+  .srcchip{background:rgba(124,108,255,.1);border:1px solid var(--line)}
+
+  /* mockups */
+  .term{background:#070a16;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-family:var(--mono);font-size:13px}
+  .term .bar{background:#10142b;padding:7px 12px;display:flex;gap:7px;align-items:center;border-bottom:1px solid var(--line)}
+  .term .bar i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .term .bar .t{color:var(--faint);font-size:11px;margin-left:8px}
+  .term .scr{padding:14px 16px;white-space:pre-wrap;line-height:1.7;color:#cdd5ff}
+  .term .sel{background:var(--acc);color:#fff;border-radius:4px;padding:0 4px}
+  .term .pmt{color:var(--acc2)}
+  .term .dim{color:var(--faint)}
+  .panes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  @media(max-width:720px){.panes{grid-template-columns:1fr}}
+  .pane{background:var(--panel);border-right:1px solid var(--line)}
+  .pane:last-child{border-right:0}
+  .pane .ph{padding:9px 13px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);border-bottom:1px solid var(--line);background:var(--bg2)}
+  .pane .it{padding:9px 13px;border-bottom:1px solid rgba(42,50,102,.5);font-size:13px}
+  .pane .it.sel{background:rgba(124,108,255,.18);border-left:3px solid var(--acc)}
+  .pane .it small{display:block;color:var(--faint);font-size:11px}
+  .mockcap{color:var(--faint);font-size:12.5px;margin:8px 2px 0}
+
+  /* roadmap */
+  .road{position:relative;margin-left:8px;padding-left:24px;border-left:2px solid var(--line)}
+  .ritem{position:relative;margin-bottom:18px}
+  .ritem::before{content:"";position:absolute;left:-31px;top:3px;width:13px;height:13px;border-radius:50%;border:2px solid var(--bg)}
+  .ritem.done::before{background:var(--ok)}
+  .ritem.next::before{background:var(--warn);box-shadow:0 0 0 4px rgba(255,180,84,.2)}
+  .ritem.later::before{background:var(--faint)}
+  .ritem h4{margin:0 0 3px;font-size:16px;display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+  .ritem p{margin:2px 0 0;color:var(--dim);font-size:13.5px}
+  .ritem .meta{font-family:var(--mono);font-size:11px;color:var(--faint)}
+
+  footer{border-top:1px solid var(--line);margin-top:50px;padding:24px 0 60px;color:var(--faint);font-size:13px}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="logo">
+      <h1>cosmic-goo</h1>
+      <span class="sub">Grammar Of Operations — a noun → verb → object layer for the COSMIC desktop</span>
+    </div>
+    <p class="tag">Pick a <b>subject</b> (selection, file, URL, app, anything a plugin emits), apply a <b>verb</b>,
+       optionally an <b>object</b> and <b>adverbs</b>. One engine (a Rust port of the original shell engine, TOML
+       plugins) drives the CLI today — with a type-aware negotiation planner and sigil-less inference underneath —
+       and, by design, the launcher and a compose dialog next. This page is a live map of what exists and where
+       it's going.</p>
+    <div class="stats" id="stats"></div>
+  </div>
+</header>
+
+<nav class="tabs"><div class="wrap" id="tabs"></div></nav>
+
+<main class="wrap">
+
+  <!-- OVERVIEW -->
+  <section class="view on" data-view="overview">
+    <h2 class="h">The grammar</h2>
+    <p class="lede">Every interaction is a little sentence. The same backend resolves it whether you type it,
+       bind it to a key, or build it in a picker.</p>
+    <pre><span class="c"># subject        verb        object/adverbs</span>
+goo <span class="k">summarize</span> <span class="s">./notes.md</span>            <span class="c"># file → text verb</span>
+goo <span class="k">activate</span> <span class="s">:app:firefox</span>          <span class="c"># source item → handle verb</span>
+goo <span class="k">move-to</span> <span class="s">:app:Claude</span> <span class="v">:ws:2</span>     <span class="c"># two-step (verb takes an object)</span>
+goo <span class="k">think</span> <span class="s">"recursion"</span> <span class="v">--depth=ultra</span>  <span class="c"># adverb modulates the verb</span>
+echo hi | goo <span class="k">critique</span> <span class="v">--via=clipboard</span>  <span class="c"># stdin subject, routed output</span></pre>
+
+    <h3 class="sh">Addressing — how a subject is written</h3>
+    <p class="lede">Files and URLs need no sigil (native feel). Everything rewrites to one canonical
+       <code>goo://</code> URI, then dispatches.</p>
+    <table class="grammar">
+      <tr><th>You type</th><th>Means</th><th>Example</th></tr>
+      <tr><td><code>bare text</code></td><td>literal text content</td><td><code>goo upper "hello"</code></td></tr>
+      <tr><td><code>./x ~/x /x</code></td><td>a <b>file</b> (reads contents; path in <code>metadata.path</code>)</td><td><code>goo summarize ./notes.md</code></td></tr>
+      <tr><td><code>https://…</code></td><td>a <b>URL</b> (<code>text/x-uri</code>)</td><td><code>goo open https://x.com</code></td></tr>
+      <tr><td><code>:source:query</code></td><td>item from a named <b>source</b> (by name or prefix)</td><td><code>goo activate :app:firefox</code></td></tr>
+      <tr><td><code>:source:q?k=v</code></td><td>…filtered by field (case-insensitive substring)</td><td><code>goo activate :app:firefox?title=*Claude*</code></td></tr>
+      <tr><td><code>+scheme:value</code></td><td>explicit scheme handoff</td><td><code>goo summarize +file:./x.md</code></td></tr>
+      <tr><td><code>^</code> / custom sigil</td><td>single-char shorthand → a core form (<code>^</code>→<code>+clip:</code>; <code>@</code> free for you)</td><td><code>goo summarize ^</code></td></tr>
+      <tr><td><code>goo://…</code> / <code>goo+…</code></td><td>the canonical URI directly (scripts / IPC / launcher; <code>goo://</code> is xdg-registrable)</td><td><code>goo summarize 'goo+file:///abs/x.md'</code></td></tr>
+    </table>
+    <p class="lede"><b>Core sigils</b>: <code>:source:input</code> → <code>goo://source/input</code>, <code>+scheme:value</code> → <code>goo+scheme:value</code>.
+       Everything else is a customizable <code>[[sigils]]</code> — one char that expands into a core form.
+       When no subject is given, it falls back: <b>stdin → PRIMARY selection → clipboard → focused app</b>.</p>
+
+    <h3 class="sh">Anatomy of a plugin</h3>
+    <p class="lede">Plugins are pure TOML declaring <code>types / sources / verbs / adverbs / sigils / aliases / dispatch</code>.
+       The engine merges them (last-wins by name) and shells out to render commands.</p>
+    <pre><span class="c"># a verb is the unit of action</span>
+[[verbs]]
+name        = <span class="s">"move-to"</span>
+accepts     = [<span class="s">"application/vnd.cos-cli.app"</span>]   <span class="c"># subject type(s)</span>
+object_type = <span class="s">"application/vnd.cos-cli.workspace"</span> <span class="c"># takes an object →</span>
+object_source = <span class="s">"workspaces"</span>                    <span class="c"># …drawn from this source</span>
+cmd = <span class="s">"cos-cli move -i {subject.metadata.index} -w {object.metadata.index}"</span></pre>
+  </section>
+
+  <!-- COMPOSER -->
+  <section class="view" data-view="composer">
+    <h2 class="h">Sentence composer</h2>
+    <p class="lede">A live model of the noun→verb map. Pick a subject type — the engine's MIME matcher
+       filters the verbs that <code>accept</code> it (exactly what <code>goo compose</code> and tab-completion do).
+       Click a verb to see the command it builds.</p>
+    <div class="composer">
+      <div class="cols">
+        <div>
+          <p class="colhd">1 · Subject</p>
+          <div class="chips" id="subjectChips"></div>
+        </div>
+        <div>
+          <p class="colhd">2 · Verb <span id="verbCount" style="color:var(--faint);font-weight:400"></span></p>
+          <div class="verblist" id="verbList"></div>
+        </div>
+        <div>
+          <p class="colhd">3 · Result</p>
+          <div class="preview" id="preview"><div class="empty">Pick a subject, then a verb.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="view" data-view="features">
+    <h2 class="h">Engine features</h2>
+    <p class="lede">The Rust engine is canonical (the bash original is now a frozen reference). Everything below
+       ships today and is covered by the conformance suite — 385 bats tests + 208 engine unit tests.</p>
+    <div class="grid g2" id="featureGrid"></div>
+  </section>
+
+  <!-- PLUGINS -->
+  <section class="view" data-view="plugins">
+    <h2 class="h">Plugins</h2>
+    <p class="lede">30 plugins sort into dependency <b>tiers</b>: <span class="pill core">core</span> (engine only),
+       <span class="pill desktop">desktop</span> (freedesktop/Wayland, any compositor),
+       <span class="pill cosmic">cosmic</span> (cos-cli). Install profiles pick the set. Click to expand.</p>
+    <div class="filters">
+      <button class="fbtn on" data-tier="all">All</button>
+      <button class="fbtn" data-tier="core">core</button>
+      <button class="fbtn" data-tier="desktop">desktop</button>
+      <button class="fbtn" data-tier="cosmic">cosmic</button>
+      <input id="pluginSearch" placeholder="filter plugins & verbs…">
+    </div>
+    <div id="pluginList"></div>
+  </section>
+
+  <!-- MOCKUPS -->
+  <section class="view" data-view="mockups">
+    <h2 class="h">Frontends — now &amp; next</h2>
+    <p class="lede">The CLI is the canonical entry point. The picker dialog exists in v0; the launcher and a
+       native three-pane GUI are roadmap. All speak the same <code>goo://</code> grammar.</p>
+
+    <h3 class="sh">goo compose — v0 sequential picker <span class="pill done">shipped</span></h3>
+    <div class="term">
+      <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">fuzzel / rofi / wofi / fzf / zenity</span></div>
+      <div class="scr"><span class="pmt">subject ▸</span> <span class="sel">:app:Claude — Claude Desktop</span>
+  :app:firefox — Mozilla Firefox
+  :clip — (clipboard text)
+  <span class="dim">…any source item, or current selection</span>
+
+<span class="pmt">verb ▸</span>     <span class="sel">move-to</span>        <span class="dim">(verbs that accept an app)</span>
+  maximize   minimize   close   activate
+
+<span class="pmt">object ▸</span>   <span class="sel">:ws:2 — Workspace 2</span>   <span class="dim">(move-to takes a workspace)</span>
+
+<span class="pmt">run ▸</span>     cos-cli move -i 3 -w 2 -g 0   <span class="dim">✓ confirm</span></div>
+    </div>
+    <p class="mockcap">One pane at a time — the degenerate case of the three-pane model below. Test runs pre-seed picks via <code>GOO_COMPOSE_ANSWERS</code>.</p>
+
+    <h3 class="sh">Native three-pane dialog — Kupfer/Quicksilver model <span class="pill later">roadmap (#39)</span></h3>
+    <div class="panes">
+      <div class="pane">
+        <div class="ph">Subject</div>
+        <div class="it sel">Claude — Desktop <small>application/vnd.cos-cli.app</small></div>
+        <div class="it">firefox <small>application</small></div>
+        <div class="it">~/notes.md <small>inode/file</small></div>
+        <div class="it">(selection) <small>text/plain</small></div>
+      </div>
+      <div class="pane">
+        <div class="ph">Verb · valid for subject</div>
+        <div class="it sel">move-to <small>→ needs a workspace</small></div>
+        <div class="it">maximize</div>
+        <div class="it">minimize</div>
+        <div class="it">close <small>confirm</small></div>
+      </div>
+      <div class="pane">
+        <div class="ph">Object · if required</div>
+        <div class="it sel">Workspace 2</div>
+        <div class="it">Workspace 1</div>
+        <div class="it">Workspace 3</div>
+        <div class="it"><small>from object_source, subject-filtered</small></div>
+      </div>
+    </div>
+    <p class="mockcap">Maps directly onto today's backend: subject pane = sources + ranking, verb pane = <code>verb_for_subject</code> + <code>valid_when</code> (live filter), object pane = <code>object_source</code> (subject-dependent). Nothing to invent — the model is settled.</p>
+
+    <h3 class="sh">pop-launcher meta-plugin — inline composition <span class="pill later">roadmap (#38)</span></h3>
+    <div class="term">
+      <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">cosmic-launcher</span></div>
+      <div class="scr"><span class="pmt">🔍</span> claude move<span class="sel"> </span>
+  <span class="dim">→</span> move-to Claude Desktop · <span class="sel">Workspace 2</span>
+  <span class="dim">→</span> move-to Claude Desktop · Workspace 1
+  <span class="dim">emits  goo://app/Claude  +  verb move-to  +  :ws:2</span></div>
+    </div>
+    <p class="mockcap">Per-keystroke latency is why this wants the warm <code>good</code> daemon (#31) underneath.</p>
+  </section>
+
+  <!-- ROADMAP -->
+  <section class="view" data-view="roadmap">
+    <h2 class="h">Roadmap</h2>
+    <p class="lede">The engine, the type-system / negotiation layer, and the whole sigil-less inference arc are
+       done. The next major arc is the native compose-GUI; the launcher and daemon follow it by design.</p>
+    <div class="road" id="road"></div>
+  </section>
+
+</main>
+
+<footer><div class="wrap">
+  cosmic-goo landscape map · generated 2026-06-01 from the live registry
+  (30 plugins · 92 verbs · 21 sources · 19 types · 5 channels · 385 tests). Canonical docs in <code>doc/</code>;
+  design notes in <code>doc/design/</code>.
+</div></footer>
+
+<script>
+const DATA = {
+  stats:[["30","plugins"],["92","verbs"],["21","sources"],["19","types"],["5","channels"],["385","bats conformance"],["208","engine unit tests"]],
+
+  // subject kinds for the composer: label, mime, example address
+  subjects:[
+    ["Selected text","text/plain",'"some words"'],
+    ["URL","text/x-uri","https://example.com"],
+    ["File","inode/file","./notes.md"],
+    ["Image file","image/png","./shot.png"],
+    ["Running app","application/vnd.cos-cli.app",":app/firefox"],
+    ["Workspace","application/vnd.cos-cli.workspace",":ws/2"],
+    ["SSH host","application/vnd.ssh.host",":ssh/build1"],
+    ["Git repo","application/vnd.git.repo",":repo/cosmic-goo"],
+    ["Git branch","application/vnd.git.branch",":br/main"],
+    ["Container","application/vnd.container",":ctr/web"],
+    ["Mount","application/vnd.mount",":mnt/data"],
+    ["systemd unit","application/vnd.systemd.unit",":svc/ssh-agent"],
+    ["Process","application/vnd.process",":ps/1234"],
+    ["Bluetooth device","application/vnd.bluez.device",":bt/Headphones"],
+    ["Network conn","application/vnd.nm.connection",":net/Home-WiFi"],
+    ["Audio sink","application/vnd.pipewire.sink",":sink/Speakers"],
+    ["(no subject)","","  /* global verb */"]
+  ],
+
+  features:[
+    ["Two engines — Rust is canonical","done","The Rust <code>goo</code> (<code>crates/</code>) is the engine <code>make install</code> ships; the original bash <code>bin/goo</code> is a frozen legacy reference (<code>make install-bash</code>). The bats suite is the conformance contract."],
+    ["Type lattice + subtype matching","done","<code>is_subtype</code> over glob (<code>text/*</code>), structured suffixes, and declared <code>is_a</code> — wired into every <code>accepts</code> check. An optional OS-MIME-DB import folds shared-mime-info <code>subclasses</code> into the lattice."],
+    ["Negotiation planner","done","A two-layer Dijkstra over a virtual converter graph: input coercion + output negotiation + <code>Using:</code> selection from one algorithm. Tool-aware (routes around uninstalled tools, or 415s with an install hint); earned-hops depth bounding."],
+    ["<code>--explain</code> + route enumeration","done","<code>goo --explain VERB</code> shows the Accept profile and chosen route — or a teaching 415; <code>--paths</code> enumerates ALL routes (cost-ranked) as text or a merged mermaid DAG. A JS simulator mirrors the planner against Rust golden plans."],
+    ["Output routing — <code>--as</code>/<code>--to</code>/<code>--using</code>","done","Pick the rendered surface (<code>--as</code>), land the result at a <code>{write}</code> destination (<code>--to</code> file/clipboard), or pin the channel (<code>--using</code>). No flag = byte-identical to stdout."],
+    ["Polymorphic verbs","done","The registry keeps verbs by <code>(name, accepts)</code>, so <code>connect</code> ships for ssh-hosts AND bluez devices and both coexist — <code>goo connect :ssh/h</code> vs <code>:bt/d</code> dispatch the right impl by subtype specificity."],
+    ["Sigil-less entity inference","done","Bare <code>goo firefox</code> resolves like <code>:app/firefox</code> — scored across sources with confidence BANDS: definitive resolves silently (safe even in scripts), ambiguous surfaces a picker, fuzzy falls through. Prefix-shape, per-source TTL cache, and an <code>inferable</code> privacy gate."],
+    ["Verb-aware inference bias","done","After a verb, inference scores only the sources that verb <code>accepts</code> — <code>connect fox</code> looks at hosts/devices, <code>summarize fox</code> at text sources. Narrows the pool and the privacy surface."],
+    ["OPTIONS projection + chips","done","One <code>options_for</code> projection feeds completion, <code>goo describe</code>, <code>goo what</code>, and the future GUI — never drifting from the run path. Chips: <code>[!]</code> confirm, <code>[!!]</code> destructive, <code>×N</code> polymorphic-contributor count."],
+    ["Subject addressing + ranked completion","done","Canonical <code>goo://</code> URIs, core <code>:</code>/<code>+</code> sigils, customizable <code>[[sigils]]</code>, native file/URL detection, stdin→selection→clipboard fallback. <code>goo &lt;verb&gt; TAB</code> ranks subject candidates by accepts-specificity."],
+    ["Template filters + valid_when","done","<code>{var|q}</code> shell-quote, <code>{var|uri}</code> percent-encode, <code>{var|raw}</code>; a jq <code>valid_when</code> predicate hides a verb unless the subject matches."],
+    ["Two-step objects + content dispatch","done","Verbs with an <code>object_type</code> resolve a second arg (<code>object_source</code> / <code>object_list_cmd</code> / auto), narrowed by <code>object_valid_when</code>. <code>[[dispatch]]</code> plumber rules map content → verb by ERE with captures."],
+    ["Adverbs","done","Selector/flag modifiers (<code>--via</code>, <code>--depth</code>, <code>--engine</code>, <code>--urgency</code>) inject template vars or route output; OPTIONS lists the <code>With:</code> keys that actually take effect."],
+    ["Plugin tiers + portability","done","core / desktop / cosmic tiers; <code>make install-core|install|install-cosmic</code>. The engine has zero hardwired cos-cli — fully portable; cos-cli lives only in the apps/workspaces plugins."]
+  ],
+
+  plugins:{
+    "apps":"Running applications via cos-cli — activate, close, move, window state",
+    "audio":"Audio volume and output device control (wpctl / pactl)",
+    "bluetooth":"Bluetooth paired devices — connect / disconnect (bluez)",
+    "calculator":"Evaluate expressions with qalc (libqalculate)",
+    "claude-routing":"Routes text verbs to Fabric, Claude Desktop, Claude Code, or clipboard",
+    "clipboard-history":"Clipboard history via cliphist — paste back, delete, wipe",
+    "containers":"Running containers (docker / podman) — logs, shell, stop",
+    "content":"Inspect structured + non-text content: JSON, images, audio/video, directories",
+    "core":"",
+    "emoji":"Unicode emoji picker — pick and copy",
+    "files":"File operations — open, reveal in file manager, copy path, read",
+    "git":"Git repositories — open, status, pull, GitHub PRs",
+    "media":"Media player transport via playerctl (MPRIS)",
+    "mounts":"Mounted filesystems and removable drives (findmnt)",
+    "network":"NetworkManager connections — bring up / down (nmcli)",
+    "notifications":"Desktop notifications via libnotify",
+    "power":"Session and power actions — lock, suspend, hibernate, shutdown",
+    "presentation":"Negotiation: presentation-surface types, coercion channels, and the view present verb",
+    "processes":"Running processes — inspect by pid (ps)",
+    "recent":"Recently-opened files (freedesktop ~/.local/share/recently-used.xbel)",
+    "screenshots":"Screen capture, OCR, and QR via grim/slurp/tesseract/zbarimg/qrencode",
+    "selection":"Implicit subjects from the current PRIMARY selection and clipboard",
+    "services":"systemd user services — status, restart, journal",
+    "sigils":"Default addressing sigils. Override or add your own in ~/.config/cosmic-goo/plugins/.",
+    "ssh-hosts":"SSH hosts from ~/.ssh/config — connect, copy-id",
+    "text-utilities":"Pure-text transforms — base64, hashing, case shifting, counting, escaping",
+    "text-verbs":"Selection-aware text actions (critique, summarize, think, draft-response)",
+    "tmux":"tmux sessions via tmux-use (assumed at ~/.dotfiles/tmux-use/tmux-use.sh)",
+    "urls":"URL actions — web search by engine",
+    "workspaces":"COSMIC workspaces via cos-cli"
+  },
+  tiers:{
+    "apps":"cosmic",
+    "audio":"desktop",
+    "bluetooth":"desktop",
+    "calculator":"core",
+    "claude-routing":"desktop",
+    "clipboard-history":"desktop",
+    "containers":"core",
+    "content":"core",
+    "core":"core",
+    "emoji":"desktop",
+    "files":"desktop",
+    "git":"core",
+    "media":"desktop",
+    "mounts":"desktop",
+    "network":"desktop",
+    "notifications":"desktop",
+    "power":"desktop",
+    "presentation":"desktop",
+    "processes":"core",
+    "recent":"desktop",
+    "screenshots":"desktop",
+    "selection":"desktop",
+    "services":"desktop",
+    "sigils":"core",
+    "ssh-hosts":"core",
+    "text-utilities":"core",
+    "text-verbs":"desktop",
+    "tmux":"core",
+    "urls":"desktop",
+    "workspaces":"cosmic"
+  },
+  verbs:[
+["activate","apps",["application/vnd.cos-cli.app"],null,"application/vnd.cos-cli.app","Bring an app to focus",0,0],
+["close","apps",["application/vnd.cos-cli.app"],null,null,"Close an app",0,0],
+["move-to","apps",["application/vnd.cos-cli.app"],"application/vnd.cos-cli.workspace",null,"Move an app to a workspace",1,0],
+["maximize","apps",["application/vnd.cos-cli.app"],null,null,"Maximize an app window",0,0],
+["minimize","apps",["application/vnd.cos-cli.app"],null,null,"Minimize an app window",0,0],
+["fullscreen","apps",["application/vnd.cos-cli.app"],null,null,"Toggle fullscreen for an app window",0,0],
+["volume-up","audio",[],null,null,"Raise the default output volume 5%",0,0],
+["volume-down","audio",[],null,null,"Lower the default output volume 5%",0,0],
+["mute-toggle","audio",[],null,null,"Toggle mute on the default output",0,0],
+["set-default-sink","audio",["application/vnd.pipewire.sink"],null,"application/vnd.pipewire.sink","Make this sink the default output",0,0],
+["connect","bluetooth",["application/vnd.bluez.device"],null,"application/vnd.bluez.device","Connect to the device",0,0],
+["disconnect","bluetooth",["application/vnd.bluez.device"],null,null,"Disconnect the device",0,0],
+["calc","calculator",["text/*"],null,null,"Evaluate a mathematical expression",0,0],
+["paste","clipboard-history",["application/vnd.cliphist.entry"],null,"application/vnd.cliphist.entry","Copy a history entry back onto the clipboard",0,0],
+["show","clipboard-history",["application/vnd.cliphist.entry"],null,null,"Print a history entry to stdout",0,0],
+["delete","clipboard-history",["application/vnd.cliphist.entry"],null,null,"Delete a history entry",0,0],
+["wipe","clipboard-history",[],null,null,"Wipe all clipboard history",0,0],
+["logs","containers",["application/vnd.container"],null,"application/vnd.container","Tail a container's recent logs",0,0],
+["shell","containers",["application/vnd.container"],null,null,"Open a shell in the container",0,0],
+["stop","containers",["application/vnd.container"],null,null,"Stop the container",0,0],
+["json-pretty","content",["application/json"],null,"application/json","Pretty-print JSON (jq .)",0,0],
+["json-keys","content",["application/json"],null,null,"List a JSON object's top-level keys (or array indices)",0,0],
+["info","content",["image/*"],null,"image/*","Dimensions, format, and size of an image (ImageMagick identify)",0,0],
+["info","content",["audio/*","video/*"],null,null,"Duration, codec, and stream summary of an audio/video file (ffprobe)",0,0],
+["tree","content",["inode/directory"],null,"inode/directory","Two-level tree listing of a directory",0,0],
+["size","content",["inode/directory"],null,null,"Total on-disk size of a directory (du -sh)",0,0],
+["copy","emoji",["application/vnd.emoji"],null,"application/vnd.emoji","Copy the emoji to the clipboard",0,0],
+["open","files",["inode/*","text/x-uri"],null,["inode/file","text/x-uri"],"Open a file or URL in its default application",0,0],
+["reveal","files",["inode/*"],null,null,"Open the containing folder in the file manager",0,0],
+["copy-path","files",["inode/*"],null,null,"Copy the absolute path to the clipboard",0,0],
+["read","files",["inode/file"],null,null,"Print the file's contents to stdout",0,0],
+["preview","files",["inode/file"],null,null,"Print the first 40 lines of the file",0,0],
+["status","git",["application/vnd.git.repo"],null,null,"Show short status",0,0],
+["pull","git",["application/vnd.git.repo"],null,null,"Pull the current branch",0,0],
+["gh-pr-list","git",["application/vnd.git.repo"],null,null,"List open GitHub PRs",0,0],
+["log","git",["application/vnd.git.branch"],null,"application/vnd.git.branch","Recent commits on a branch (CWD repo)",0,0],
+["show","git",["application/vnd.git.branch"],null,null,"Show the tip commit of a branch (CWD repo)",0,0],
+["play-pause","media",[],null,null,"Toggle play/pause on the active player",0,0],
+["next","media",[],null,null,"Skip to the next track",0,0],
+["prev","media",[],null,null,"Skip to the previous track",0,0],
+["stop","media",[],null,null,"Stop playback",0,0],
+["now-playing","media",[],null,null,"Print the current track",0,0],
+["unmount","mounts",["application/vnd.mount"],null,null,"Unmount the device",0,0],
+["usage","mounts",["application/vnd.mount"],null,null,"Show device / fs / size / utilization for this mount",0,0],
+["connect","network",["application/vnd.nm.connection"],null,"application/vnd.nm.connection","Activate the connection",0,0],
+["disconnect","network",["application/vnd.nm.connection"],null,null,"Deactivate the connection",0,0],
+["notify","notifications",["text/*"],null,null,"Send a desktop notification with the selected text as the body",0,0],
+["lock","power",[],null,null,"Lock the current session",0,0],
+["suspend","power",[],null,null,"Suspend (sleep) the machine",0,0],
+["hibernate","power",[],null,null,"Hibernate the machine",0,0],
+["shutdown","power",[],null,null,"Power off the machine",0,0],
+["reboot","power",[],null,null,"Restart the machine",0,0],
+["logout","power",[],null,null,"End the current session",0,0],
+["view","presentation",["image/*"],null,null,"Present an image — inline (terminal) or in a viewer (desktop)",0,0],
+["info","processes",["application/vnd.process"],null,"application/vnd.process","Show pid/ppid/user/cpu/mem/command for a process",0,0],
+["children","processes",["application/vnd.process"],null,null,"List a process's direct children",0,0],
+["screenshot","screenshots",[],null,null,"Capture the whole screen to the clipboard",0,0],
+["capture-region","screenshots",[],null,null,"Select a region and copy it to the clipboard",0,0],
+["capture-file","screenshots",[],null,null,"Select a region and save it to a PNG; prints the path",0,0],
+["ocr-region","screenshots",[],null,null,"Select a region and OCR it to stdout",0,0],
+["ocr-image","screenshots",["image/*"],null,null,"OCR an image file to stdout",0,0],
+["scan-qr","screenshots",[],null,null,"Select a region and decode any QR/barcode in it",0,0],
+["scan-qr-image","screenshots",["image/*"],null,null,"Decode a QR/barcode from an image file",0,0],
+["qr-encode","screenshots",["text/*"],null,null,"Render the text as a QR code in the terminal",0,0],
+["qr-save","screenshots",["text/*"],null,null,"Render the text as a QR PNG; prints the path",0,0],
+["status","services",["application/vnd.systemd.unit"],null,"application/vnd.systemd.unit","Show unit status",0,0],
+["restart","services",["application/vnd.systemd.unit"],null,null,"Restart the unit",0,0],
+["stop","services",["application/vnd.systemd.unit"],null,null,"Stop the unit",0,0],
+["logs","services",["application/vnd.systemd.unit"],null,null,"Tail the unit's journal (last 50 lines)",0,0],
+["connect","ssh-hosts",["application/vnd.ssh.host"],null,"application/vnd.ssh.host","Open an SSH session to the host",0,0],
+["ssh-copy-id","ssh-hosts",["application/vnd.ssh.host"],null,null,"Install your public key on the host",0,0],
+["upper","text-utilities",["text/*"],null,null,"Convert to UPPERCASE",0,0],
+["lower","text-utilities",["text/*"],null,null,"Convert to lowercase",0,0],
+["wc","text-utilities",["text/*"],null,null,"Word, line, and character counts",0,0],
+["trim","text-utilities",["text/*"],null,null,"Strip leading and trailing whitespace",0,0],
+["base64-encode","text-utilities",["text/*"],null,null,"Encode as base64",0,0],
+["base64-decode","text-utilities",["text/*"],null,null,"Decode from base64",0,0],
+["url-encode","text-utilities",["text/*"],null,null,"Percent-encode for use in a URL",0,0],
+["url-decode","text-utilities",["text/*"],null,null,"Decode a percent-encoded string",0,0],
+["sha256","text-utilities",["text/*","inode/*","image/*","audio/*","video/*","application/*"],null,null,"SHA-256 hex digest (of file bytes when given a file, else of text)",0,0],
+["md5","text-utilities",["text/*","inode/*","image/*","audio/*","video/*","application/*"],null,null,"MD5 hex digest (of file bytes when given a file, else of text)",0,0],
+["json-string","text-utilities",["text/*"],null,null,"Wrap text as a JSON-encoded string literal",0,0],
+["shell-escape","text-utilities",["text/*"],null,null,"Quote text for safe inclusion in a shell command",0,0],
+["critique","text-verbs",["text/*"],null,null,"Expert review of the passage",0,0],
+["summarize","text-verbs",["text/*"],null,null,"Summarize the passage",0,0],
+["think","text-verbs",["text/*"],null,null,"Think about the passage; depth adverb modulates how hard",0,0],
+["draft-response","text-verbs",["text/*"],null,null,"Draft a reply to the selected text",0,0],
+["switch","tmux",["application/vnd.tmux-use.session"],null,"application/vnd.tmux-use.session","Switch to (or attach) a tmux session",0,0],
+["kill","tmux",["application/vnd.tmux-use.session"],null,null,"Kill a tmux session",0,0],
+["rename","tmux",["application/vnd.tmux-use.session"],"text/plain",null,"Rename a tmux session",1,0],
+["search","urls",["text/*"],null,null,"Search the web for the selected text",0,0],
+["switch","workspaces",["application/vnd.cos-cli.workspace"],null,"application/vnd.cos-cli.workspace","Switch to the workspace",0,0]
+  ],
+  sources:[
+["apps","apps","app","application/vnd.cos-cli.app",1,0],
+["bluetooth","bluetooth","bt","application/vnd.bluez.device",0,0],
+["branches","git","br","application/vnd.git.branch",0,0],
+["clipboard","selection","clip","text/plain",1,0],
+["clipboard-history","clipboard-history","hist","application/vnd.cliphist.entry",0,0],
+["connections","network","net","application/vnd.nm.connection",1,0],
+["containers","containers","ctr","application/vnd.container",0,0],
+["emoji","emoji","emo","application/vnd.emoji",0,0],
+["files","files","file","inode/file",0,0],
+["focused","apps",null,"application/vnd.cos-cli.app",0,1],
+["mounts","mounts","mnt","application/vnd.mount",0,0],
+["processes","processes","ps","application/vnd.process",0,0],
+["recent","recent","recent","inode/file",1,0],
+["repos","git","repo","application/vnd.git.repo",0,0],
+["selection","selection","sel","text/plain",1,0],
+["services","services","svc","application/vnd.systemd.unit",0,0],
+["sinks","audio","sink","application/vnd.pipewire.sink",1,0],
+["ssh-hosts","ssh-hosts","ssh","application/vnd.ssh.host",0,0],
+["tmux","tmux","tmux","application/vnd.tmux-use.session",1,0],
+["windows","apps","win","application/vnd.cos-cli.app",1,0],
+["workspaces","workspaces","ws","application/vnd.cos-cli.workspace",1,0]
+  ],
+
+  roadmap:[
+    ["done","Rust engine — now canonical","crates/goo",
+      "Full bash-engine behaviour ported to Rust and made the default <code>goo</code>; passes the entire binary-driven bats contract unmodified. Bash <code>bin/goo</code> stays as a frozen reference."],
+    ["done","Type system + negotiation","",
+      "Subtype lattice, input inference, the two-layer negotiation planner, <code>--explain</code>/<code>--paths</code>, <code>--as</code>/<code>--to</code>/<code>--using</code>, channels, polymorphic verbs, and the OPTIONS completion oracle."],
+    ["done","Sigil-less inference arc","#4 #7 #7b #8 #5",
+      "Prefix-shape (#4) → entity-name inference with bands (#7) → per-source cache + <code>inferable</code> gate (#7b) → verb-aware bias (#8) → subject-shape-aware completion ranking (#5)."],
+    ["done","Completion polish","#19 #20 #21",
+      "Confirm/destructive chips, polymorphic ×N, subjectless announcement, GOO-default disambiguation, <code>goo describe</code> / <code>goo what</code> — all reading the one OPTIONS projection (SSOT)."],
+    ["next","Compose-GUI v2 — noun-first","crates/goo-compose-gui",
+      "The native libcosmic/iced flow: pick the thing, then the action, consuming the same OPTIONS + inference engine. The GUI payoff; a v0 scaffold exists."],
+    ["later","pop-launcher meta-plugin","#38",
+      "Inline composition inside cosmic-launcher, emitting canonical goo:// URIs. The consumer whose per-keystroke needs shape the daemon."],
+    ["later","good daemon","#31",
+      "Warm registry + HTTP-shaped wire protocol over a UNIX socket. Gated on a real consumer (the launcher) by design — built WITH it, not in a vacuum."],
+    ["later","Inference + completion follow-ups","",
+      "Signal-based cache invalidation (re-enables bluetooth/services in inference), source-qualified completion (display-vs-insert → real grouping), sharing the entity cache with the completion fan-out, candidate ranking (#35)."]
+  ]
+};
+
+// ---------- helpers ----------
+const $=(s,r=document)=>r.querySelector(s);
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+function mimeMatch(pat,type){
+  if(!type) return false;
+  if(pat===type) return true;
+  if(pat==="*/*"||pat==="*") return true;
+  if(pat.endsWith("/*")) return type.split("/")[0]===pat.split("/")[0];
+  return false;
+}
+function verbsFor(mime){
+  if(mime==="") return DATA.verbs.filter(v=>v[2].length===0);
+  return DATA.verbs.filter(v=>v[2].some(p=>mimeMatch(p,mime)));
+}
+
+// ---------- tabs ----------
+const TABS=[["overview","Overview"],["composer","Composer"],["features","Features"],["plugins","Plugins"],["mockups","Frontends"],["roadmap","Roadmap"]];
+const tabBar=$("#tabs");
+TABS.forEach(([id,label],i)=>{
+  const b=el("button",i===0?"on":"",label);
+  b.onclick=()=>{
+    document.querySelectorAll("nav.tabs button").forEach(x=>x.classList.remove("on"));
+    document.querySelectorAll("section.view").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+    $('section.view[data-view="'+id+'"]').classList.add("on");
+    window.scrollTo({top:0,behavior:"instant"});
+  };
+  tabBar.appendChild(b);
+});
+
+// ---------- stats ----------
+DATA.stats.forEach(([n,l])=>{const s=el("div","stat");s.appendChild(el("div","n",n));s.appendChild(el("div","l",l));$("#stats").appendChild(s);});
+
+// ---------- features ----------
+DATA.features.forEach(([t,st,d])=>{
+  const c=el("div","card");
+  c.appendChild(el("h4","",t+' <span class="pill '+st+'">'+(st==="done"?"shipped":st)+'</span>'));
+  c.appendChild(el("p","",d));
+  $("#featureGrid").appendChild(c);
+});
+
+// ---------- composer ----------
+let curSubject=null,curVerb=null;
+const subjChips=$("#subjectChips");
+DATA.subjects.forEach(([label,mime,ex])=>{
+  const ch=el("div","chip");
+  ch.innerHTML=label+(mime?'<span class="mt">'+mime+'</span>':'<span class="mt">— global —</span>');
+  ch.onclick=()=>{
+    document.querySelectorAll("#subjectChips .chip").forEach(x=>x.classList.remove("on"));
+    ch.classList.add("on");curSubject=[label,mime,ex];curVerb=null;renderVerbs();renderPreview();
+  };
+  subjChips.appendChild(ch);
+});
+function renderVerbs(){
+  const list=$("#verbList");list.innerHTML="";
+  if(!curSubject){$("#verbCount").textContent="";return;}
+  const vs=verbsFor(curSubject[1]);
+  $("#verbCount").textContent="· "+vs.length+" apply";
+  if(!vs.length){list.appendChild(el("div","empty","No verbs accept this subject type yet."));return;}
+  vs.sort((a,b)=>a[0].localeCompare(b[0])).forEach(v=>{
+    const r=el("div","vrow");
+    let badges="";
+    if(v[6])badges+='<span class="tagdot two">2-step</span>';
+    if(v[4])badges+='<span class="tagdot def">default</span>';
+    r.innerHTML='<div><div class="vn">'+v[0]+'</div><div class="vd">'+v[5]+' · <span style="color:var(--faint)">'+v[1]+'</span></div></div><div class="badges">'+badges+'</div>';
+    r.onclick=()=>{document.querySelectorAll("#verbList .vrow").forEach(x=>x.classList.remove("on"));r.classList.add("on");curVerb=v;renderPreview();};
+    list.appendChild(r);
+  });
+}
+function renderPreview(){
+  const p=$("#preview");
+  if(!curSubject){p.innerHTML='<div class="empty">Pick a subject, then a verb.</div>';return;}
+  if(!curVerb){p.innerHTML='<div class="empty">'+verbsFor(curSubject[1]).length+' verb(s) accept <b>'+curSubject[0]+'</b>. Pick one.</div>';return;}
+  const v=curVerb, sub=curSubject[1]?curSubject[2]:"";
+  let cmd='<span class="pr">goo</span> <span class="vb">'+v[0]+'</span>';
+  if(sub) cmd+=' <span class="ar">'+sub+'</span>';
+  let obj="";
+  if(v[6]||v[3]){
+    const objType=v[3]||"";
+    const ex=(DATA.subjects.find(s=>s[1]===objType)||["","",":obj:…"])[2];
+    cmd+=' <span class="ar" style="color:#ff9ed8">'+(ex&&ex.startsWith(":")?ex:":obj:…")+'</span>';
+    obj='<div class="note">↳ two-step: needs an <b>object</b> of type <code>'+objType+'</code>'+(v[1]==="apps"?' (from the <code>workspaces</code> source)':'')+'.</div>';
+  }
+  // adverb hint
+  let adv="";
+  if(v[0]==="think") adv='<div class="note">adverb: <code>--depth=normal|ultra</code></div>';
+  if(v[0]==="search") adv='<div class="note">adverb: <code>--engine=ddg|google|github|mdn|crates|wikipedia</code></div>';
+  if(v[1]==="text-verbs") adv='<div class="note">adverb: <code>--via=clipboard|fabric|claude-desktop|claude-code</code> (routes the rendered prompt)</div>';
+  if(v[0]==="notify") adv='<div class="note">adverb: <code>--urgency=low|normal|critical</code></div>';
+  p.innerHTML='<div class="lbl">resolves to</div><div class="cmd">'+cmd+'</div>'+
+    '<div class="note"><b>'+v[5]+'</b></div>'+obj+adv+
+    (v[4]?'<div class="note">✓ default verb for <code>'+v[4]+'</code> — runs when no verb is named.</div>':'');
+}
+
+// ---------- plugins ----------
+function verbsByPlugin(p){return DATA.verbs.filter(v=>v[1]===p);}
+function sourcesByPlugin(p){return DATA.sources.filter(s=>s[1]===p);}
+let tierFilter="all", q="";
+function renderPlugins(){
+  const list=$("#pluginList");list.innerHTML="";
+  Object.keys(DATA.plugins).sort().forEach(name=>{
+    const tier=DATA.tiers[name], desc=DATA.plugins[name];
+    if(tierFilter!=="all"&&tier!==tierFilter) return;
+    const vs=verbsByPlugin(name), ss=sourcesByPlugin(name);
+    const hay=(name+" "+desc+" "+vs.map(v=>v[0]+" "+v[5]).join(" ")).toLowerCase();
+    if(q&&!hay.includes(q)) return;
+    const d=el("details","pcard");
+    const sm=el("summary");
+    sm.innerHTML='<span class="pill '+tier+'">'+tier+'</span><span class="pn">'+name+'</span>'+
+      '<span class="pd">'+desc+'</span><span class="cnt">'+vs.length+' verb'+(vs.length!==1?"s":"")+(ss.length?' · '+ss.length+' src':'')+'</span>';
+    d.appendChild(sm);
+    const body=el("div","body");
+    if(ss.length){
+      const sec=el("div","sect");sec.appendChild(el("div","t","Sources"));
+      const cc=el("div","verbchips");
+      ss.forEach(s=>{cc.appendChild(el("span","vc srcchip",(s[2]?":"+s[2]+":":"(implicit)")+' <small>'+s[3]+(s[5]?" · implicit":"")+(!s[4]?" · no-enum":"")+'</small>'));});
+      sec.appendChild(cc);body.appendChild(sec);
+    }
+    const sec2=el("div","sect");sec2.appendChild(el("div","t","Verbs"));
+    const vc=el("div","verbchips");
+    vs.forEach(v=>{vc.appendChild(el("span","vc",v[0]+' <small>'+v[5]+'</small>'));});
+    sec2.appendChild(vc);body.appendChild(sec2);
+    d.appendChild(body);
+    list.appendChild(d);
+  });
+  if(!list.children.length) list.appendChild(el("div","empty","No plugins match."));
+}
+document.querySelectorAll(".fbtn").forEach(b=>{
+  b.onclick=()=>{document.querySelectorAll(".fbtn").forEach(x=>x.classList.remove("on"));b.classList.add("on");tierFilter=b.dataset.tier;renderPlugins();};
+});
+$("#pluginSearch").oninput=e=>{q=e.target.value.trim().toLowerCase();renderPlugins();};
+
+// ---------- roadmap ----------
+DATA.roadmap.forEach(([st,title,meta,desc])=>{
+  const it=el("div","ritem "+st);
+  const pill=st==="done"?'<span class="pill done">done</span>':st==="next"?'<span class="pill next">next</span>':'<span class="pill later">later</span>';
+  it.innerHTML='<h4>'+title+' '+pill+(meta?' <span class="meta">'+meta+'</span>':'')+'</h4><p>'+desc+'</p>';
+  $("#road").appendChild(it);
+});
+
+renderPlugins();
+</script>
+</body>
+</html>
