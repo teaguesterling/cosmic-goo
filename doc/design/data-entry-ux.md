@@ -440,12 +440,17 @@ are independent.
 > polymorphic verb's impls' `accepts` and ranks matching enumerable sources by
 > `verbs::accepts_specificity` (the SSOT scoring `lookup`/`for_subject` use —
 > exact > lattice > glob-by-prefix-length); ids are deduped globally
-> (first-seen wins, preserving rank). Ranking is per-source. Grouped consumers
-> (zsh `_describe`, fish, compose-GUI) present the order; **bash keeps its flat
-> menu alphabetical by design** (a 100-entry unsorted `apps` menu is harder to
-> scan, and "most-specific-accept" ≠ "most-relevant"). The per-source
-> `list_cmd` fan-out here is uncached — sharing slice 7b's entity cache is a
-> tracked follow-up.
+> (first-seen wins, preserving rank). Ranking is per-source. Order-preserving
+> consumers (zsh `_describe`, fish, compose-GUI) can present this order;
+> **bash keeps its flat menu alphabetical by design** (a 100-entry unsorted
+> `apps` menu is harder to scan, and "most-specific-accept" ≠ "most-relevant").
+> Note the stage emits bare ids (no source tag), so consumers get *order* but
+> can't *group* by source or distinguish a same-id collision across sources —
+> true grouping needs the source-qualified completion deferred in
+> [completion-polish.md](completion-polish.md) §1; when that lands, the output
+> format and the cross-source dedupe rule should be revisited together. The
+> per-source `list_cmd` fan-out here is uncached — sharing slice 7b's entity
+> cache is a tracked follow-up.
 
 After a verb is on the line, subject suggestions should be **ranked by**:
 1. Whether the source's `emits` would dispatch under the verb's
