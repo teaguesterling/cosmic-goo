@@ -1269,14 +1269,33 @@ fn exec_verb(
         Err(e) => return die(format!("verb_apply: {e}")),
     };
     if rendered.confirm {
-        eprintln!("About to run: {}", rendered.cmd);
-        let mut ans = String::new();
-        std::io::stdin().read_line(&mut ans).ok();
-        match ans.trim() {
-            "y" | "Y" | "yes" | "YES" => {}
-            _ => {
-                eprintln!("goo: verb_apply: cancelled");
-                return 130;
+        let verb_name = verb.get("name").and_then(Value::as_str).unwrap_or("");
+        if confirm_preapproved(adverbs, verb_name) {
+            // Scoped, per-invocation pre-approval — the verb was named in
+            // `--confirm-dangerous`. Announced loudly so the bypass is never silent.
+            eprintln!("goo: --confirm-dangerous: auto-approving '{verb_name}'");
+        } else {
+            let chip = if verb.get("destructive").and_then(Value::as_bool).unwrap_or(false) {
+                " [!!]"
+            } else {
+                " [!]"
+            };
+            let what = verb.get("description").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(verb_name);
+            eprintln!("goo: about to {what}{chip}");
+            let label = confirm_subject_label(subject);
+            if !label.is_empty() {
+                eprintln!("       subject: {label}");
+            }
+            eprintln!("       runs: {}", rendered.cmd);
+            eprint!("     proceed? [y/N] ");
+            let mut ans = String::new();
+            std::io::stdin().read_line(&mut ans).ok();
+            match ans.trim() {
+                "y" | "Y" | "yes" | "YES" => {}
+                _ => {
+                    eprintln!("goo: cancelled");
+                    return 130;
+                }
             }
         }
     }
@@ -1285,6 +1304,59 @@ fn exec_verb(
     match adverbs.get("to").and_then(|v| v.as_str()) {
         None => bash_exec(&rendered.cmd),
         Some(d) => route_result(d, &bash_capture_bytes(&rendered.cmd), reg),
+    }
+}
+
+/// True when `verb_name` was pre-approved this run via `--confirm-dangerous=…`.
+/// Flag-only and per-invocation by design: scoping the bypass to named verbs is
+/// the whole point — an exported env var would just be a persistent blanket
+/// bypass (the unsafe thing `--no-confirm` was). The run-path gate is suppressed
+/// for these verbs; the `confirm`/`destructive` chips still always render in
+/// `describe`/`what` (decision D1 — the chip is the verb's nature, not the gate).
+fn confirm_preapproved(adverbs: &Value, verb_name: &str) -> bool {
+    adverbs
+        .get("confirm-dangerous")
+        .and_then(Value::as_str)
+        .map(|s| s.split(',').map(str::trim).any(|v| v == verb_name))
+        .unwrap_or(false)
+}
+
+/// A short, human label for the subject in the confirm prompt: id, else title,
+/// else a one-line/40-char-capped slice of the text content.
+fn confirm_subject_label(subject: &Value) -> String {
+    for key in ["id", "title"] {
+        if let Some(s) = subject.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()) {
+            return s.to_string();
+        }
+    }
+    if let Some(t) = subject.get("text").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        let one = t.lines().next().unwrap_or("");
+        return if one.chars().count() > 40 {
+            format!("{}…", one.chars().take(40).collect::<String>())
+        } else {
+            one.to_string()
+        };
+    }
+    String::new()
+}
+
+/// Warn (don't fail) if a name passed to `--confirm-dangerous` isn't actually a
+/// confirm/destructive verb — a typo (`detroy`) or a misunderstanding. Scans the
+/// registry once; a name matching no confirm/destructive verb entry is flagged.
+fn warn_unknown_confirm_dangerous(reg: &Value, adverbs: &Value) {
+    let Some(list) = adverbs.get("confirm-dangerous").and_then(Value::as_str) else { return };
+    let verbs = reg.get("verbs").and_then(Value::as_array).cloned().unwrap_or_default();
+    let is_dangerous = |name: &str| {
+        verbs.iter().any(|v| {
+            v.get("name").and_then(Value::as_str) == Some(name)
+                && (v.get("confirm").and_then(Value::as_bool).unwrap_or(false)
+                    || v.get("destructive").and_then(Value::as_bool).unwrap_or(false))
+        })
+    };
+    for name in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if !is_dangerous(name) {
+            eprintln!("goo: --confirm-dangerous: '{name}' is not a confirm/destructive verb (typo?)");
+        }
     }
 }
 
@@ -2118,6 +2190,7 @@ fn cmd_verb(reg: &Value, args: &[String]) -> i32 {
 
     // Parse remaining args: positionals + --flag[=val].
     let (positionals, adverbs) = parse_args(&args[1..]);
+    warn_unknown_confirm_dangerous(reg, &adverbs);
     let subject_arg = positionals.first().cloned().unwrap_or_default();
     let object_arg = positionals.get(1).cloned().unwrap_or_default();
 
