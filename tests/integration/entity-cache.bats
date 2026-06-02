@@ -1,24 +1,18 @@
 #!/usr/bin/env bats
-# Per-source entity-list cache (slice 7b / data-entry-ux.md §3.3). Entity
-# inference enumerates every participating source's `list_cmd`; without a cache
-# that's a subprocess fan-out on every keystroke. This file proves the cache
-# actually SERVES reads across separate `goo` processes — not just that a cache
-# file gets written.
+# Watch-validated entity cache (data-entry-ux.md §3.3 + the cache-staleness fix).
+# The hard guarantee: the cache NEVER serves data older than its source's truth.
+# A source caches only when it declares `watch` paths; an entry is valid iff its
+# `cmd` is unchanged AND every watch path's mtime equals the value observed when
+# the entry was written. No `watch` ⇒ never cached (recompute every run).
 #
-# The discriminating instrument is a WITNESS file: each source's `list_cmd`
-# appends a tagged line every time it actually runs. A working cache ⇒ two
-# `goo` invocations within the TTL run a source's `list_cmd` ONCE (witness has
-# 1 tagged line). A broken/disabled cache ⇒ twice. Asserting only that "the
-# cache file exists" would NOT catch a cache that's written-but-never-read — so
-# we count witness lines instead.
+# Instrument: a WITNESS file the list_cmd appends to whenever it actually runs,
+# so we can count real executions across separate `goo` processes. The `cached`
+# source's list_cmd both reads AND watches the same data file (~/data.json), so
+# editing that file is the single, precise invalidation signal.
 #
-# We drive the cache with a NON-MATCHING query (`nomatchxyz`): inference still
-# enumerates EVERY source (scoring scans all sources' lists regardless of
-# match), but no candidate wins, so it falls through with NO dispatch. That
-# isolates the enumerate→cache path from the separate subject-resolution path
-# that a DEFINITIVE resolution would also trigger.
-
-QUERY="nomatchxyz"
+# Bats runs `goo` non-TTY (Script context). A non-matching query enumerates
+# every source (the cache path) but resolves nothing; exact-id queries resolve
+# DEFINITIVE (safe in scripts) so we can observe WHICH data was served.
 
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
@@ -27,86 +21,90 @@ setup() {
     export COSMIC_GOO_BUILTIN_PLUGINS_DIR="$BATS_TEST_TMPDIR/plugins"
     export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/xdg"
     export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/runtime"
-    HOME="$BATS_TEST_TMPDIR/home"
-    mkdir -p "$COSMIC_GOO_BUILTIN_PLUGINS_DIR" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
+    export HOME="$BATS_TEST_TMPDIR/home"
+    mkdir -p "$COSMIC_GOO_BUILTIN_PLUGINS_DIR" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$HOME"
 
-    export CACHE_WITNESS="$BATS_TEST_TMPDIR/witness"
-    export ENTITY_CACHE_DIR="$XDG_RUNTIME_DIR/cosmic-goo/entities"
+    : > "$HOME/witness"
+    : > "$HOME/marker"
+    echo '[{"id":"alpha","title":"Alpha"}]' > "$HOME/data.json"
 
-    # Three sources, each tagging the witness when its list_cmd runs:
-    #   cached    — default TTL (5s): should run once across two invocations
-    #   volatile  — cache_ttl = 0: should run every invocation (never cached)
-    #   empty     — returns []: a transient-failure stand-in; must NOT be cached
-    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/test-cache.toml" <<EOF
-name = "test-cache"
+    #   cached   — declares watch=[~/data.json]; list_cmd reads that same file,
+    #              so the watch is a precise, never-stale invalidator.
+    #   volatile — no watch ⇒ never cached ⇒ runs every invocation.
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/wc.toml" <<'EOF'
+name = "watch-cache"
 
 [[sources]]
-name = "cached-src"
+name = "cached"
 prefix = "cch"
-emits = "application/vnd.entitycache.cached"
-list_cmd = "printf 'cached\\n' >> '$CACHE_WITNESS'; echo '[{\"id\":\"zenith\",\"title\":\"Zenith\"}]'"
+emits = "application/vnd.wc.item"
+watch = ["~/data.json"]
+list_cmd = "printf 'ran\n' >> \"$HOME/witness\"; cat \"$HOME/data.json\""
 
 [[sources]]
-name = "volatile-src"
+name = "volatile"
 prefix = "vol"
-emits = "application/vnd.entitycache.volatile"
-cache_ttl = 0
-list_cmd = "printf 'volatile\\n' >> '$CACHE_WITNESS'; echo '[{\"id\":\"quasar\",\"title\":\"Quasar\"}]'"
+emits = "application/vnd.wc.vol"
+list_cmd = "printf 'volran\n' >> \"$HOME/witness\"; echo '[{\"id\":\"qux\",\"title\":\"Qux\"}]'"
 
-[[sources]]
-name = "empty-src"
-prefix = "emp"
-emits = "application/vnd.entitycache.empty"
-list_cmd = "printf 'empty\\n' >> '$CACHE_WITNESS'; echo '[]'"
+[[verbs]]
+name = "mark"
+accepts = ["application/vnd.wc.item"]
+default_for = "application/vnd.wc.item"
+cmd = "printf '%s' {subject.id|q} > \"$HOME/marker\""
 EOF
     cd "$BATS_TEST_TMPDIR" || return 1
 
-    # Skip on engines without inference (bash legacy).
     run "$GOO" __complete subcommands </dev/null
     if ! echo "$output" | grep -q "what"; then
         skip "engine has no entity inference (bash legacy)"
     fi
 }
 
-# Count how many times a tagged source's list_cmd ran.
-witness_count() {
-    grep -c "^$1\$" "$CACHE_WITNESS" 2>/dev/null || echo 0
+wcount() { grep -c "^$1\$" "$HOME/witness" 2>/dev/null || true; }
+
+# ---------- the cache serves, across processes ----------
+
+@test "entity-cache: watched source runs list_cmd ONCE while its watch file is unchanged" {
+    "$GOO" zzqqxx </dev/null 2>/dev/null || true
+    "$GOO" zzqqxx </dev/null 2>/dev/null || true
+    [ "$(wcount ran)" -eq 1 ]
 }
 
-# ---------- the core property: cache serves reads across processes ----------
+# ---------- mtime invalidation: the no-stale guarantee ----------
 
-@test "entity-cache: default-TTL source runs list_cmd ONCE across two invocations" {
-    "$GOO" "$QUERY" </dev/null 2>/dev/null || true
-    "$GOO" "$QUERY" </dev/null 2>/dev/null || true
-    # The proof: two separate `goo` processes, one actual list_cmd run.
-    [ "$(witness_count cached)" -eq 1 ]
+@test "entity-cache: touching the watch file re-runs list_cmd (mtime invalidation)" {
+    "$GOO" zzqqxx </dev/null 2>/dev/null || true
+    sleep 0.05; touch "$HOME/data.json"          # new mtime, same content
+    "$GOO" zzqqxx </dev/null 2>/dev/null || true
+    [ "$(wcount ran)" -eq 2 ]
 }
 
-@test "entity-cache: a cache file is written for the cached source" {
-    "$GOO" "$QUERY" </dev/null 2>/dev/null || true
-    [ -f "$ENTITY_CACHE_DIR/cached-src.json" ]
-    # Stores the cmd alongside items (so a changed list_cmd busts the entry).
-    grep -q '"cmd"' "$ENTITY_CACHE_DIR/cached-src.json"
-    grep -q '"zenith"' "$ENTITY_CACHE_DIR/cached-src.json"
+@test "entity-cache: edited data is served fresh, never stale" {
+    # Warm the cache with alpha.
+    "$GOO" alpha </dev/null 2>/dev/null
+    [ "$(cat "$HOME/marker")" = "alpha" ]
+    # Change the underlying data (and its mtime).
+    sleep 0.05; echo '[{"id":"beta","title":"Beta"}]' > "$HOME/data.json"
+    # If the cache were stale it would still hold alpha and 'beta' would not
+    # resolve; a fresh cache re-reads and resolves beta.
+    "$GOO" beta </dev/null 2>/dev/null
+    [ "$(cat "$HOME/marker")" = "beta" ]
 }
 
-@test "entity-cache: cache_ttl = 0 source runs list_cmd EVERY invocation (never cached)" {
-    # The discriminator that proves the witness test above measures the cache
-    # and not some other dedup: same two-invocation shape, but ttl=0 ⇒ 2 runs.
-    "$GOO" "$QUERY" </dev/null 2>/dev/null || true
-    "$GOO" "$QUERY" </dev/null 2>/dev/null || true
-    [ "$(witness_count volatile)" -eq 2 ]
-    # ...and no cache file for a never-cache source.
-    [ ! -f "$ENTITY_CACHE_DIR/volatile-src.json" ]
+# ---------- no watch ⇒ never cached ----------
+
+@test "entity-cache: a source with no watch runs list_cmd every invocation" {
+    "$GOO" zzqqxx </dev/null 2>/dev/null || true
+    "$GOO" zzqqxx </dev/null 2>/dev/null || true
+    [ "$(wcount volran)" -eq 2 ]
 }
 
-@test "entity-cache: an empty list_cmd result is NOT cached (transient-failure guard)" {
-    # `empty-src` returns [] — the stand-in for a momentarily-failing source
-    # (dbus not ready, cos-cli hiccup). Caching [] would pin the source out of
-    # inference for the whole TTL; we must re-run instead.
-    "$GOO" "$QUERY" </dev/null 2>/dev/null || true
-    [ ! -f "$ENTITY_CACHE_DIR/empty-src.json" ]
-    # And because it's never cached, a second run re-executes it.
-    "$GOO" "$QUERY" </dev/null 2>/dev/null || true
-    [ "$(witness_count empty)" -eq 2 ]
+# ---------- goo reload ----------
+
+@test "entity-cache: goo reload clears the cache (re-runs even with unchanged watch)" {
+    "$GOO" zzqqxx </dev/null 2>/dev/null || true   # warm (ran=1)
+    "$GOO" reload </dev/null 2>/dev/null
+    "$GOO" zzqqxx </dev/null 2>/dev/null || true   # cache gone ⇒ re-run (ran=2)
+    [ "$(wcount ran)" -eq 2 ]
 }

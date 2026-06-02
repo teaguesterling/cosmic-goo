@@ -96,6 +96,7 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
             _ => die("what: usage: goo what <subject>"),
         },
         Some("dispatch") => cmd_dispatch(args.get(1).map(String::as_str)),
+        Some("reload") => cmd_reload(),
         Some("__complete") => cmd_complete(&args[1..]),
         Some("-h") | Some("--help") | Some("help") => {
             print_usage();
@@ -373,6 +374,17 @@ fn cmd_goo(reg: &Value, addr: &str, rest: &[String]) -> i32 {
 /// subject, with chips and descriptions. The same projection (`options::options_for`)
 /// the dispatch-error path consumes — divergence is a bug. Single-source-of-truth
 /// surface for "what can I do with this thing" in the CLI; per `OPTIONS.allow`
+/// `goo reload` — drop the entity-list cache so the next inference re-reads
+/// every source fresh. The watch-validated cache never serves stale data on its
+/// own (it invalidates on a source's watch-file mtime); this is the manual
+/// override for the cases watch can't see yet (a source whose data changed with
+/// no file to watch, before the `good` daemon's dbus/inotify hooks exist).
+fn cmd_reload() -> i32 {
+    let n = inference::clear_entity_cache();
+    eprintln!("goo: reload: cleared {n} cached source list(s)");
+    0
+}
+
 /// ordering. See completion-polish.md §6 slice 3.
 fn cmd_what(reg: &Value, addr: &str) -> i32 {
     let subject = match address::resolve(addr, reg, None) {
@@ -1485,7 +1497,7 @@ fn cmd_validate() -> i32 {
 
     // Reserved subcommands an alias can never shadow.
     const RESERVED: &[&str] = &[
-        "compose", "list", "describe", "plugins", "validate", "dispatch", "__complete", "help",
+        "compose", "list", "describe", "plugins", "validate", "dispatch", "reload", "__complete", "help",
         "options", "what", "-h", "--help",
     ];
 
@@ -1679,7 +1691,7 @@ fn cmd_complete(args: &[String]) -> i32 {
     let arg = args.get(1).map(String::as_str).unwrap_or("");
     match stage {
         "subcommands" => {
-            println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nwhat\nhelp");
+            println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nreload\nwhat\nhelp");
             for v in arr("verbs") {
                 if let Some(n) = v.get("name").and_then(|n| n.as_str()) {
                     println!("{n}");

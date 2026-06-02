@@ -9,12 +9,15 @@
 //!
 //! **v1 scope** (slice #7):
 //!  - scoring + bands + per-source weights ✓
-//!  - source enumeration (calls `list_cmd` per inferable source), now with a
-//!    per-source TTL cache at `$XDG_RUNTIME_DIR/cosmic-goo/entities/<name>.json`
-//!    (slice 7b, task #24, §3.3) + the `inferable` opt-in field. The cache is
-//!    an optimization, never a correctness gate: any IO/parse miss falls back
-//!    to running `list_cmd` directly. mtime/dbus-signal invalidation hooks are
-//!    deferred — the TTL is §3.3's stated universal fallback for every source.
+//!  - source enumeration (calls `list_cmd` per inferable source), with a
+//!    **watch-validated** per-source cache at
+//!    `$XDG_RUNTIME_DIR/cosmic-goo/entities/<name>.json` (slice 7b + the
+//!    cache-staleness fix, §3.3) + the `inferable` opt-in field. A source
+//!    caches only when it declares `watch` paths; an entry is valid iff its
+//!    `cmd` is unchanged AND every watch path's mtime matches the value
+//!    observed when it was written — so the cache is **never stale**. The cache
+//!    is an optimization, never a correctness gate: no watch / any miss → run
+//!    `list_cmd`. See the cache section below.
 //!  - verb-position only (noun-first dispatch); subject-position inference is
 //!    slice #8 (verb-aware bias) — caller passes the bare token, not a
 //!    verb+token pair
@@ -84,13 +87,6 @@ const HIGH_FLOOR: f64 = 200.0;
 /// **MEDIUM_FLOOR**: above this is "ambiguous but plausible" territory. Below =
 /// noise; fall through to text.
 const MEDIUM_FLOOR: f64 = 60.0;
-
-/// Default per-source list-cache TTL (seconds) when a source declares no
-/// `cache_ttl`. 5s matches §3.3's stated fallback for the cheap-but-volatile
-/// launcher sources (apps/windows/workspaces/focused). A source can override
-/// (a quieter source raises it; `cache_ttl = 0` opts a volatile source out of
-/// caching entirely — always re-run `list_cmd`).
-const DEFAULT_CACHE_TTL_SECS: u64 = 5;
 
 // ---------- public output types ----------
 
@@ -330,87 +326,144 @@ pub fn assign_band(candidates: &[Candidate]) -> (Band, Reason) {
 }
 
 // ---------- per-source list cache (§3.3) ----------
-
-/// Pure freshness predicate, factored out so the TTL policy is unit-testable
-/// without touching disk. `age_secs` is the cache entry's age; `None` means
-/// the age couldn't be determined (missing/future mtime → treat as stale, not
-/// an error). `ttl_secs == 0` means "never cache" → always stale.
-pub fn cache_is_fresh(age_secs: Option<u64>, ttl_secs: u64) -> bool {
-    if ttl_secs == 0 {
-        return false;
-    }
-    match age_secs {
-        Some(age) => age < ttl_secs,
-        None => false,
-    }
-}
+//
+// **Correctness over staleness.** The cache must NEVER serve data older than
+// its source's current truth. So a source caches only when it declares `watch`
+// paths — files whose mtime is the source's freshness signal. An entry is valid
+// iff its `cmd` is unchanged AND every watched path's CURRENT mtime exactly
+// equals the mtime observed when the entry was written. We stat the watch paths
+// BEFORE running `list_cmd`, so a concurrent edit yields a false-STALE (a safe
+// recompute), never a false-fresh.
+//
+// Sources WITHOUT `watch` (command/dbus-backed — apps via cos-cli, bluetooth,
+// services, …) are NOT cached here: on a one-shot CLI we can't prove their
+// freshness, so we recompute every run rather than risk staleness. True warm
+// caching for those is a `good`-daemon job (#31: inotify + dbus signals).
+// `goo reload` clears the dir. Watch paths support `~` (XDG/`$VAR` forms are
+// the daemon's concern); an unresolved path simply won't exist → no cache,
+// never stale.
 
 /// `$XDG_RUNTIME_DIR/cosmic-goo/entities/`, or `None` if the runtime dir is
 /// unset (then caching is disabled and we always run `list_cmd`).
-fn entity_cache_dir() -> Option<PathBuf> {
+pub fn entity_cache_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_RUNTIME_DIR")?;
     Some(PathBuf::from(base).join("cosmic-goo").join("entities"))
 }
 
-/// Fetch a source's list items, served from the per-source TTL cache when warm.
-/// The cache is an optimization, never a correctness gate: an unset
-/// `XDG_RUNTIME_DIR`, `ttl == 0`, an empty source name, or any IO/parse failure
-/// all fall back to running `list_cmd` directly. We store the `cmd` alongside
-/// the `items` so a changed `list_cmd` busts the entry, and we never write an
-/// empty result (a transient `list_cmd` failure must not pin a source out of
-/// inference for the whole TTL).
-fn fetch_source_items(name: &str, list_cmd: &str, ttl_secs: u64) -> Vec<Value> {
-    let cache_file = if ttl_secs > 0 && !name.is_empty() {
+/// Remove every `*.json` entry from the entity cache dir; returns how many were
+/// removed. Backs `goo reload`. A missing dir / unset runtime is `Ok(0)`.
+pub fn clear_entity_cache() -> usize {
+    let Some(dir) = entity_cache_dir() else { return 0 };
+    let mut n = 0;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            if e.path().extension().and_then(|x| x.to_str()) == Some("json")
+                && std::fs::remove_file(e.path()).is_ok()
+            {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// Expand a leading `~` to `$HOME`. Minimal by design: an unrecognised form is
+/// left literal, which just means the path won't exist → the source won't cache
+/// (safe — recompute, never stale).
+fn expand_path(p: &str) -> String {
+    if let Some(rest) = p.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return format!("{}/{rest}", home.to_string_lossy());
+        }
+    } else if p == "~" {
+        if let Some(home) = std::env::var_os("HOME") {
+            return home.to_string_lossy().into_owned();
+        }
+    }
+    p.to_string()
+}
+
+/// Current mtime of a watch path as nanoseconds-since-epoch (string, to survive
+/// JSON round-trips losslessly). `None` if the path can't be stat'd.
+fn mtime_repr(path: &str) -> Option<String> {
+    let m = std::fs::metadata(expand_path(path)).ok()?;
+    m.modified().ok()?.duration_since(SystemTime::UNIX_EPOCH).ok().map(|d| d.as_nanos().to_string())
+}
+
+/// Stat every watch path NOW (before `list_cmd` runs). `None` if `watch` is
+/// empty OR any path is missing → that source won't be cached this run.
+fn observe_watch(watch: &[String]) -> Option<Vec<(String, String)>> {
+    if watch.is_empty() {
+        return None;
+    }
+    watch.iter().map(|p| Some((p.clone(), mtime_repr(p)?))).collect()
+}
+
+/// Fetch a source's list items, served from the watch-validated cache when
+/// fresh. The cache is an optimization, never a correctness gate: no `watch`,
+/// an unset `XDG_RUNTIME_DIR`, an empty name, a missing watch path, or any
+/// IO/parse failure all fall back to running `list_cmd` directly.
+fn fetch_source_items(name: &str, list_cmd: &str, watch: &[String]) -> Vec<Value> {
+    let cache_file = if !name.is_empty() && !watch.is_empty() {
         entity_cache_dir().map(|d| d.join(format!("{name}.json")))
     } else {
         None
     };
 
-    if let Some(ref path) = cache_file {
-        if let Some(items) = read_fresh_cache(path, list_cmd, ttl_secs) {
+    if let Some(path) = &cache_file {
+        if let Some(items) = read_fresh_cache(path, list_cmd, watch) {
             return items;
         }
     }
 
+    // Observe watch mtimes BEFORE running, so a concurrent edit during the run
+    // produces a false-STALE next time (recompute), never a false-fresh.
+    let observed = if cache_file.is_some() { observe_watch(watch) } else { None };
     let output = bash_capture(list_cmd);
     let items: Vec<Value> = serde_json::from_str(output.trim()).unwrap_or_default();
 
-    if let Some(ref path) = cache_file {
+    if let (Some(path), Some(obs)) = (&cache_file, &observed) {
+        // Never cache an empty result — a transient `list_cmd` failure must not
+        // pin a source out of inference until its watch file next changes.
         if !items.is_empty() {
-            write_cache_atomic(path, list_cmd, &items);
+            write_cache_atomic(path, list_cmd, obs, &items);
         }
     }
     items
 }
 
-/// Read `<name>.json` if it's fresh AND was written for this exact `list_cmd`.
-/// Any failure (missing, stale, parse error, cmd mismatch) returns `None` →
-/// the caller re-runs `list_cmd`.
-fn read_fresh_cache(path: &Path, list_cmd: &str, ttl_secs: u64) -> Option<Vec<Value>> {
-    let meta = std::fs::metadata(path).ok()?;
-    // `duration_since` errs on a future mtime (clock skew / `touch -d future`);
-    // `.ok()` maps that to `None` → `cache_is_fresh(None, _) == false` → stale.
-    let age = SystemTime::now().duration_since(meta.modified().ok()?).ok();
-    if !cache_is_fresh(age.map(|d| d.as_secs()), ttl_secs) {
-        return None;
-    }
+/// Read `<name>.json` iff `cmd` is unchanged AND every watch path's current
+/// mtime exactly matches the stored one. Any miss → `None` → recompute.
+fn read_fresh_cache(path: &Path, list_cmd: &str, watch: &[String]) -> Option<Vec<Value>> {
     let cached: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-    // Bust if the source's command changed since this entry was written.
     if cached.get("cmd").and_then(Value::as_str) != Some(list_cmd) {
         return None;
+    }
+    let stored = cached.get("watch").and_then(Value::as_object)?;
+    if stored.len() != watch.len() {
+        return None; // the source's watch set changed since this entry
+    }
+    for p in watch {
+        let cur = mtime_repr(p)?; // path gone now → stale
+        if stored.get(p).and_then(Value::as_str) != Some(cur.as_str()) {
+            return None; // edited (or never recorded) → stale
+        }
     }
     Some(cached.get("items")?.as_array()?.clone())
 }
 
-/// Write `{cmd, items}` to `<name>.json` atomically (temp + rename) so a reader
-/// — or an overlapping per-keystroke writer — never sees a half-written file.
-/// Best-effort: every failure is swallowed (the cache is non-load-bearing).
-fn write_cache_atomic(path: &Path, list_cmd: &str, items: &[Value]) {
+/// Write `{cmd, watch, items}` atomically (temp + rename) so a reader — or an
+/// overlapping writer — never sees a half-written file. Best-effort.
+fn write_cache_atomic(path: &Path, list_cmd: &str, watch: &[(String, String)], items: &[Value]) {
     let Some(dir) = path.parent() else { return };
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
-    let Ok(serialized) = serde_json::to_string(&json!({ "cmd": list_cmd, "items": items })) else {
+    let watch_obj: serde_json::Map<String, Value> =
+        watch.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+    let Ok(serialized) =
+        serde_json::to_string(&json!({ "cmd": list_cmd, "watch": watch_obj, "items": items }))
+    else {
         return;
     };
     // pid-unique temp in the same dir → rename is atomic on the same filesystem.
@@ -438,9 +491,10 @@ fn write_cache_atomic(path: &Path, list_cmd: &str, items: &[Value]) {
 /// the genuinely-undesirable sources (processes/containers/branches/hist —
 /// already `enumerate = false`) stay out for free. The two sources §3.3 wants
 /// participating *despite* `enumerate = false` (bluetooth, services) are slow
-/// (a timeout-bounded probe / a full unit scan) and stay deferred under this
-/// TTL-only cache — they opt back in with `inferable = true` once the entity
-/// cache grows signal-based invalidation (§3.3).
+/// (a timeout-bounded probe / a full unit scan) and have no file to `watch`, so
+/// they'd recompute on every keystroke — they stay deferred until the `good`
+/// daemon can warm them via dbus signals; opt back in with `inferable = true`
+/// then (§3.3).
 ///
 /// `verb_filter` (slice 8 / §3.4): when `Some(verb)`, a source ALSO has to have
 /// its `emits` accepted by the verb. This *narrows* on top of the participation
@@ -476,12 +530,13 @@ fn enumerate_and_score(raw: &str, reg: &Value, verb_filter: Option<&Value>) -> V
         let source_name = source.get("name").and_then(Value::as_str).unwrap_or("").to_string();
         let source_prefix = source.get("prefix").and_then(Value::as_str).unwrap_or("").to_string();
         let emits = source.get("emits").and_then(Value::as_str).unwrap_or("").to_string();
-        let ttl = source
-            .get("cache_ttl")
-            .and_then(Value::as_u64)
-            .unwrap_or(DEFAULT_CACHE_TTL_SECS);
+        let watch: Vec<String> = source
+            .get("watch")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|p| p.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
 
-        let items = fetch_source_items(&source_name, list_cmd, ttl);
+        let items = fetch_source_items(&source_name, list_cmd, &watch);
         for item in items {
             let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
             let title = item.get("title").and_then(Value::as_str).unwrap_or("").to_string();
@@ -775,27 +830,26 @@ mod tests {
     // items. Real sources call real tools (cos-cli, findmnt, …); we don't
     // exercise those here.
 
-    // `cache_ttl: 0` keeps these orchestration tests hermetic — they exercise
-    // the live `list_cmd` path (deterministic `echo`s) without writing to the
-    // dev's real `$XDG_RUNTIME_DIR`. The caching path itself is proven in
-    // `tests/integration/entity-inference.bats` (witness-file reuse) + the
-    // `cache_is_fresh` unit tests below.
+    // These orchestration fixtures declare no `watch`, so they're never cached —
+    // hermetic by construction (no writes to the dev's real `$XDG_RUNTIME_DIR`),
+    // exercising the live `list_cmd` path (deterministic `echo`s). The cache
+    // itself is proven in `tests/integration/entity-cache.bats`.
     fn fixture_reg() -> Value {
         j!({
             "sources": [
                 {
                     "name": "apps", "prefix": "app", "emits": "application/vnd.app",
-                    "weight": 1.3, "cache_ttl": 0,
+                    "weight": 1.3,
                     "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"Firefox Browser\"},{\"id\":\"thunderbird\",\"title\":\"Thunderbird Mail\"}]'"
                 },
                 {
                     "name": "recent", "prefix": "recent", "emits": "text/plain",
-                    "weight": 1.1, "cache_ttl": 0,
+                    "weight": 1.1,
                     "list_cmd": "echo '[{\"id\":\"fox-recipe.md\",\"title\":\"Fox recipe\"},{\"id\":\"Notes.md\",\"title\":\"Notes.md\"}]'"
                 },
                 {
                     "name": "hist", "prefix": "hist", "emits": "text/plain",
-                    "weight": 0.6, "cache_ttl": 0,
+                    "weight": 0.6,
                     "list_cmd": "echo '[{\"id\":\"14\",\"title\":\"fox news headline\"}]'"
                 }
             ]
@@ -857,12 +911,12 @@ mod tests {
             "sources": [
                 {
                     "name": "apps", "prefix": "app", "emits": "x/app",
-                    "weight": 1.3, "cache_ttl": 0,
+                    "weight": 1.3,
                     "list_cmd": "echo '[{\"id\":\"thing\",\"title\":\"App thing\"}]'"
                 },
                 {
                     "name": "hist", "prefix": "hist", "emits": "x/hist",
-                    "weight": 0.6, "cache_ttl": 0,
+                    "weight": 0.6,
                     "list_cmd": "echo '[{\"id\":\"thing\",\"title\":\"Hist thing\"}]'"
                 }
             ]
@@ -882,11 +936,11 @@ mod tests {
             "sources": [
                 {
                     "name": "skipped", "prefix": "skip", "emits": "x/skip",
-                    "enumerate": false, "cache_ttl": 0,
+                    "enumerate": false,
                     "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"shouldn't see this\"}]'"
                 },
                 {
-                    "name": "apps", "prefix": "app", "emits": "x/app", "cache_ttl": 0,
+                    "name": "apps", "prefix": "app", "emits": "x/app",
                     "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"Firefox\"}]'"
                 }
             ]
@@ -904,11 +958,11 @@ mod tests {
             "sources": [
                 {
                     "name": "noisy", "prefix": "noisy", "emits": "x/noisy",
-                    "inferable": false, "cache_ttl": 0,
+                    "inferable": false,
                     "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"shouldn't see this\"}]'"
                 },
                 {
-                    "name": "apps", "prefix": "app", "emits": "x/app", "cache_ttl": 0,
+                    "name": "apps", "prefix": "app", "emits": "x/app",
                     "list_cmd": "echo '[{\"id\":\"firefox\",\"title\":\"Firefox\"}]'"
                 }
             ]
@@ -926,7 +980,7 @@ mod tests {
             "sources": [
                 {
                     "name": "bluetooth", "prefix": "bt", "emits": "x/bt",
-                    "enumerate": false, "inferable": true, "cache_ttl": 0,
+                    "enumerate": false, "inferable": true,
                     "list_cmd": "echo '[{\"id\":\"earbuds\",\"title\":\"Earbuds\"}]'"
                 }
             ]
@@ -936,16 +990,21 @@ mod tests {
         assert_eq!(subj["type"], "x/bt");
     }
 
-    // ---------- cache_is_fresh (pure TTL policy) ----------
+    // The watch-validated cache (mtime equality) touches the filesystem, so it's
+    // proven in `tests/integration/entity-cache.bats` (witness-file: unchanged
+    // watch file ⇒ one list_cmd run across processes; `touch` the watch ⇒ a new
+    // run) rather than here. `expand_path` is covered below.
 
     #[test]
-    fn cache_freshness_respects_ttl_and_edge_cases() {
-        assert!(cache_is_fresh(Some(0), 5), "just-written entry is fresh");
-        assert!(cache_is_fresh(Some(4), 5), "within TTL is fresh");
-        assert!(!cache_is_fresh(Some(5), 5), "at TTL boundary is stale");
-        assert!(!cache_is_fresh(Some(9), 5), "past TTL is stale");
-        assert!(!cache_is_fresh(Some(0), 0), "ttl=0 (never-cache) is always stale");
-        assert!(!cache_is_fresh(None, 5), "unknown/future mtime is stale, not an error");
+    fn expand_path_handles_tilde() {
+        // Read HOME (don't mutate it — tests run in parallel).
+        let home = std::env::var("HOME").unwrap_or_default();
+        if !home.is_empty() {
+            assert_eq!(expand_path("~/.ssh/config"), format!("{home}/.ssh/config"));
+            assert_eq!(expand_path("~"), home);
+        }
+        assert_eq!(expand_path("/proc/self/mountinfo"), "/proc/self/mountinfo");
+        assert_eq!(expand_path("relative/path"), "relative/path");
     }
 
     #[test]
@@ -968,12 +1027,10 @@ mod tests {
             "sources": [
                 {
                     "name": "devices", "prefix": "dev", "emits": "application/vnd.bt.device",
-                    "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"foxbuds\",\"title\":\"Foxbuds\"}]'"
                 },
                 {
                     "name": "recent", "prefix": "recent", "emits": "text/plain",
-                    "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"foxnote\",\"title\":\"Foxnote\"}]'"
                 }
             ]
@@ -1026,12 +1083,11 @@ mod tests {
             "sources": [
                 {
                     "name": "hist", "prefix": "hist", "emits": "text/plain",
-                    "inferable": false, "cache_ttl": 0,
+                    "inferable": false,
                     "list_cmd": "echo '[{\"id\":\"foxclip\",\"title\":\"fox clipboard fragment\"}]'"
                 },
                 {
                     "name": "recent", "prefix": "recent", "emits": "text/plain",
-                    "cache_ttl": 0,
                     "list_cmd": "echo '[{\"id\":\"foxnote\",\"title\":\"Foxnote\"}]'"
                 }
             ]

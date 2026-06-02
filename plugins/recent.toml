@@ -13,6 +13,9 @@ name = "recent"
 prefix = "recent"
 icon = "document-open-recent"
 emits = "inode/file"
+# Entity-cache freshness signal: re-read only when the xbel file changes (mtime).
+# The list_cmd reads exactly this file, so it's a precise, never-stale invalidator.
+watch = ["~/.local/share/recently-used.xbel"]
 # Stale entries (file deleted since) are filtered out. Python is used because
 # xbel is XML and shelling out to xmllint + sed for href + title gets ugly fast;
 # python3 is on every freedesktop system.
