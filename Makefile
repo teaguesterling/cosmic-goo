@@ -17,7 +17,7 @@ SHELL := /bin/bash
 GOO_RELEASE = crates/target/release/goo
 GOO_DEBUG   = crates/target/debug/goo
 
-.PHONY: help test test-bash test-both shellcheck validate build install install-bash install-cosmic install-core uninstall tiers clean docs serve docs-install install-completion
+.PHONY: help test test-bash test-both shellcheck validate build install install-bash install-cosmic install-core uninstall tiers clean docs serve landscape landscape-check docs-install install-completion
 
 # Install layout / tier selection.
 # PREFIX defaults to a user install (~/.local, no root). TIERS selects which
@@ -152,6 +152,12 @@ serve:  ## Run mkdocs dev server with live reload at http://127.0.0.1:8000/
 		echo "mkdocs not found. See requirements-docs.txt for install options."; exit 1; \
 	fi
 	mkdocs serve
+
+landscape:  ## Regenerate the registry-derived parts of cosmic-goo-landscape.html (stamps today's date)
+	@python3 tools/gen-landscape.py --date "$$(date +%F)"
+
+landscape-check:  ## Fail if the landscape page is stale vs the live registry
+	@python3 tools/gen-landscape.py --check
 
 docs-install:  ## Print install hints for the docs toolchain
 	@echo "Install the docs toolchain via one of:"
