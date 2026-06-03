@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cosmic-goo — an annotated session</title>
+<style>
+  :root{
+    --bg:#0b0e1a; --panel:#161b3a; --panel2:#1d2450; --ink:#e8ecff; --dim:#9aa3d4;
+    --faint:#646db0; --line:#2a3266; --acc:#7c6cff; --acc2:#36d6c3; --warn:#ffb454;
+    --ok:#46e08a; --bad:#ff6b8b; --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,#241a4d 0%,var(--bg) 55%) fixed,var(--bg);
+       color:var(--ink);font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 22px}
+  a{color:var(--acc2);text-decoration:none}
+
+  header.hero{padding:48px 0 24px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(124,108,255,.10),transparent)}
+  .hero h1{margin:0;font-size:34px;letter-spacing:-.5px;
+    background:linear-gradient(90deg,#fff,#b9b1ff 55%,var(--acc2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero .sub{color:var(--dim);margin:10px 0 0;max-width:720px}
+  .hero .meta{margin-top:14px;color:var(--faint);font-size:13px}
+  .hero .meta code{color:var(--acc2);font-family:var(--mono)}
+
+  nav.tabs{position:sticky;top:0;z-index:20;background:rgba(11,14,26,.9);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);margin-bottom:30px}
+  nav.tabs .wrap{display:flex;gap:6px;padding:8px 22px}
+  nav.tabs button{background:none;border:0;color:var(--dim);font:inherit;font-weight:600;cursor:pointer;
+    padding:8px 16px;border-radius:9px}
+  nav.tabs button:hover{color:var(--ink);background:var(--panel)}
+  nav.tabs button.on{color:#fff;background:var(--acc)}
+
+  section.view{display:none}
+  section.view.on{display:block}
+  h2.act{font-size:13px;letter-spacing:1.2px;text-transform:uppercase;color:var(--acc2);
+    margin:42px 0 4px;font-weight:700}
+  h2.act .n{color:var(--faint);margin-right:8px}
+  .act-lede{color:var(--dim);margin:0 0 16px;max-width:760px}
+
+  .step{margin:14px 0 22px}
+  .term{background:#0a0d1c;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .term .bar{display:flex;gap:6px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line);
+    background:var(--panel)}
+  .term .bar i{width:11px;height:11px;border-radius:50%}
+  .term .bar .t{margin-left:8px;color:var(--faint);font-size:11.5px;font-family:var(--mono)}
+  .term pre{margin:0;padding:13px 15px;font-family:var(--mono);font-size:13.5px;line-height:1.5;
+    color:#d6dcff;overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+  .term .cmd{color:#fff}
+  .term .cmd .p{color:var(--acc2);user-select:none}
+  .term .cmd .v{color:var(--warn)}
+  .term .out{color:#aeb6e8}
+  .term .err{color:var(--dim)}
+  .term .ok{color:var(--ok)}
+  .term .nudge{color:var(--acc2)}
+  .term .exit{color:var(--faint);font-size:11.5px}
+
+  .note{margin-top:10px;padding:11px 14px 11px 16px;border-left:3px solid var(--acc);
+    background:var(--panel);border-radius:0 10px 10px 0;color:var(--dim);font-size:14px}
+  .note b{color:var(--ink)}
+  .note code,.chip{font-family:var(--mono);font-size:.86em;color:var(--acc2)}
+  .band{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:700;padding:1px 7px;
+    border-radius:6px;letter-spacing:.4px}
+  .b-def{background:rgba(70,224,138,.16);color:var(--ok)}
+  .b-high{background:rgba(54,214,195,.16);color:var(--acc2)}
+  .b-med{background:rgba(255,180,84,.16);color:var(--warn)}
+  .b-low{background:rgba(100,109,176,.18);color:var(--faint)}
+  .pin{font-family:var(--mono);color:var(--bad)}
+
+  .legend{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:18px 0}
+  @media(max-width:720px){.legend{grid-template-columns:1fr}}
+  .lc{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px 14px}
+  .lc h4{margin:0 0 4px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .lc p{margin:0;color:var(--dim);font-size:13px}
+
+  .principle{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:14px 0}
+  .principle h3{margin:0 0 6px;font-size:18px}
+  .principle .seen{font-size:12px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+  .principle p{margin:8px 0 0;color:var(--dim)}
+  .principle code{font-family:var(--mono);font-size:.86em;color:var(--acc2)}
+  table.bands{width:100%;border-collapse:collapse;margin:8px 0 2px}
+  table.bands td,table.bands th{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;font-size:13.5px;vertical-align:top}
+  table.bands th{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  footer{margin:50px 0 30px;color:var(--faint);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+
+<header class="hero"><div class="wrap">
+  <h1>A session with goo</h1>
+  <p class="sub">A deploy just failed. You reach for <b>cosmic-goo</b> — the noun&nbsp;→&nbsp;verb&nbsp;→&nbsp;object
+     grammar for the COSMIC desktop. Below is the whole session: <b>every command run against the real engine,
+     every output captured verbatim</b>. Then the UX writeup — why it feels the way it does.</p>
+  <p class="meta">Captured <code>2026-06-01</code> from <code>crates/target/release/goo</code> · the
+     <code>web-1 / db-1 / api-gateway</code> servers are a tiny demo plugin (safe echo verbs); the
+     <code>stop ×3</code>, <code>--explain</code>, and <code>what</code> examples are the real shipped registry.</p>
+</div></header>
+
+<nav class="tabs"><div class="wrap">
+  <button class="on" data-v="walk">The walkthrough</button>
+  <button data-v="ux">The UX, written up</button>
+</div></nav>
+
+<main class="wrap">
+
+<!-- ===================== WALKTHROUGH ===================== -->
+<section class="view on" data-view="walk">
+
+  <h2 class="act"><span class="n">Act I</span>You have text. Say something to it.</h2>
+  <p class="act-lede">The verb comes first (Unix muscle memory: <code>goo verb subject --flag</code>). A bare
+     string is just the subject — typed as <code>text/plain</code>, no ceremony.</p>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo upper</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo <span class="v">upper</span> "deploy failed: connection refused"</span>
+<span class="out">DEPLOY FAILED: CONNECTION REFUSED</span></pre></div>
+    <div class="note"><b>noun → verb.</b> <code>upper</code> is the verb; the quoted string is the subject. No flags,
+      no mode — the verb declares it <code>accepts: text/*</code>, the string fits, it runs.</div>
+  </div>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo base64-encode</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo <span class="v">base64-encode</span> "secret"</span>
+<span class="out">c2VjcmV0</span></pre></div>
+    <div class="note"><b>No subject given?</b> goo falls back, in order: <b>stdin → PRIMARY selection → clipboard →
+      focused app</b>. So <code>echo secret | goo base64-encode</code> works too — the pipe becomes the subject.</div>
+  </div>
+
+  <h2 class="act"><span class="n">Act II</span>What can I even do here?</h2>
+  <p class="act-lede">The registry is a vocabulary. You can ask it what it accepts — and the answer is the
+     <i>same projection</i> that drives tab-completion and the (coming) GUI. One source of truth, three surfaces.</p>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo what =text/markdown</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo <span class="v">what</span> =text/markdown</span>
+<span class="out">applicable verbs for =text/markdown  (type: text/markdown)
+    calc          Evaluate a mathematical expression
+    notify        Send a desktop notification with the selected text
+    qr-encode     Render the text as a QR code in the terminal
+    upper         Convert to UPPERCASE
+    lower         Convert to lowercase
+    wc            Word, line, and character counts
+    base64-encode Encode as base64
+    url-encode    Percent-encode for use in a URL
+    ...</span></pre></div>
+    <div class="note"><b>"What can I do with this?"</b> <code>=text/markdown</code> names a type directly. Every verb
+      whose <code>accepts</code> admits markdown shows up — subtype-aware (markdown <i>is</i> text).</div>
+  </div>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo describe stop</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo <span class="v">describe</span> stop</span>
+<span class="out">stop  <span class="pin">[!]</span> ×3
+  [containers]  Stop the container   accepts: application/vnd.container      confirm: true
+  [media]       Stop playback        accepts: (no subject)
+  [services]    Stop the unit        accepts: application/vnd.systemd.unit   confirm: true</span></pre></div>
+    <div class="note"><b>One word, three meanings.</b> <code>stop</code> is <b>polymorphic</b> — three plugins ship it,
+      each for a different subject type. <code>goo stop :ctr/web</code> hits the container impl; bare <code>goo stop</code>
+      hits media. The <span class="band b-def">×3</span> is the registry telling you how polymorphic the verb is.</div>
+  </div>
+
+  <h2 class="act"><span class="n">Act III</span>Act on things by name. <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— the keystone</span></h2>
+  <p class="act-lede">You shouldn't have to remember addresses. Type the <i>name</i> of a thing; goo scores it across
+     your sources and answers with a <b>confidence band</b> — and the band decides how loud it is.</p>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo web-1</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo web-1</span>
+<span class="out ok">ping web-1 (10.0.0.11) ... reachable</span></pre></div>
+    <div class="note"><span class="band b-def">DEFINITIVE</span> <b>Bare name, no sigil, no verb.</b> <code>web-1</code> is an exact,
+      unique server id — so goo resolves it silently and runs the type's default verb (<code>ping</code>). DEFINITIVE is
+      the only band that fires silently <i>everywhere</i>, scripts included — because an exact-unique match can't surprise you.</div>
+  </div>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo gateway  (at a terminal)</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo gateway</span>
+<span class="nudge">goo: inferred 'gateway' → :srv/api-gateway  (band: HIGH; use the explicit form to suppress)</span>
+<span class="out ok">ping api-gateway (10.0.0.30) ... reachable</span></pre></div>
+    <div class="note"><span class="band b-high">HIGH</span> Not exact, but one clearly-dominant match. goo resolves it
+      <i>and</i> teaches you the precise form (<code>:srv/api-gateway</code>) on stderr, so next time you can be exact if
+      you want. Resolve-and-nudge: helpful, not silent.</div>
+  </div>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo web  (at a terminal)</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo web</span>
+<span class="nudge">goo: 'web' is ambiguous — pick one:
+  1) :srv/web-1                        web-1 (prod)
+  2) :srv/web-2                        web-2 (staging)
+re-run with the explicit address; suppress this list with GOO_INFER_NO_NUDGE=1.</span>
+<span class="exit">[exit 2 — nothing ran]</span></pre></div>
+    <div class="note"><span class="band b-med">MEDIUM</span> Two servers match "web". goo <b>won't guess</b> — it shows a
+      picker and runs nothing. You re-run with the address you see. Ambiguity is surfaced, never resolved by luck.</div>
+  </div>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo gateway  (in a script / pipe — non-TTY)</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo gateway   <span class="err"># stdout is a pipe ⇒ script context</span></span>
+<span class="err">goo: would have inferred 'gateway' → :srv/api-gateway (HIGH band) — not auto-resolving
+     in script context. Use the explicit form, or GOO_INFER_STRICTNESS=tty.</span>
+<span class="err">goo: unknown verb or subcommand: gateway</span>
+<span class="exit">[exit 1 — fell through, nothing ran]</span></pre></div>
+    <div class="note"><b>The safety property.</b> The <i>same</i> HIGH match that resolved at your terminal <b>refuses to
+      auto-resolve in a script</b>. In pipes / CI / cron, only DEFINITIVE fires silently; everything fuzzier logs what it
+      <i>would</i> have done and falls through. No fuzzy guess can ever surprise automation.</div>
+  </div>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo ping web  (verb-aware)</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo <span class="v">ping</span> web</span>
+<span class="nudge">goo: 'web' is ambiguous — pick one:
+  1) :srv/web-1                        web-1 (prod)
+  2) :srv/web-2                        web-2 (staging)</span>
+<span class="exit">[exit 2]</span></pre></div>
+    <div class="note"><b>Verb-aware bias.</b> Once a verb is in play, inference only scores sources <i>that verb accepts</i>.
+      <code>ping</code> takes servers, so only servers are considered — <code>connect fox</code> would look at hosts/devices,
+      <code>summarize fox</code> at text. It narrows the pool, the relevance, <i>and</i> the privacy surface.</div>
+  </div>
+
+  <h2 class="act"><span class="n">Act IV</span>Dangerous things look dangerous.</h2>
+  <p class="act-lede">The risk of a verb is part of its grammar, surfaced the same way on every surface.</p>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo what :srv/web-1</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo <span class="v">what</span> :srv/web-1</span>
+<span class="out">applicable verbs for :srv/web-1  (type: application/vnd.demo.server)
+    ping              Check a server is reachable
+    restart  <span class="pin">[!]</span>      Restart the service on a server
+    destroy  <span class="pin">[!!]</span>     Tear down a server</span></pre></div>
+    <div class="note"><b>Chips.</b> <span class="pin">[!]</span> = wants confirmation, <span class="pin">[!!]</span> = destructive.
+      One chip vocabulary, cited by every surface (CLI, <code>describe</code>, <code>what</code>, the future GUI) — invent a
+      glyph and it's a bug.</div>
+  </div>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo destroy db-1</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo <span class="v">destroy</span> db-1</span>
+<span class="err">goo: about to Tear down a server [!!]</span>
+<span class="err">       subject: db-1</span>
+<span class="err">       runs: printf 'destroyed %s\n' 'db-1'</span>
+<span class="err">     proceed? [y/N] _</span>   <span class="exit"># cancelled here (exit 130)</span></pre></div>
+    <div class="note"><b>Confirm gates before the deed.</b> A <code>confirm</code>/<code>destructive</code> verb leads with
+      its <i>description</i> and chip, names the subject, shows the exact command on the <code>runs:</code> line, and waits
+      for <code>y/N</code>. A script can pre-approve a specific verb with <code>--confirm-dangerous=destroy</code> — scoped,
+      per-invocation, and never silent (it prints an auto-approve note); anything else still prompts.</div>
+  </div>
+
+  <h2 class="act"><span class="n">Act V</span>When types don't line up, goo finds a path.</h2>
+  <p class="act-lede">You ask for an outcome; the engine negotiates a route. A two-layer planner coerces the input and
+     picks the delivery surface — and <code>--explain</code> shows its work.</p>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo --explain summarize =text/markdown</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo <span class="v">--explain</span> summarize =text/markdown</span>
+<span class="out">Accept: application/vnd.goo.surface  */*   · caps {display}
+subject: text/markdown (via explicit)
+text/markdown → (summarize) → text/plain → cosmic-edit → application/vnd.wayland.surface   (cost 8)
+  commands (in run order):
+    cosmic-edit {in.path|q}</span></pre></div>
+    <div class="note"><b>The planner negotiates.</b> "Summarize markdown, for my display." goo plans the route
+      <code>markdown → summarize → text → cosmic-edit → a surface</code> (cost 8) and prints the exact command each hop runs.
+      No guessing what tool will open — you can see it before it happens.</div>
+  </div>
+
+  <div class="step">
+    <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo --explain view =image/png --paths</span></div>
+<pre><span class="cmd"><span class="p">$ </span>goo <span class="v">--explain</span> view =image/png --paths</span>
+<span class="out">4 route(s) from image/png (≤3 hops/layer, most-preferred first):
+
+  1. cost  4 → application/vnd.wayland.surface
+       image/png → (view) → image/png → eog → surface
+  2. cost 24 → application/vnd.wayland.surface
+       image/png → (view) → image/png → chafa (lossy) → text/x-ansi → cosmic-edit → surface
+  3. cost  0 → image/png
+       image/png → (view) → image/png
+  4. cost 16 → text/x-ansi
+       image/png → (view) → image/png → chafa (lossy) → text/x-ansi</span></pre></div>
+    <div class="note"><b>Many roads, ranked.</b> There's more than one way to view a PNG: <code>eog</code> (cheap, cost 4) or
+      <code>chafa</code> straight in the terminal (lossy, cost 24). The planner enumerates and cost-ranks them; pin the one you
+      want with <code>--using</code>, or send the bytes somewhere with <code>--to</code>.</div>
+  </div>
+
+  <p style="color:var(--faint);margin:34px 0 0">That's the session. Six features, one grammar, every output real. →
+     <a href="#" onclick="document.querySelector('nav.tabs button[data-v=ux]').click();return false">Read the UX writeup ›</a></p>
+
+</section>
+
+<!-- ===================== UX WRITEUP ===================== -->
+<section class="view" data-view="ux">
+
+  <p class="act-lede" style="margin-top:6px">The walkthrough showed <i>what</i> happens. Here's <i>why</i> it's
+     shaped this way — eight principles, each pinned to a moment you just saw.</p>
+
+  <div class="principle">
+    <div class="seen">seen in · Act III</div>
+    <h3>1. Bare typing is the default. Sigils are how you're precise.</h3>
+    <p>Today most launchers make you pick a mode. goo inverts it: <code>firefox</code> should work as well as
+      <code>:app/firefox</code>. The sigil isn't the price of entry — it's the tool you reach for to
+      <b>disambiguate</b> when a bare name isn't enough. Inference at the address layer is what lets bare names resolve
+      through the registry; the sigil is always there when you want to be exact.</p>
+  </div>
+
+  <div class="principle">
+    <div class="seen">seen in · Act III</div>
+    <h3>2. Confidence <i>bands</i>, not a threshold.</h3>
+    <p>A single cutoff ("resolve if score &gt; N") forces one behaviour on every match. Bands let the <i>same</i> match
+      mean different things in different places — the band is the user-facing model; the response adapts to context.</p>
+    <table class="bands">
+      <tr><th>Band</th><th>At a terminal</th><th>In a script / pipe</th></tr>
+      <tr><td><span class="band b-def">DEFINITIVE</span></td><td>resolve silently</td><td>resolve silently <i>(exact, unique — safe)</i></td></tr>
+      <tr><td><span class="band b-high">HIGH</span></td><td>resolve + one-line nudge</td><td>log "would have" → fall through</td></tr>
+      <tr><td><span class="band b-med">MEDIUM</span></td><td>picker, run nothing</td><td>fall through</td></tr>
+      <tr><td><span class="band b-low">LOW</span></td><td>fall through to text</td><td>fall through to text</td></tr>
+    </table>
+  </div>
+
+  <div class="principle">
+    <div class="seen">seen in · Act III (the script run)</div>
+    <h3>3. Determinism for automation is non-negotiable.</h3>
+    <p>Scripts, cron, and CI get exactly <b>one</b> safe class — DEFINITIVE. Everything fuzzier degrades to a stderr log
+      and a fall-through. The blast radius of "goo guessed wrong" is bounded to the interactive terminal, where a human is
+      watching. <code>GOO_INFER_STRICTNESS=tty</code> opts a script into the looser behaviour, explicitly.</p>
+  </div>
+
+  <div class="principle">
+    <div class="seen">seen in · Act II &amp; IV</div>
+    <h3>4. One projection, every surface (a single source of truth).</h3>
+    <p><code>goo what</code>, tab-completion, the chips, and the future compose-GUI all read the <i>same</i> OPTIONS
+      projection of the registry. A consumer can't invent its own ranking or its own glyph without it being a bug. The
+      walkthrough's <code>what</code> output and a <code>&lt;TAB&gt;</code> menu are the same answer rendered two ways.</p>
+  </div>
+
+  <div class="principle">
+    <div class="seen">seen in · Act I &amp; the whole session</div>
+    <h3>5. The grammar: noun → verb → object → adverbs.</h3>
+    <p>Every interaction is a little sentence. The CLI is <b>verb-first</b> (Unix muscle memory). The compose-GUI and the
+      planned launcher are <b>noun-first</b> (Spotlight muscle memory: pick the thing, then the action). Both speak to the
+      same engine — the surface matches the grammar you're already typing, not the other way around.</p>
+  </div>
+
+  <div class="principle">
+    <div class="seen">seen in · Act II</div>
+    <h3>6. Polymorphism is a feature, surfaced honestly.</h3>
+    <p><code>stop</code> meaning three different things isn't a name collision to resolve — it's the language being
+      expressive. The registry keeps each impl by <code>(name, accepts)</code> and dispatches by the subject's type. The
+      <span class="band b-def">×N</span> count tells you, up front, how many meanings a word carries.</p>
+  </div>
+
+  <div class="principle">
+    <div class="seen">seen in · Act IV</div>
+    <h3>7. Dangerous looks dangerous — before you commit.</h3>
+    <p>Risk is declared in the verb's TOML (<code>confirm</code>, <code>destructive</code>) and rendered as a fixed chip
+      vocabulary: <span class="pin">[!]</span>, <span class="pin">[!!]</span>. The chip warns; the confirm gate shows the
+      exact command and waits. You always see the blade before it swings.</p>
+  </div>
+
+  <div class="principle">
+    <div class="seen">seen in · Act V</div>
+    <h3>8. Types negotiate; they don't just fail.</h3>
+    <p>When a subject's type isn't what a verb wants, goo doesn't 415-and-quit — it plans a route through known converters,
+      cost-ranked, and tells you the path (or, if there genuinely isn't one, the exact tool to install). The negotiation
+      planner, output routing (<code>--as</code> / <code>--to</code> / <code>--using</code>), and the teaching
+      <code>--explain</code> all fall out of one algorithm.</p>
+  </div>
+
+  <h2 class="act" style="margin-top:42px;color:var(--warn)">Sharp edges <span style="color:var(--faint);font-weight:400;text-transform:none;letter-spacing:0">— what the demo glossed over</span></h2>
+  <p class="act-lede">This section is here on purpose. A walkthrough that shows only wins is a sales pitch; the honest
+     version names where it bites <i>today</i>. Several of these were surfaced by an adversarial review of this very page —
+     which is exactly why every artifact like this should carry one.</p>
+  <div class="legend" style="grid-template-columns:1fr">
+    <div class="lc" style="border-color:rgba(255,180,84,.3)"><h4>⚠ Caching is mtime-watched, not a live watcher</h4>
+      <p>On the one-shot CLI, a source caches only if it declares a <code>watch</code> file (today just <code>recent</code>);
+        command/dbus sources (apps, bluetooth) recompute every run until the <code>good</code> daemon adds inotify/dbus.
+        <code>goo reload</code> forces a refresh. The cache is never stale by mtime — but a same-second edit on a
+        <i>coarse</i>-mtime filesystem could slip through (desktop filesystems are nanosecond).</p></div>
+    <div class="lc" style="border-color:rgba(255,180,84,.3)"><h4>⚠ ssh <code>Include</code> isn't followed</h4>
+      <p>The recent-files watch is exact, but watching <code>~/.ssh/config</code> alone would under-cover
+        <code>Include</code> / <code>~/.ssh/config.d/</code> — scope any "ssh config changes invalidate" claim accordingly.</p></div>
+    <div class="lc" style="border-color:rgba(255,180,84,.3)"><h4>⚠ The negotiation path doesn't confirm yet</h4>
+      <p>A destructive verb reached via type-coercion/negotiation currently skips the <code>y/N</code> gate — only the
+        plain-command path confirms. Plain verbs (the common case) are gated; the negotiated path is a tracked follow-up.</p></div>
+    <div class="lc" style="border-color:rgba(255,180,84,.3)"><h4>⚠ Bands are calibrated, not proven</h4>
+      <p>The scoring is a heuristic. HIGH was effectively unreachable for long, descriptive titles until a fix this week
+        (it ratio'd against the whole title, not the matched word). The thresholds are tuned to fixtures, not derived —
+        treat the band a query lands in as "usually right," not guaranteed.</p></div>
+    <div class="lc" style="border-color:rgba(255,180,84,.3)"><h4>⚠ The picker is display-only; polymorphism biases on one impl</h4>
+      <p>The MEDIUM picker prints addresses to re-type — there's no interactive number-pick yet, and in verb-position its
+        "re-run with the explicit address" hint is verb-agnostic. And verb-aware inference scores against one impl's
+        <code>accepts</code>, not the union across a polymorphic verb's targets.</p></div>
+    <div class="lc" style="border-color:rgba(255,180,84,.3)"><h4>⚠ The demo used safe stand-ins</h4>
+      <p>The <code>web-1 / db-1 / api-gateway</code> servers were a labelled echo plugin so nothing fired for real. Real
+        sources need their backing tools (cos-cli, systemctl, bluez); the registry features (<code>stop ×3</code>,
+        <code>--explain</code>, <code>what</code>) are genuine, but a fresh machine won't have every source populated.</p></div>
+  </div>
+
+  <h2 class="act" style="margin-top:38px">The shape of it</h2>
+  <p class="act-lede">Strip away the features and what's left is a wager: that a desktop is more usable when
+     <b>speaking to it is as fast as typing</b>, when the system is <b>honest about ambiguity and risk</b>, and when the
+     <b>same little grammar</b> works at a prompt, on a keybind, and in a picker. The walkthrough is that wager, paid out
+     one real command at a time.</p>
+
+</section>
+
+<footer><div class="wrap">
+  cosmic-goo — annotated session · captured 2026-06-01 from the live engine. Companion to
+  <code>cosmic-goo-landscape.html</code>; design in <code>doc/design/data-entry-ux.md</code>.
+</div></footer>
+
+</main>
+
+<script>
+  document.querySelectorAll("nav.tabs button").forEach(b=>{
+    b.onclick=()=>{
+      document.querySelectorAll("nav.tabs button").forEach(x=>x.classList.remove("on"));
+      document.querySelectorAll("section.view").forEach(x=>x.classList.remove("on"));
+      b.classList.add("on");
+      document.querySelector('section.view[data-view="'+b.dataset.v+'"]').classList.add("on");
+      window.scrollTo({top:0,behavior:"instant"});
+    };
+  });
+</script>
+</body>
+</html>
