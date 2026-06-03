@@ -538,11 +538,14 @@ USAGE
     goo dispatch <input>                 Classify content and route to a verb
     goo options <subject|=TYPE>          Applicable verbs + their slots, as JSON (discovery; unstable v1)
     goo compose                          Build a sentence (scripted via GOO_COMPOSE_ANSWERS)
+    goo what <subject|=TYPE>             List the verbs applicable to a subject (with chips)
     goo plugins                          List loaded plugins
     goo validate                         Validate all loaded plugins
+    goo reload                           Drop the entity-list cache (force a fresh re-read)
     goo <verb> … [--using CHANNEL]       --using pins the channel that performs a verb
     goo <verb> … [--to DEST | -o FILE]   route the result to a file / clipboard (^) instead of stdout
     goo <verb> … [--hops N | --force]    allow deeper auto-coercion (default: 1 hop in, 1 out)
+    goo <verb> … [--confirm-dangerous=V] pre-approve the y/N gate for the named confirm/destructive verb(s)
     goo --explain <verb> [=TYPE|subj]    Show the negotiation plan (route/415) — read-only
                                          [--as TYPE] [--using CHANNEL] [--explain-env tty|cosmic|desktop|piped]
                                          [--explain-with route|steps|shell] (default: adaptive)
