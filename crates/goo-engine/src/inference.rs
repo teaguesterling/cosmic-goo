@@ -261,19 +261,23 @@ pub fn score_item(t: &str, id: &str, title: &str) -> Option<(f64, MatchedPattern
     None
 }
 
-/// Word-boundary match: title starts with `t`, or contains ` t` or `-t` or
-/// `_t` (the typical word-separator chars in titles). v1 keeps this simple —
-/// regex-based boundary detection is future polish.
+/// Word-boundary match: the query is a prefix of some WORD in the title, where
+/// words split on space / `-` / `_` (the typical separators). The score ratios
+/// against the matched WORD's length, NOT the whole title's — so a query that is
+/// a complete word (or a solid prefix of one) scores high even inside a long,
+/// descriptive title. Without this, `"gateway"` against `"api-gateway (prod)"`
+/// fell to `400 × 7/18 = 155` (below HIGH_FLOOR → MEDIUM); now it's the matched
+/// word `"gateway"` → `400 × 7/7 = 400` (HIGH-eligible). Ratio ≤ 1, so a
+/// word-boundary hit stays below an exact-title match (800), preserving the
+/// cascade order. When several words match, the shortest wins (best ratio).
 fn word_boundary_score(t: &str, title: &str) -> Option<f64> {
-    if title.starts_with(t)
-        || title.contains(&format!(" {t}"))
-        || title.contains(&format!("-{t}"))
-        || title.contains(&format!("_{t}"))
-    {
-        let ratio = t.chars().count() as f64 / title.chars().count().max(1) as f64;
-        return Some(400.0 * ratio);
-    }
-    None
+    let seg_len = title
+        .split([' ', '-', '_'])
+        .filter(|w| w.starts_with(t))
+        .map(|w| w.chars().count())
+        .min()?;
+    let ratio = t.chars().count() as f64 / seg_len.max(1) as f64;
+    Some(400.0 * ratio)
 }
 
 /// Assign a band given the sorted candidates (highest score first). Pure —
@@ -654,8 +658,23 @@ mod tests {
     fn score_word_boundary_lower_than_exact_id_or_title() {
         // "fox" matches "Fox-recipe.md" at a word boundary (after the dash).
         let (s, p) = score_item("fox", "fox-recipe-md", "Fox-recipe.md").unwrap();
-        assert!(s < 800.0);
+        assert!(s < 800.0); // below exact-title…
         assert_eq!(p, MatchedPattern::WordBoundary);
+    }
+
+    #[test]
+    fn score_word_boundary_ratios_against_the_matched_word_not_the_title() {
+        // The #4 fix: a COMPLETE word match scores 400 regardless of how long
+        // the rest of the title is — "gateway" in "api-gateway (prod)" is a
+        // whole word, so it's HIGH-eligible (≥ HIGH_FLOOR), not sunk to MEDIUM
+        // by the title's length. (Old full-title ratio gave 400×7/18 ≈ 155.)
+        let (s, p) = score_item("gateway", "api-gateway", "api-gateway (prod)").unwrap();
+        assert_eq!(p, MatchedPattern::WordBoundary);
+        assert!(s >= HIGH_FLOOR, "whole-word match should clear HIGH_FLOOR, got {s}");
+        assert!(s <= 400.0); // …and never above the word-boundary ceiling
+        // A partial prefix of a word is still scaled down within that word.
+        let (partial, _) = score_item("gate", "api-gateway", "api-gateway (prod)").unwrap();
+        assert!(partial < s, "a partial prefix scores below the whole word");
     }
 
     #[test]
