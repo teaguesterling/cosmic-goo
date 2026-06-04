@@ -43,6 +43,26 @@ bats tests skip on bash by design. (The lattice / inference / negotiation /
 OPTIONS / polymorphic-verb features are all Rust-only and accumulate as the
 documented divergence.)
 
+## The data-entry / sigil-less-inference arc
+
+Making a bare token resolve to the right entity without sigils — confidence
+bands, a picker, completion chips, and the confirm/cache safety rails around
+them. Design: [data-entry-ux](data-entry-ux.md), [completion-polish](completion-polish.md).
+
+| Piece | State | Where |
+|---|---|---|
+| **Completion-polish chips** (slices 1–3) — `[!]`/`[!!]` confirm/destructive chips + polymorphic `×N` chip in `__complete`; subjectless-verb announcement; GOO-default disambiguation + `goo what` (the chip vocabulary is single-sourced in completion-polish.md) | **built** (Rust + shell) | `goo` bin, `completions/goo.bash`; [completion-polish](completion-polish.md) |
+| **Prefix-shape inference** (slice 4) — `app/firefox` ↦ `:app/firefox` (the cheap, deterministic inference prequel) | **built** (Rust) | `address::resolve` |
+| **Entity-name inference — confidence bands** (slice 7) — a bare token is scored across enumerable sources and bucketed into **DEFINITIVE** (resolve silently) / **HIGH** (resolve + one-line nudge) / **MEDIUM** (numbered picker) / **LOW** (fall through to text); floors `EXACT 800 / HIGH 200 / MEDIUM 60`, a *relative* `2×`-dominance gate, and a `≤3`-count gate. Word-boundary scoring ratios against the matched **word/segment**, not the whole title (`cb1e2fc`), so a descriptive name (`api-gateway (production…)`) doesn't sink a whole-word match out of HIGH | **built** (Rust) | `inference.rs`; `goo` bin dispatch; §3.2; `inference.bats` |
+| **Verb-aware bias** (slice 8) — `infer_entity_for_verb` narrows the scan to the sources the verb `accepts` before scoring, so the same token resolves differently per verb | **built** (Rust) | `inference::infer_entity_for_verb`, `resolve_subject`; §3.4 |
+| **Subject-shape-aware listing** (slice 5) — `__complete verb-subject-items` ranks candidates by `accepts`-specificity + polymorphic-union (files first for `open`, network demoted) | **built** (Rust) | `verb-subject-items`; §5.1 |
+| **Entity cache — watch/mtime invalidation, no-stale guarantee** — a source caches **only** if it declares `watch = [paths]`; an entry is valid iff `cmd` is unchanged AND every watch path's current mtime equals the value stat'd *before* list_cmd ran (false-STALE is safe; never false-fresh). `goo reload` / `clear_entity_cache()` is the manual drop. **Replaces the old TTL cache** (`cache_ttl` removed) | **built** (Rust) | `inference.rs`; `recent` plugin (`watch=[recently-used.xbel]`); `entity-cache.bats` |
+| **Confirm UX** — friendly prompt (verb description + `[!]`/`[!!]` chip + subject label + a secondary `runs:` line, EOF cancels → 130); scoped `--confirm-dangerous=v1,v2` per-invocation pre-approval (flag-only by design — no env var — with a loud auto-approve note and a typo guard) | **built** (Rust) | `goo` bin; `tests/integration/confirm.bats` |
+| **Confirm gating — remaining** — destructive verbs reached via the **negotiation/coercion** path (`exec_negotiated`) are **not** gated; only the legacy render+exec path confirms (plain-cmd verbs, the common case, take the legacy path) | **designed** (known gap) | `exec.rs`; `45dc7ce` body |
+| **No-watch warm caching — remaining** — command/dbus sources (apps, bluetooth, …) recompute every run on the one-shot CLI rather than risk staleness; true warm caching is a `good`-daemon job (inotify + dbus) | **designed** | daemon #31 |
+| **Bands are calibrated, not proven** — the floors clear the *current* scoring-distribution gaps but aren't validated against a real corpus; treat band boundaries as tunable | **calibrated, not proven** | §3.2.2 |
+| **Remaining roadmap** — #6 implicit-subject preview, #9 compose-GUI v2 noun-first flow, #10 "speak it back", #11 plugin-TOML JSON Schema, #13 "again"/recent-actions, #14 conversion-suggestions on 415, #15 `goo do <addr>` | **designed** | [data-entry-ux §8](data-entry-ux.md) |
+
 ## The interface / protocol layer
 
 | Piece | State | Where |
@@ -59,6 +79,6 @@ documented divergence.)
 
 - **Engine + CLI** — the Rust `goo` is the **canonical** engine (`make install`); the bash bin/goo is a **legacy reference** (`make install-bash`), feature-frozen pre-negotiation.
 - **Plugins** — 25 (~88 verbs, 17 sources), incl. non-text handle domains and content-inspection verbs.
-- **Tests** — bats conformance suite (314/314 both engines) + 150 engine unit tests.
+- **Tests** — bats conformance suite (391 tests; ~28% skip on bash by design, the Rust-only divergence) + 209 engine unit tests.
 
 See [limitations.md](../limitations.md) for the user-facing roadmap.
