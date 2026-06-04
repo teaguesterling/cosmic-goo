@@ -176,12 +176,13 @@
 
   <div class="step">
     <div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">goo gateway  (at a terminal)</span></div>
-<pre><span class="cmd"><span class="p">$ </span>goo gateway</span>
+<pre><span class="cmd"><span class="p">$ </span>goo gateway   <span class="err"># the server's title is "api-gateway (production, us-east)"</span></span>
 <span class="nudge">goo: inferred 'gateway' → :srv/api-gateway  (band: HIGH; use the explicit form to suppress)</span>
 <span class="out ok">ping api-gateway (10.0.0.30) ... reachable</span></pre></div>
-    <div class="note"><span class="band b-high">HIGH</span> Not exact, but one clearly-dominant match. goo resolves it
-      <i>and</i> teaches you the precise form (<code>:srv/api-gateway</code>) on stderr, so next time you can be exact if
-      you want. Resolve-and-nudge: helpful, not silent.</div>
+    <div class="note"><span class="band b-high">HIGH</span> Not exact, but one clearly-dominant match — <code>gateway</code> is a
+      whole word inside that long, descriptive title. goo resolves it <i>and</i> teaches you the precise form
+      (<code>:srv/api-gateway</code>) on stderr. (Scoring ratios against the matched <i>word</i>, not the whole title, so a
+      descriptive name doesn't sink a clear match out of HIGH — see Sharp edges.)</div>
   </div>
 
   <div class="step">
