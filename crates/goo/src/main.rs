@@ -2234,6 +2234,51 @@ fn read_stdin() -> String {
 
 /// Turn a positional (or the implicit subject chain) into a subject JSON.
 /// Port of `resolve_subject` in `bin/goo`, plus slice-8 verb-aware inference.
+/// Which implicit source supplied a no-positional subject — drives the run-time
+/// transparency nudge. `Stdin` is an explicit pipe, so it stays silent.
+#[derive(Clone, Copy)]
+enum ImplicitSource {
+    Stdin,
+    Primary,
+    Clipboard,
+}
+
+/// Narrate the implicit-subject fallback at run time: when a text verb borrows
+/// its subject from the PRIMARY selection or the clipboard, say so on stderr —
+/// the otherwise-silent fallback chain made visible. Interactive/GUI only
+/// (script pipelines stay quiet) and suppressed by `GOO_INFER_NO_NUDGE`, reusing
+/// the band-nudge knobs. Never changes resolution. This is the post-resolution
+/// complement to the (still-open) §5.4 completion-time preview, not that preview.
+fn maybe_emit_implicit_nudge(src: ImplicitSource, text: &str) {
+    use inference::Context;
+    let label = match src {
+        ImplicitSource::Primary => "the PRIMARY selection",
+        ImplicitSource::Clipboard => "the clipboard",
+        ImplicitSource::Stdin => return, // explicit pipe — never narrated
+    };
+    let interactive = matches!(detect_inference_context(), Context::Interactive | Context::Gui);
+    if !interactive || std::env::var("GOO_INFER_NO_NUDGE").is_ok() {
+        return;
+    }
+    eprintln!(
+        "goo: no subject given — using {label}: '{}'  (pass a subject to be explicit)",
+        implicit_snippet(text)
+    );
+}
+
+/// A one-line, ≤40-char preview of an implicit subject: inner whitespace
+/// collapsed to single spaces, trimmed, ellipsis appended when truncated.
+fn implicit_snippet(text: &str) -> String {
+    const MAX: usize = 40;
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > MAX {
+        let head: String = collapsed.chars().take(MAX).collect();
+        format!("{head}…")
+    } else {
+        collapsed
+    }
+}
+
 fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str) -> Result<Subject, String> {
     // 1. Explicit positional → the addressing resolver.
     if !positional.is_empty() && address::is_explicit(positional, reg) {
@@ -2304,14 +2349,20 @@ fn resolve_subject(reg: &Value, verb: &Value, positional: &str, stdin_text: &str
         }
     }
     if accepts_text(verb, reg) {
-        let mut text = stdin_text.to_string();
+        // Track which implicit source supplied the text so the otherwise-silent
+        // fallback can be narrated at run time. Order is the documented chain:
+        // stdin (explicit) → PRIMARY selection → clipboard.
+        let (mut text, mut src) = (stdin_text.to_string(), ImplicitSource::Stdin);
         if text.is_empty() {
             text = selection::primary();
+            src = ImplicitSource::Primary;
         }
         if text.is_empty() {
             text = selection::clipboard();
+            src = ImplicitSource::Clipboard;
         }
         if !text.is_empty() {
+            maybe_emit_implicit_nudge(src, &text);
             let mt = mime::detect_content(&text);
             return Ok(Subject::Value(json!({ "type": mt, "text": text })));
         }
