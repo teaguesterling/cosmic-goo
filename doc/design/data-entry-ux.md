@@ -640,8 +640,14 @@ at `$XDG_RUNTIME_DIR/cosmic-goo/entities/<name>.json` + the `inferable` opt-in
 field; see §3.3); #8 (verb-aware bias — `infer_entity_for_verb` narrows the
 scan to sources the verb accepts, wired into `resolve_subject`; see §3.4); #5
 (subject-shape-aware listing — `verb-subject-items` ranks by accepts-
-specificity + polymorphic-union; see §5.1). **Next**: the #9 compose-GUI v2
-arc, or smaller wins (#6 implicit-subject preview, #13 recent-actions).
+specificity + polymorphic-union; see §5.1); #6 (implicit-subject preview —
+shell surface) **plus a run-time fallback nudge**: the completion-time `if
+Enter: '…'  (PRIMARY selection)` hint is a `__complete implicit-preview` stage
+(PRIMARY→clipboard peek, 150ms timeout) shown via the non-destructive stderr
+mechanism; the run-time nudge (`no subject given — using …`) narrates the same
+fallback when a subjectless text verb actually executes. The #6 **compose-GUI
+caption** is deferred to #9 (no GUI yet). **Next**: the #9 compose-GUI v2 arc,
+or smaller wins (#13 recent-actions, #15 `goo do <addr>`).
 
 ---
 

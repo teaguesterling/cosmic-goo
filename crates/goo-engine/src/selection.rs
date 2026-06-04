@@ -44,3 +44,27 @@ fn wl_paste(args: &[&str]) -> String {
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default()
 }
+
+/// Bounded peek of the PRIMARY selection for interactive *previews* (tab
+/// completion): `timeout <secs> wl-paste --primary`. Unlike [`primary`], a hung
+/// or absent compositor can't stall the caller — it degrades to "" after `secs`.
+pub fn peek_primary_timed(secs: &str) -> String {
+    wl_paste_timed(secs, &["--primary", "--no-newline"])
+}
+
+/// Bounded peek of the clipboard — the [`peek_primary_timed`] counterpart.
+pub fn peek_clipboard_timed(secs: &str) -> String {
+    wl_paste_timed(secs, &["--no-newline"])
+}
+
+/// `timeout <secs> wl-paste <args>` → stdout, or "" on timeout / missing tool /
+/// no compositor. `secs` is handed to coreutils `timeout` (e.g. "0.15").
+fn wl_paste_timed(secs: &str, args: &[&str]) -> String {
+    Command::new("timeout")
+        .arg(secs)
+        .arg("wl-paste")
+        .args(args)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
+}

@@ -151,6 +151,18 @@ _goo() {
         COMPREPLY=($(compgen -W "$items" -- "$cur"))
         return 0
     fi
+
+    # Text verb with no subject typed yet: preview what the implicit fallback
+    # (PRIMARY selection → clipboard) would resolve to, so the user sees what
+    # Enter will grab BEFORE committing (data-entry-ux §5.4 / #6). Same
+    # non-destructive stderr-hint mechanism as the subjectless announcement
+    # above. The bin peeks with a 150ms timeout (a hung compositor can't stall
+    # completion) and emits nothing for non-text verbs / empty selection.
+    if [ -z "$cur" ]; then
+        local preview
+        preview=$(goo __complete implicit-preview "$first" 2>/dev/null)
+        [ -n "$preview" ] && printf '\n[%s]\n' "$preview" >&2
+    fi
     return 0
 }
 

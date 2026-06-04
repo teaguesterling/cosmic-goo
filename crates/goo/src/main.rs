@@ -1889,6 +1889,38 @@ fn cmd_complete(args: &[String]) -> i32 {
         // Ids are deduped globally (first-seen wins, preserving rank) — which also
         // fixes the old nested loop's incidental double-listing of a source that
         // matched more than one accept pattern.
+        // `goo <text-verb> <TAB>` with no subject yet → preview what the implicit
+        // fallback (PRIMARY selection → clipboard) would resolve to, so the user
+        // sees what Enter will grab *before* committing (§5.4 implicit-subject
+        // preview / roadmap #6). Emits one ready-to-display hint line, or nothing
+        // (non-text verb, empty selection+clipboard, or a peek timeout). The peek
+        // is timeout-bounded (150ms) so a hung/absent compositor can't stall
+        // completion. The bin owns the wording (testable here); the shell only
+        // wraps it on stderr via the non-destructive hint mechanism. `accepts_text`
+        // is the run-path SSOT, so the preview matches what execution would borrow.
+        "implicit-preview" => {
+            if arg.is_empty() {
+                return 0;
+            }
+            let accepts = arr("verbs")
+                .iter()
+                .filter(|v| v.get("name").and_then(Value::as_str) == Some(arg))
+                .any(|v| accepts_text(v, &reg));
+            if !accepts {
+                return 0;
+            }
+            let (text, label) = {
+                let p = selection::peek_primary_timed("0.15");
+                if !p.is_empty() {
+                    (p, "PRIMARY selection")
+                } else {
+                    (selection::peek_clipboard_timed("0.15"), "clipboard")
+                }
+            };
+            if !text.is_empty() {
+                println!("if Enter: '{}'  ({label})", implicit_snippet(&text));
+            }
+        }
         "verb-subject-items" => {
             if arg.is_empty() {
                 return 0;

@@ -44,6 +44,12 @@ name = "isfix"
 name = "echotext"
 accepts = ["text/*"]
 cmd = "printf '%s' {subject.text|q}"
+
+# A non-text (handle) verb — the completion preview must stay silent for it.
+[[verbs]]
+name = "openbox"
+accepts = ["application/vnd.isfix.box"]
+cmd = "true"
 EOF
     cd "$BATS_TEST_TMPDIR" || return 1
 
@@ -122,4 +128,49 @@ EOF
     [[ "$nudge" =~ "this selection is considerably" ]]      # head shown
     [[ ! "$nudge" =~ "total" ]]                             # tail dropped from the snippet
     [[ "$output" =~ "this selection is considerably longer than forty characters total" ]]  # full value still resolved
+}
+
+# ---- §5.4 / #6: completion-time preview (the pre-Enter hint) ----
+# These exercise the `__complete implicit-preview <verb>` stage directly — it
+# peeks the selection/clipboard (timeout-bounded) and emits the hint wording the
+# shell shows on stderr. No GOO_INFER_STRICTNESS needed (completion is its own path).
+
+@test "preview: text verb with a PRIMARY selection emits an 'if Enter' hint" {
+    export STUB_PRIMARY="the selected paragraph"
+    run "$GOO" __complete implicit-preview echotext </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "if Enter: 'the selected paragraph'" ]]
+    [[ "$output" =~ "(PRIMARY selection)" ]]
+}
+
+@test "preview: clipboard fallback (PRIMARY empty) is labelled clipboard" {
+    export STUB_PRIMARY=""
+    export STUB_CLIP="from the clipboard"
+    run "$GOO" __complete implicit-preview echotext </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "if Enter: 'from the clipboard'" ]]
+    [[ "$output" =~ "(clipboard)" ]]
+}
+
+@test "preview: nothing in selection or clipboard → no hint" {
+    export STUB_PRIMARY=""
+    export STUB_CLIP=""
+    run "$GOO" __complete implicit-preview echotext </dev/null
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "preview: a non-text (handle) verb produces no hint" {
+    export STUB_PRIMARY="should be ignored"
+    run "$GOO" __complete implicit-preview openbox </dev/null
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "preview: a long selection is truncated with an ellipsis in the hint" {
+    export STUB_PRIMARY="this selection is considerably longer than forty characters total"
+    run "$GOO" __complete implicit-preview echotext </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "…" ]]
+    [[ ! "$output" =~ "total" ]]
 }
