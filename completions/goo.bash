@@ -152,16 +152,28 @@ _goo() {
         return 0
     fi
 
-    # Text verb with no subject typed yet: preview what the implicit fallback
+    # Text verb with NO subject typed yet: preview what the implicit fallback
     # (PRIMARY selection → clipboard) would resolve to, so the user sees what
     # Enter will grab BEFORE committing (data-entry-ux §5.4 / #6). Same
     # non-destructive stderr-hint mechanism as the subjectless announcement
     # above. The bin peeks with a 150ms timeout (a hung compositor can't stall
     # completion) and emits nothing for non-text verbs / empty selection.
+    #
+    # Guard on BOTH an empty `cur` AND no subject positional already on the line:
+    # `cur` is also empty when tabbing for a later arg after a subject is typed
+    # (`goo summarize ./file.txt <TAB>`), and previewing the selection there would
+    # advertise the OPPOSITE of what Enter does (it'd use ./file.txt). Scan the
+    # typed words for a non-flag positional, like the adverb branch above.
     if [ -z "$cur" ]; then
-        local preview
-        preview=$(goo __complete implicit-preview "$first" 2>/dev/null)
-        [ -n "$preview" ] && printf '\n[%s]\n' "$preview" >&2
+        local have_subject="" j
+        for ((j=2; j<cword; j++)); do
+            if [[ "${words[j]}" != -* ]]; then have_subject=1; break; fi
+        done
+        if [ -z "$have_subject" ]; then
+            local preview
+            preview=$(goo __complete implicit-preview "$first" 2>/dev/null)
+            [ -n "$preview" ] && printf '\n[%s]\n' "$preview" >&2
+        fi
     fi
     return 0
 }

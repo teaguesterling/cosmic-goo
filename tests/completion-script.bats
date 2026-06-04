@@ -215,3 +215,52 @@ reply_has() {
     err=$(complete_line "goo shout " 2>&1 >/dev/null)
     [[ ! "$err" =~ "takes no subject" ]]
 }
+
+# ---- §5.4 / #6: implicit-subject preview hint (Rust-only stage) ----
+# `goo <text-verb> <TAB>` with no subject prints a non-destructive stderr hint
+# of what the implicit fallback (PRIMARY → clipboard) would resolve to. The
+# `__complete implicit-preview` stage is Rust-only, so these skip on bash.
+
+_skip_without_preview() {
+    goo __complete subcommands 2>/dev/null | grep -q '^what$' || \
+        skip "engine has no implicit-preview stage (bash legacy)"
+}
+
+# Fake wl-paste on PATH (setup put $BATS_TEST_TMPDIR/bin first): echoes
+# $STUB_PRIMARY for --primary, else $STUB_CLIP.
+_stub_selection() {
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    cat > "$BATS_TEST_TMPDIR/bin/wl-paste" <<'STUB'
+#!/usr/bin/env bash
+for a in "$@"; do [ "$a" = "--primary" ] && { printf '%s' "${STUB_PRIMARY:-}"; exit 0; }; done
+printf '%s' "${STUB_CLIP:-}"
+STUB
+    chmod +x "$BATS_TEST_TMPDIR/bin/wl-paste"
+}
+
+@test "preview: text verb with no subject shows the 'if Enter' hint" {
+    _skip_without_preview
+    _stub_selection; export STUB_PRIMARY="the selection"
+    local err
+    err=$(complete_line "goo shout " 2>&1 >/dev/null)
+    [[ "$err" =~ "if Enter: 'the selection'" ]]
+    [[ "$err" =~ "(PRIMARY selection)" ]]
+}
+
+@test "preview: a subject already on the line suppresses the hint" {
+    _skip_without_preview
+    _stub_selection; export STUB_PRIMARY="the selection"
+    # ./foo is the subject; tabbing for the next arg must NOT advertise the
+    # selection (Enter would use ./foo). Regression guard for the cur-only bug.
+    local err
+    err=$(complete_line "goo shout ./foo " 2>&1 >/dev/null)
+    [[ ! "$err" =~ "if Enter" ]]
+}
+
+@test "preview: a handle verb shows no implicit-subject hint" {
+    _skip_without_preview
+    _stub_selection; export STUB_PRIMARY="the selection"
+    local err
+    err=$(complete_line "goo poke " 2>&1 >/dev/null)
+    [[ ! "$err" =~ "if Enter" ]]
+}
