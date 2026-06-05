@@ -646,8 +646,13 @@ Enter: '…'  (PRIMARY selection)` hint is a `__complete implicit-preview` stage
 (PRIMARY→clipboard peek, 150ms timeout) shown via the non-destructive stderr
 mechanism; the run-time nudge (`no subject given — using …`) narrates the same
 fallback when a subjectless text verb actually executes. The #6 **compose-GUI
-caption** is deferred to #9 (no GUI yet). **Next**: the #9 compose-GUI v2 arc,
-or smaller wins (#13 recent-actions, #15 `goo do <addr>`).
+caption** is deferred to #9 (no GUI yet); #13 §6.1 (**`goo again`** — persistent
+action history at `$XDG_STATE_HOME/cosmic-goo/history.jsonl`, recording
+`{verb, type, selector-adverbs}` only; `goo forget` clears, `GOO_NO_HISTORY=1`
+disables; on by default). The §6.3 recent-action *completion bias* is the
+follow-on (it has to merge a recency signal into the slice-5 accepts-specificity
+ranking — its own design problem). **Next**: the #9 compose-GUI v2 arc, or
+smaller wins (#13 §6.3 recent-action bias, #15 `goo do <addr>`).
 
 ---
 

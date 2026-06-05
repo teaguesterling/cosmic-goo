@@ -8,7 +8,7 @@
 //! XDG dirs `registry::dirs()` reads); no path magic. Exit codes: 0 / 1
 //! (catch-all) / 130 (cancel).
 
-use goo_engine::{address, dispatch as disp, exec, inference, mime, negotiation, options, registry, selection, verbs};
+use goo_engine::{address, dispatch as disp, exec, history, inference, mime, negotiation, options, registry, selection, verbs};
 use serde_json::{json, Map, Value};
 use std::io::IsTerminal;
 
@@ -97,6 +97,8 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
         },
         Some("dispatch") => cmd_dispatch(args.get(1).map(String::as_str)),
         Some("reload") => cmd_reload(),
+        Some("again") => cmd_again(&registry::load_all(), &args[1..]),
+        Some("forget") => cmd_forget(),
         Some("__complete") => cmd_complete(&args[1..]),
         Some("-h") | Some("--help") | Some("help") => {
             print_usage();
@@ -385,6 +387,43 @@ fn cmd_reload() -> i32 {
     0
 }
 
+/// `goo again [subject] [--adverbs]` — repeat the last recorded verb (+ its
+/// selector adverbs) on a new subject (§6.1). The subject is optional: with none
+/// given the normal implicit chain applies, like any verb. Re-dispatches through
+/// the standard verb path, so the repeat is itself recorded (as the underlying
+/// verb), confirm-gates still fire, etc. Any adverbs passed to `again` come
+/// first, then the remembered ones (an explicit `--via=x` on the again line thus
+/// wins for a last-key-wins parser).
+fn cmd_again(reg: &Value, rest: &[String]) -> i32 {
+    let action = match history::last() {
+        Some(a) => a,
+        None => {
+            eprintln!("goo: nothing to repeat yet — run a verb first, then `goo again <subject>`");
+            return 1;
+        }
+    };
+    let mut argv = vec![action.verb.clone()];
+    argv.extend(rest.iter().cloned());
+    if let Some(obj) = action.adverbs.as_object() {
+        for (k, v) in obj {
+            let val = v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
+            argv.push(format!("--{k}={val}"));
+        }
+    }
+    cmd_verb(reg, &argv)
+}
+
+/// `goo forget` — drop the action history (the on-by-default-recording opt-out
+/// counterpart, alongside `GOO_NO_HISTORY`).
+fn cmd_forget() -> i32 {
+    if history::clear() {
+        eprintln!("goo: forget: cleared action history");
+    } else {
+        eprintln!("goo: forget: no history to clear");
+    }
+    0
+}
+
 /// ordering. See completion-polish.md §6 slice 3.
 fn cmd_what(reg: &Value, addr: &str) -> i32 {
     let subject = match address::resolve(addr, reg, None) {
@@ -542,6 +581,8 @@ USAGE
     goo plugins                          List loaded plugins
     goo validate                         Validate all loaded plugins
     goo reload                           Drop the entity-list cache (force a fresh re-read)
+    goo again [subject]                  Repeat the last verb (+adverbs) on a new subject
+    goo forget                           Clear the recorded action history (GOO_NO_HISTORY=1 disables recording)
     goo <verb> … [--using CHANNEL]       --using pins the channel that performs a verb
     goo <verb> … [--to DEST | -o FILE]   route the result to a file / clipboard (^) instead of stdout
     goo <verb> … [--hops N | --force]    allow deeper auto-coercion (default: 1 hop in, 1 out)
@@ -1251,7 +1292,49 @@ fn channel_tools(reg: &Value) -> (Vec<String>, Vec<String>) {
 }
 
 /// Render a verb and execute it, honouring `confirm`.
-fn exec_verb(
+/// The single chokepoint EVERY dispatch path converges on (plain verb, GOO
+/// default-dispatch, content-dispatch). Runs the verb, then records a successful
+/// run to the action history (§6.1, the `goo again` backstore). Because the
+/// record is taken here — from the *resolved* verb — `goo again`, which re-runs
+/// through this same function, records the UNDERLYING verb, never itself.
+fn exec_verb(reg: &Value, verb: &Value, subject: &Value, object: &Value, adverbs: &Value) -> i32 {
+    let code = exec_verb_impl(reg, verb, subject, object, adverbs);
+    if code == 0 {
+        history::record(
+            verb.get("name").and_then(Value::as_str).unwrap_or(""),
+            subject.get("type").and_then(Value::as_str).unwrap_or("text/plain"),
+            &recordable_adverbs(reg, adverbs),
+        );
+    }
+    code
+}
+
+/// Persist ONLY declared `kind = "selector"` adverbs. `parse_args` folds *every*
+/// `--flag=val` into the adverb map — including run-control flags it synthesises
+/// (`to`/`-o`, `using`, `as`, `hops`, `force`, `config`) and, critically,
+/// `confirm-dangerous`. Recording those verbatim and replaying them via `goo
+/// again` would (a) resurrect the persistent safety-gate bypass `45dc7ce`
+/// deliberately forbade, (b) persist arbitrary user paths (the no-content promise
+/// the on-by-default recording rests on), and (c) re-route a repeat's output to
+/// the original run's destination. Selectors are enumerated, content-free, and
+/// the only adverbs whose replay reproduces the verb's *behaviour*.
+fn recordable_adverbs(reg: &Value, adverbs: &Value) -> Value {
+    let Some(obj) = adverbs.as_object() else { return json!({}) };
+    let declared = reg.get("adverbs").and_then(Value::as_array);
+    let is_selector = |name: &str| -> bool {
+        declared.map_or(false, |arr| {
+            arr.iter().any(|a| {
+                a.get("name").and_then(Value::as_str) == Some(name)
+                    && a.get("kind").and_then(Value::as_str) == Some("selector")
+            })
+        })
+    };
+    let kept: Map<String, Value> =
+        obj.iter().filter(|(k, _)| is_selector(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    Value::Object(kept)
+}
+
+fn exec_verb_impl(
     reg: &Value,
     verb: &Value,
     subject: &Value,
@@ -1572,7 +1655,8 @@ fn cmd_validate() -> i32 {
 
     // Reserved subcommands an alias can never shadow.
     const RESERVED: &[&str] = &[
-        "compose", "list", "describe", "plugins", "validate", "dispatch", "reload", "__complete", "help",
+        "compose", "list", "describe", "plugins", "validate", "dispatch", "reload", "again", "forget",
+        "__complete", "help",
         "options", "what", "-h", "--help",
     ];
 
@@ -1766,7 +1850,7 @@ fn cmd_complete(args: &[String]) -> i32 {
     let arg = args.get(1).map(String::as_str).unwrap_or("");
     match stage {
         "subcommands" => {
-            println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nreload\nwhat\nhelp");
+            println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nreload\nagain\nforget\nwhat\nhelp");
             for v in arr("verbs") {
                 if let Some(n) = v.get("name").and_then(|n| n.as_str()) {
                     println!("{n}");
