@@ -52,6 +52,20 @@ accepts = ["text/*"]
 confirm = true
 destructive = true
 cmd = "printf 'zapped'"
+
+# An enumerable source + a handle verb — to exercise the ENTITY-subject path
+# (`:box/alpha`), §6.3's headline case, where the recorded type (resolved with
+# verb context) must match the type `goo what` resolves (without it).
+[[sources]]
+name = "boxes"
+prefix = "box"
+emits = "application/vnd.againfix.box"
+list_cmd = "echo '[{\"id\":\"alpha\",\"title\":\"Alpha\"}]'"
+
+[[verbs]]
+name = "poke"
+accepts = ["application/vnd.againfix.box"]
+cmd = "printf 'poked'"
 EOF
     cd "$BATS_TEST_TMPDIR" || return 1
 
@@ -137,6 +151,41 @@ EOF
     run "$GOO" again "b" </dev/null
     [ "$status" -eq 130 ]
     [[ "$output" =~ "proceed?" ]]
+}
+
+# ---- §6.3: recency hint in `goo what` (annotate-only — never reorders) ----
+
+@test "what: shows a recency hint of recently-run verbs for the type, most-recent first" {
+    run "$GOO" shout "x" </dev/null            # records {shout, text/plain}
+    [ "$status" -eq 0 ]
+    run "$GOO" echotext "y" </dev/null         # records {echotext, text/plain}
+    [ "$status" -eq 0 ]
+    run "$GOO" what "=text/plain" </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "recently run on this type: echotext, shout" ]]
+    # The hint is a COLUMN-0 annotation, and the indented verb listing is
+    # unchanged — so verb-name extraction / SSOT order is unaffected (Gate-4
+    # stays valid even with history present).
+    echo "$output" | grep -qE '^recently run on this type:'      # hint at column 0
+    ! echo "$output" | grep -qE '^[[:space:]]+recently'          # NOT an indented (extractable) line
+    echo "$output" | grep -qE '^    echotext'                    # real verb lines still indented
+}
+
+@test "what: recency hint fires for an ENTITY subject (the :source/id headline case)" {
+    # The recorded type (resolved WITH verb context) must match the type
+    # `goo what` resolves (WITHOUT it), or the hint silently never fires for the
+    # case §6.3 exists for ("last time you opened a :repo:, you ran status").
+    run "$GOO" poke :box/alpha </dev/null
+    [ "$status" -eq 0 ]
+    run "$GOO" what :box/alpha </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "recently run on this type: poke" ]]
+}
+
+@test "what: no recency hint when the type has no history" {
+    run "$GOO" what "=text/plain" </dev/null
+    [ "$status" -eq 0 ]
+    [[ ! "$output" =~ "recently run" ]]
 }
 
 @test "forget: clears the recorded history" {

@@ -649,10 +649,15 @@ fallback when a subjectless text verb actually executes. The #6 **compose-GUI
 caption** is deferred to #9 (no GUI yet); #13 §6.1 (**`goo again`** — persistent
 action history at `$XDG_STATE_HOME/cosmic-goo/history.jsonl`, recording
 `{verb, type, selector-adverbs}` only; `goo forget` clears, `GOO_NO_HISTORY=1`
-disables; on by default). The §6.3 recent-action *completion bias* is the
-follow-on (it has to merge a recency signal into the slice-5 accepts-specificity
-ranking — its own design problem). **Next**: the #9 compose-GUI v2 arc, or
-smaller wins (#13 §6.3 recent-action bias, #15 `goo do <addr>`).
+disables; on by default). #13 §6.3 (**recency hint**) — `goo what` prints a
+column-0 `recently run on this type: …` line (recent ∩ applicable, most-recent-
+first) from `history::recent_verbs_for_type`. **Annotate-only by necessity**: the
+verbs-for-a-subject listing is locked to registry order by the Gate-4 SSOT order-
+equality contract (error == `goo what` == `OPTIONS.allow`), so §6.3 can mark but
+not *reorder* in the CLI; the reorder/menu home is the compose-GUI (#9), which
+isn't bound by that contract and will reuse `recent_verbs_for_type` verbatim.
+**Next**: the #9 compose-GUI v2 arc (incl. the §6.3 reorder + #6 caption), or
+smaller wins (#15 `goo do <addr>`, #11 plugin-TOML JSON Schema).
 
 ---
 

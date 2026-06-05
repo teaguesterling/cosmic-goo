@@ -437,8 +437,34 @@ fn cmd_what(reg: &Value, addr: &str) -> i32 {
         return 0;
     }
     println!("applicable verbs for {addr}  (type: {type_})");
+    // §6.3 recency hint: the verbs you most recently ran on THIS type that are
+    // still applicable, most-recent-first. A column-0 annotation only — it does
+    // NOT reorder the listing below (which stays registry-order, the SSOT the
+    // Gate-4 triple-equality locks) and is absent from the machine `options`
+    // surface. The strong "recent-first menu" home is the compose-GUI (#9).
+    let recent = recent_applicable_verbs(reg, &subject, type_, 5);
+    if !recent.is_empty() {
+        println!("recently run on this type: {}", recent.join(", "));
+    }
     println!("{listing}");
     0
+}
+
+/// The verbs most recently run on a subject of `type_` (§6.3 history) that are
+/// ALSO applicable to `subject` now, most-recent-first, capped at `n`. Dropping
+/// no-longer-applicable verbs keeps the hint honest (a since-removed plugin's
+/// verb won't be suggested).
+fn recent_applicable_verbs(reg: &Value, subject: &Value, type_: &str, n: usize) -> Vec<String> {
+    let applicable: std::collections::HashSet<String> = options::options_for(reg, subject)
+        .get("allow")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+        .unwrap_or_default();
+    history::recent_verbs_for_type(type_, n.saturating_mul(4))
+        .into_iter()
+        .filter(|v| applicable.contains(v))
+        .take(n)
+        .collect()
 }
 
 /// Build the printable per-verb listing for a subject: chips + name + description,

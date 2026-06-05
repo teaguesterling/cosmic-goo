@@ -94,6 +94,39 @@ pub fn last() -> Option<Action> {
     found
 }
 
+/// The distinct verbs most recently run on a subject of `type_`, most-recent
+/// first, capped at `n`. Backs the `goo what` recency hint (§6.3) and is the
+/// query the compose-GUI verb menu (#9) will reuse. Reads the whole file (it
+/// stays small; a lazy tail-read is a future optimisation). Empty type → empty.
+pub fn recent_verbs_for_type(type_: &str, n: usize) -> Vec<String> {
+    if type_.is_empty() || n == 0 {
+        return Vec::new();
+    }
+    let Some(path) = history_path() else { return Vec::new() };
+    let Ok(f) = std::fs::File::open(&path) else { return Vec::new() };
+    // Gather the matching verbs in chronological (append) order…
+    let mut chrono: Vec<String> = Vec::new();
+    for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
+        if let Ok(a) = serde_json::from_str::<Action>(&line) {
+            if a.type_ == type_ {
+                chrono.push(a.verb);
+            }
+        }
+    }
+    // …then walk from the most recent, keeping first-seen (= latest) of each.
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for v in chrono.into_iter().rev() {
+        if seen.insert(v.clone()) {
+            out.push(v);
+            if out.len() >= n {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// Drop the history file (the `goo forget` subcommand). `true` if a file was
 /// actually removed.
 pub fn clear() -> bool {
@@ -168,6 +201,23 @@ mod tests {
         assert!(last().is_some());
         assert!(clear());
         assert!(last().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recent_verbs_dedupes_latest_first_per_type() {
+        let _g = lock();
+        let dir = fresh_state("recent");
+        record("summarize", "text/plain", &json!({}));
+        record("critique", "text/plain", &json!({}));
+        record("summarize", "text/plain", &json!({})); // re-run → moves summarize ahead
+        record("open", "inode/file", &json!({})); // different type → excluded
+        // Most-recent-first, deduped: summarize (latest), then critique.
+        assert_eq!(recent_verbs_for_type("text/plain", 8), vec!["summarize", "critique"]);
+        // Type filter holds; cap honoured.
+        assert_eq!(recent_verbs_for_type("inode/file", 8), vec!["open"]);
+        assert_eq!(recent_verbs_for_type("text/plain", 1), vec!["summarize"]);
+        assert!(recent_verbs_for_type("text/x-none", 8).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
