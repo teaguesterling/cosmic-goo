@@ -656,8 +656,10 @@ verbs-for-a-subject listing is locked to registry order by the Gate-4 SSOT order
 equality contract (error == `goo what` == `OPTIONS.allow`), so §6.3 can mark but
 not *reorder* in the CLI; the reorder/menu home is the compose-GUI (#9), which
 isn't bound by that contract and will reuse `recent_verbs_for_type` verbatim.
-**Next**: the #9 compose-GUI v2 arc (incl. the §6.3 reorder + #6 caption), or
-smaller wins (#15 `goo do <addr>`, #11 plugin-TOML JSON Schema).
+#11 (**plugin-TOML JSON Schema** — `schema/cosmic-goo-plugin.schema.json` +
+`.taplo.toml`/`#:schema` association + `tests/schema.bats`; editor validation for
+plugin authors). **Next**: the #9 compose-GUI v2 arc (incl. the §6.3 reorder + #6
+caption), or smaller wins (#15 `goo do <addr>`, #14 conversion-suggestions on 415).
 
 ---
 

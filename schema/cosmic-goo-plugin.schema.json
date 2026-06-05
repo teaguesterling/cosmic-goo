@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://teaguesterling.github.io/cosmic-goo/schema/cosmic-goo-plugin.schema.json",
+  "title": "cosmic-goo plugin",
+  "description": "A cosmic-goo plugin TOML file: a flat document contributing any combination of types, sources, verbs, adverbs, channels, sigils, aliases, and dispatch rules. See doc/plugin-authoring.md. Item objects allow extra keys (verbs in particular carry custom {verb.*} template vars); the top level does not, so a singular-vs-plural typo like [[verb]] is caught.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "description": "Plugin identifier (informational)." },
+    "description": { "type": "string", "description": "One-line description of the plugin." },
+    "tier": { "enum": ["core", "cosmic", "desktop"], "description": "Plugin layer (discovery/priority): core (portable), cosmic (COSMIC desktop), desktop (generic Linux desktop)." },
+    "verb_defaults": { "type": "object", "additionalProperties": { "type": "object" }, "description": "Per-verb default settings keyed by verb name, e.g. critique = { model = \"haiku\" } (consumed by the verbs that read them, e.g. claude-routing)." },
+    "types": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+    "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } },
+    "verbs": { "type": "array", "items": { "$ref": "#/$defs/verb" } },
+    "adverbs": { "type": "array", "items": { "$ref": "#/$defs/adverb" } },
+    "channels": { "type": "array", "items": { "$ref": "#/$defs/channel" } },
+    "sigils": { "type": "array", "items": { "$ref": "#/$defs/sigil" } },
+    "aliases": { "type": "array", "items": { "$ref": "#/$defs/alias" } },
+    "dispatch": { "type": "array", "items": { "$ref": "#/$defs/dispatch" } },
+    "detectors": { "type": "array", "items": { "type": "object" }, "description": "Content detectors (\"what is this?\"). Declared+validated, but the cmd runner is still in progress — see design/detection.md." },
+    "checkers": { "type": "array", "items": { "type": "object" }, "description": "Content checkers (\"is this usable as type X?\"). Only the built-in json checker executes today — see design/detection.md." }
+  },
+  "$defs": {
+    "mimePattern": {
+      "type": "string",
+      "description": "A MIME type or glob (e.g. text/plain, text/*, application/vnd.tool.thing). Matching is subtype-aware (glob + structured-suffix + declared is_a)."
+    },
+    "type": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "description": "The MIME type, conventionally application/vnd.<tool>.<subtype> for vendor handle types." },
+        "display": { "type": "string", "description": "Human-readable label." },
+        "kind": { "enum": ["handle", "content", "surface"], "description": "handle = something to find; content = bytes (rarely declared); surface = a presentation target." },
+        "is_a": { "type": "array", "items": { "$ref": "#/$defs/mimePattern" }, "description": "Supertype(s) — the subtype lattice walks these transitively (a DAG; cycles guarded)." },
+        "extensions": { "type": "array", "items": { "type": "string" }, "description": "File extensions mapped to this type (usually populated by the OS MIME-DB importer, not by hand)." }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "description": "Source identifier." },
+        "prefix": { "type": "string", "description": "Short distinctive prefix for :prefix addressing and prefix/rest inference (lowercase, 2-5 chars; avoid common English words)." },
+        "icon": { "type": "string", "description": "freedesktop icon-theme name." },
+        "emits": { "$ref": "#/$defs/mimePattern", "description": "The primary type this source's items carry." },
+        "list_cmd": { "type": "string", "description": "Shell command producing a JSON array of {id, title, subtitle?, metadata?} on stdout. id must be stable." },
+        "preview_cmd": { "type": "string", "description": "Optional command to preview an item ({subject.*} substituted)." },
+        "enumerate": { "type": "boolean", "description": "Whether the source is bulk-listed (compose picker, tab completion). Default true; set false for slow/huge/noisy sources (still reachable on demand via :prefix:query)." },
+        "inferable": { "type": "boolean", "description": "Whether the source participates in bare-name entity inference. Defaults to (enumerate != false)." },
+        "watch": { "type": "array", "items": { "type": "string" }, "description": "File paths whose mtime gates this source's entity-cache freshness; the source is cached only if this is set (the cache is never stale). ~ is expanded." },
+        "cache_ttl": { "type": "integer", "description": "DEPRECATED — superseded by the watch/mtime cache model; ignored by the current engine." }
+      }
+    },
+    "verb": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name"],
+      "description": "A named action. Extra keys are allowed: a verb's custom fields (e.g. fabric_pattern) are available in templates as {verb.<key>}.",
+      "properties": {
+        "name": { "type": "string", "description": "Verb name (the subcommand). May be polymorphic — multiple impls with different accepts coexist." },
+        "accepts": { "type": "array", "items": { "$ref": "#/$defs/mimePattern" }, "description": "MIME patterns this verb applies to (subtype-aware)." },
+        "cmd": { "type": "string", "description": "Command template, run via bash -c. {subject.*}/{object.*}/{verb.*}/{adverbs.*} are substituted (use |q to shell-quote)." },
+        "prompt": { "type": "string", "description": "Prompt template for adverb-routed verbs (the selector adverb supplies the cmd that consumes {verb.prompt})." },
+        "description": { "type": "string", "description": "Shown by goo describe / goo what." },
+        "uses_adverbs": { "type": "array", "items": { "type": "string" }, "description": "Selector/fill adverbs this verb opts into and resolves at run time." },
+        "default_for": { "description": "The type(s) this verb is the default action for (a single type or an array of types).", "oneOf": [ { "$ref": "#/$defs/mimePattern" }, { "type": "array", "items": { "$ref": "#/$defs/mimePattern" } } ] },
+        "valid_when": { "type": "string", "description": "jq boolean predicate over the subject JSON; the verb applies only when truthy. Absent = always." },
+        "confirm": { "type": "boolean", "description": "Prompt y/N before executing." },
+        "destructive": { "type": "boolean", "description": "Marks an irreversible action ([!!] chip; subsumes confirm)." },
+        "emits": { "$ref": "#/$defs/mimePattern", "description": "The type the verb's result carries (for negotiation/routing)." },
+        "kind": { "type": "string", "description": "e.g. \"present\" — the subject IS the result and delivery is the engine's job." },
+        "usage": { "type": "array", "items": { "type": "string" }, "description": "Channel names that can carry out this verb (the instrument slot; the planner / --using picks one)." },
+        "object_type": { "$ref": "#/$defs/mimePattern", "description": "For two-step verbs: the type of the second positional, available as {object.*}." },
+        "object_source": { "type": "string", "description": "Named source (by name or prefix) supplying object candidates." },
+        "object_list_cmd": { "type": "string", "description": "Shell snippet emitting object candidates as JSON ({subject.*} substituted first)." },
+        "object_valid_when": { "type": "string", "description": "jq predicate pruning the object pool ({subject.*} available, candidate is .)." }
+      }
+    },
+    "adverb": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name"],
+      "description": "Modifies how a verb runs. Must declare scope via exactly one of applies_to / applies_to_verbs.",
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "enum": ["selector", "fill"], "description": "selector = pick among values; fill = free-form value (available as {adverbs.<name>})." },
+        "applies_to": { "type": "array", "items": { "$ref": "#/$defs/mimePattern" }, "description": "Offered for any verb accepting these types." },
+        "applies_to_verbs": { "type": "array", "items": { "type": "string" }, "description": "Offered only for these named verbs." },
+        "default": { "type": "string", "description": "Default selector value." },
+        "prompt": { "type": "string", "description": "Prompt for a fill adverb." },
+        "values": {
+          "type": "object",
+          "description": "Selector alternatives, one table per value: [adverbs.values.NAME].",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "description": { "type": "string" },
+              "template": { "type": "string", "description": "The cmd fragment this value contributes (consumes {verb.prompt} etc.)." },
+              "template_var": { "type": "object", "description": "Named vars injected into the verb's templates (e.g. {depth_prefix})." }
+            }
+          }
+        }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "emits"],
+      "description": "A type->type conversion edge (and optionally a verb instrument).",
+      "properties": {
+        "name": { "type": "string" },
+        "accepts": { "type": "array", "items": { "$ref": "#/$defs/mimePattern" }, "description": "Patterns it consumes (subtype-aware)." },
+        "emits": { "$ref": "#/$defs/mimePattern", "description": "The single CONCRETE type it produces — never a glob." },
+        "cost": { "enum": ["free", "cheap", "normal", "lossy", "network"], "description": "Route-cost tier; the planner minimizes total cost (lossy/network are flagged in --explain)." },
+        "consumes": { "enum": ["stream", "path", "bytes"], "description": "How it reads input (default path)." },
+        "tool": { "type": "string", "description": "A PATH binary the cmd needs; the planner routes around it if absent, or 415s with install: <tool>." },
+        "requires": { "type": "array", "items": { "type": "string" }, "description": "Environment capabilities that gate it, e.g. [\"display\"]." },
+        "cmd": { "type": "string", "description": "Conversion command; reads {in.path}, writes result to stdout." }
+      }
+    },
+    "sigil": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["char", "expands"],
+      "description": "A single leading character that expands into a goo:// address.",
+      "properties": {
+        "char": { "type": "string", "minLength": 1, "maxLength": 1, "description": "The single trigger character (not : + . / ~ or an alphanumeric — those are reserved/native)." },
+        "expands": { "type": "string", "description": "Replacement prefix, e.g. goo://app/ (then re-canonicalized)." },
+        "description": { "type": "string" }
+      }
+    },
+    "alias": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "expands"],
+      "description": "Abbreviates a whole invocation (verb + adverbs and/or a baked-in subject).",
+      "properties": {
+        "name": { "type": "string", "description": "The leading word; must not shadow a subcommand. Sharing a verb name is allowed (the alias wins) but warned." },
+        "expands": { "type": "string", "description": "Shell-tokenized tokens prepended at the verb position; re-dispatched (may chain, depth-guarded)." },
+        "description": { "type": "string" }
+      }
+    },
+    "dispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matches", "verb"],
+      "description": "A content-dispatch rule: classify raw text by a regex and route it to a verb (goo dispatch).",
+      "properties": {
+        "matches": { "type": "string", "description": "Bash ERE; capture groups -> ${1}, ${2}, … (${0} = whole match). Use POSIX classes, not Perl shorthands." },
+        "verb": { "type": "string", "description": "Verb to route to (must exist)." },
+        "type": { "$ref": "#/$defs/mimePattern", "description": "Type assigned to the resulting subject." },
+        "set": { "type": "object", "description": "Subject overrides deep-merged over { type, text: <input> } (e.g. rewrite text, add metadata)." },
+        "adverbs": { "type": "object", "description": "Optional adverb seed for the routed verb." }
+      }
+    }
+  }
+}

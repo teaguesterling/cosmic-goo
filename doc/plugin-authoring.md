@@ -498,6 +498,20 @@ Without a filter, arbitrary content breaks the shell: a selection containing a s
 
 The checker is conservative — it doesn't yet verify that referenced types exist in the registry, or that command templates' `{var}` paths resolve. Both are planned.
 
+### Editor validation (JSON Schema)
+
+`goo validate` is runtime (load-time) validation; for **authoring-time** help — completion, hovers, and catching typos as you type — there's a JSON Schema at [`schema/cosmic-goo-plugin.schema.json`](../schema/cosmic-goo-plugin.schema.json). It documents every section and field, enums the constrained ones (`kind`, channel `cost`/`consumes`, `tier`), and catches the classic singular-vs-plural slip (`[[verb]]` instead of `[[verbs]]`).
+
+Associate it with your plugin files one of two ways:
+
+- **Per file** — add a header line (works in taplo / VS Code "Even Better TOML"):
+  ```toml
+  #:schema https://raw.githubusercontent.com/teaguesterling/cosmic-goo/main/schema/cosmic-goo-plugin.schema.json
+  ```
+- **Per project** — the repo's [`.taplo.toml`](../.taplo.toml) already maps `plugins/*.toml` to the schema, so editing in-tree validates automatically.
+
+Item objects allow extra keys (a verb's custom `{verb.*}` template vars, for instance), so the schema guides without getting in the way; `tests/schema.bats` keeps it honest by validating every shipped plugin against it.
+
 ## Discovery order recap
 
 | Order | Path | Use for |

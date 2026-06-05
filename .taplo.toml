@@ -1,0 +1,11 @@
+# taplo / Even Better TOML — associate cosmic-goo plugin files with the plugin
+# JSON Schema so editing them in-repo gets validation + completion + hovers.
+# Authors editing their OWN plugins (in ~/.config/cosmic-goo/plugins/) can add a
+# header line instead:
+#   #:schema https://raw.githubusercontent.com/teaguesterling/cosmic-goo/main/schema/cosmic-goo-plugin.schema.json
+# See doc/plugin-authoring.md (Validation).
+
+[[rule]]
+include = ["plugins/*.toml", "plugins/*.toml.example"]
+[rule.schema]
+path = "schema/cosmic-goo-plugin.schema.json"
