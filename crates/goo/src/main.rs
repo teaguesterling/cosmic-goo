@@ -450,6 +450,40 @@ fn cmd_what(reg: &Value, addr: &str) -> i32 {
     0
 }
 
+/// Conversion-suggestion hint for a 415 (§6.8): when no route reaches the failed
+/// verb, name the verbs that accept the subject's type DIRECTLY — running any of
+/// them won't 415. Drawn from `OPTIONS.allow` (the same SSOT `goo what` shows),
+/// minus the failed verb itself and any destructive verb (don't suggest `delete`
+/// as an alternative to `view`). Empty string when there's no safe alternative.
+fn alt_verbs_hint(reg: &Value, subject: &Value, failed_verb: &str) -> String {
+    let view = options::options_for(reg, subject);
+    let vmap = view.get("verbs").and_then(Value::as_object);
+    let is_destructive = |n: &str| -> bool {
+        vmap.and_then(|m| m.get(n))
+            .and_then(|v| v.get("destructive"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    let alts: Vec<&str> = view
+        .get("allow")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .filter(|n| *n != failed_verb && !is_destructive(n))
+                .collect()
+        })
+        .unwrap_or_default();
+    if alts.is_empty() {
+        return String::new();
+    }
+    let stype = subject.get("type").and_then(Value::as_str).unwrap_or("");
+    let shown = alts.iter().take(6).copied().collect::<Vec<_>>().join(", ");
+    let more = alts.len().saturating_sub(6);
+    let extra = if more > 0 { format!(" (+{more} more)") } else { String::new() };
+    format!("\n  try a verb that accepts {stype}: {shown}{extra}")
+}
+
 /// The verbs most recently run on a subject of `type_` (§6.3 history) that are
 /// ALSO applicable to `subject` now, most-recent-first, capped at `n`. Dropping
 /// no-longer-applicable verbs keeps the hint honest (a since-removed plugin's
@@ -971,7 +1005,8 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
             // missing tools *on that route* — actionable ("install: mlr"), not every
             // uninstalled tool.
             let hint = route_missing_tools_hint(subject_type, verb, &target, reg, &missing, hops);
-            die(format!("415 · no route — can't route {subject_type} through '{verb_name}'{hint}"))
+            let alts = alt_verbs_hint(reg, subject, verb_name);
+            die(format!("415 · no route — can't route {subject_type} through '{verb_name}'{hint}{alts}"))
         }
         Some(plan) => match dest {
             None => match exec::execute(&plan, &subject_path, verb, reg) {

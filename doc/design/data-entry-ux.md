@@ -563,12 +563,24 @@ and shows stderr inline with three options: **retry**, **edit any
 slot**, **cancel**. CLI version: print stderr + suggest `goo --explain
 <same sentence>` so user can debug interactively without re-typing.
 
-### 6.8 Conversion suggestions on 415
+### 6.8 Conversion suggestions on 415 — **shipped (#14)**
 Today the teaching 415 (negotiation §4.1) suggests `--hops N` or
 `--force`. Extend: also suggest *alternative verbs* that would reach the
 goal from the subject. "View won't render this as ANSI; try `cat` or
 `json-pretty`." Powered by OPTIONS.allow filtered to verbs that accept
 the subject's type AND emit something close to Accept.
+
+**Shipped**: the plain 415 in `exec_negotiated` now appends
+`try a verb that accepts <type>: <verbs>` — the verbs from `OPTIONS.allow`
+(the same SSOT `goo what` shows) that accept the subject's type directly,
+minus the failed verb and any `destructive` verb (a safe-by-construction
+alternative list; running one won't 415). One `alt_verbs_hint` on the no-route
+415 `die` (not the teaching-415, which already hands `--hops`/`--force`), so
+coercion-415s and present-verb-415s share it. The simpler
+"accepts directly" framing (vs. the spec's "emits close to Accept") was
+chosen deliberately: a direct-accepting verb is *guaranteed* not to 415,
+whereas an emits-close heuristic could re-suggest a verb that itself 415s.
+Tests: `tests/integration/suggest-415.bats`.
 
 ### 6.9 Smart adverb defaults that learn
 If the user always uses `--via=fabric` for `critique`, learn that and
@@ -631,7 +643,7 @@ unless noted).
 | 11 | **JSON Schema for plugin TOML** (§6.12) | small | static file + docs |
 | 12 | **Late-binding / error recovery** in compose-GUI | medium | UX correctness work |
 | 13 | **"Again" / recent-actions** (§6.1, §6.3) | medium | persistent history layer |
-| 14 | **Conversion suggestions on 415** (§6.8) | medium | extends teaching 415 |
+| 14 | **Conversion suggestions on 415** (§6.8) — **shipped** | medium | extends teaching 415 |
 | 15 | **`goo do <addr>`** noun-first subcommand | small | bin |
 
 **Suggested first slice**: #1 + #2 + #3 together as "completion polish"
@@ -667,8 +679,14 @@ not *reorder* in the CLI; the reorder/menu home is the compose-GUI (#9), which
 isn't bound by that contract and will reuse `recent_verbs_for_type` verbatim.
 #11 (**plugin-TOML JSON Schema** — `schema/cosmic-goo-plugin.schema.json` +
 `.taplo.toml`/`#:schema` association + `tests/schema.bats`; editor validation for
-plugin authors). **Next**: the #9 compose-GUI v2 arc (incl. the §6.3 reorder + #6
-caption), or smaller wins (#15 `goo do <addr>`, #14 conversion-suggestions on 415).
+plugin authors). #14 (**conversion suggestions on 415** — when a verb 415s with
+no route, the error now also names the verbs that accept the subject's type
+*directly* (`try a verb that accepts <type>: …`), drawn from `OPTIONS.allow` minus
+the failed verb and any `destructive` verb; one shared `alt_verbs_hint` on the
+no-route 415 `die` in `exec_negotiated` (not the teaching-415), so both
+coercion-415 and present-verb-415 get it — both covered in
+`tests/integration/suggest-415.bats`). **Next**: the #9 compose-GUI v2 arc
+(incl. the §6.3 reorder + #6 caption), or the smaller win #15 (`goo do <addr>`).
 
 ---
 
