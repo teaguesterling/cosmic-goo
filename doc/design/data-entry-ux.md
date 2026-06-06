@@ -177,7 +177,11 @@ For a bare token t, for each enumerable source's cached items:
   score = 0
   if item.id == t:                     score = 1000  (exact id)
   elif item.title == t:                score = 800   (exact title)
-  elif word_boundary_match(t, item):   score = 400 * (len(t) / len(item.title))
+  elif word_boundary_match(t, item):   score = 400 * (len(t) / len(matched_word))
+                                       # ratio vs the matched WORD/segment (split on
+                                       # space/-/_), NOT the whole title — so a whole-word
+                                       # hit scores 400 even in a long descriptive title
+                                       # ("gateway" in "api-gateway (prod)" → 400 → HIGH). cb1e2fc.
   elif item.id contains t:             score = 200 * (len(t) / len(item.id))
   elif item.title contains t:          score = 100 * (len(t) / len(item.title))
   else:                                score = 0
@@ -267,21 +271,25 @@ How the band model behaves on the 10 representative inputs from §3.0:
 
 ### 3.3 Performance & caching
 
-> **Built (slice 7b, `inference.rs`).** Per-source TTL cache at
-> `$XDG_RUNTIME_DIR/cosmic-goo/entities/<source>.json`, with the `inferable`
-> opt-in field and a per-source `cache_ttl` (seconds; `0` = never cache).
-> Writes are atomic (temp + rename); the cmd is stored alongside the items so
-> a changed `list_cmd` busts the entry; empty results are never cached (a
-> transient failure must not pin a source out for the TTL). The cache is an
-> optimization, never a correctness gate — any miss re-runs `list_cmd`. The
-> cache serves the **inference enumerate scan** (the per-keystroke hot path
-> that scores every source); a subsequent DEFINITIVE *resolution* still pays
-> one uncached `list_cmd` on the dispatch path — fine, since dispatch is the
-> once-per-action cold path, not the hot one. The per-source **mtime/dbus
-> invalidation hooks** below are the deferred refinement: v1 uses the TTL,
-> which the table already names as every source's fallback — so the slow
-> signal-cached sources (bluetooth/services) stay out of inference until those
-> hooks land (they ship the `inferable` field but leave it unset for now).
+> **Built (slice 7b, then reworked by `c673cf4`; `inference.rs`).** Per-source
+> cache at `$XDG_RUNTIME_DIR/cosmic-goo/entities/<source>.json`, with the
+> `inferable` opt-in field. The original TTL was **replaced by watch/mtime
+> invalidation** under a *no-stale* directive (`cache_ttl` /
+> `DEFAULT_CACHE_TTL_SECS` removed): a source caches **only if** it declares
+> `watch = [paths]` (files whose mtime is its freshness signal), and an entry is
+> valid iff `cmd` is unchanged AND every watch path's CURRENT mtime equals the
+> value stat'd *before* `list_cmd` ran — so a concurrent edit yields a false-STALE
+> (safe recompute), never a false-fresh. Sources **without** `watch`
+> (command/dbus-backed: apps, bluetooth, …) are no longer cached on the one-shot
+> CLI — they recompute every run rather than risk staleness; true warm caching
+> for those is a `good`-daemon job (#31: inotify + dbus). `goo reload` /
+> `clear_entity_cache()` is the manual drop for whatever watch can't see yet. The
+> cache is an optimization, never a correctness gate — any miss re-runs
+> `list_cmd`; empty results aren't cached. Today only the file-backed `recent`
+> source participates (`watch = ["~/.local/share/recently-used.xbel"]`);
+> ssh-hosts/mounts are `enumerate = false` and the rest are command/dbus and
+> recompute. (The refresh-policy table below is the original design sketch; its
+> per-source *TTL fallbacks* did not ship — a no-`watch` source recomputes instead.)
 
 Scanning every source's `list_cmd` on every keystroke is unacceptable.
 Strategy: **per-source list caching** with explicit invalidation hooks.
@@ -635,9 +643,10 @@ the next big arc, depending on appetite.
 [completion-polish.md](completion-polish.md), which owns the chip-vocabulary
 single-source-of-truth future ports must cite); #4 (prefix-shape inference,
 `address::resolve`); #7 (entity-name inference — engine `inference.rs`, bin
-dispatch, MEDIUM picker) **plus its 7b caching layer** (per-source TTL cache
+dispatch, MEDIUM picker) **plus its 7b caching layer** (per-source cache
 at `$XDG_RUNTIME_DIR/cosmic-goo/entities/<name>.json` + the `inferable` opt-in
-field; see §3.3); #8 (verb-aware bias — `infer_entity_for_verb` narrows the
+field — the TTL was later reworked to watch/mtime invalidation for a no-stale
+guarantee, `c673cf4`; see §3.3); #8 (verb-aware bias — `infer_entity_for_verb` narrows the
 scan to sources the verb accepts, wired into `resolve_subject`; see §3.4); #5
 (subject-shape-aware listing — `verb-subject-items` ranks by accepts-
 specificity + polymorphic-union; see §5.1); #6 (implicit-subject preview —
@@ -674,9 +683,11 @@ caption), or smaller wins (#15 `goo do <addr>`, #14 conversion-suggestions on 41
    the full spec.
 2. **`inferable` per-source default policy** — listed defaults in §3.3;
    verify by walking each shipped source.
-3. **Cache invalidation** for the entity cache — per-source signals
-   listed in §3.3; some sources (network, bluetooth) might need dbus
-   listeners to be tight, vs the lazier TTL approach.
+3. ~~**Cache invalidation** for the entity cache~~ — **resolved** (`c673cf4`):
+   watch/mtime invalidation with a no-stale guarantee; a source caches only with
+   a `watch` list, and command/dbus sources (network, bluetooth) simply recompute
+   every run on the one-shot CLI until the `good` daemon adds inotify/dbus
+   listeners (#31). See §3.3.
 4. **Noun-first CLI form** — `goo do <addr>`? `goo <addr> <verb>` with
    reorder? `goo --on <addr> <verb>`? The first is cleanest; the
    second is most ergonomic; the third is most explicit. Pick one.
