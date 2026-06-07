@@ -639,7 +639,7 @@ unless noted).
 | 6 | **Implicit-subject preview** | medium | bin + shell hint |
 | 7 | **Entity-name inference v1** (§3.2 spec: scoring + bands + context adaptation + caching) | substantial | new `address::infer_entity` returning `(Subject, Band, Reason)`; `Band` drives the caller's UX response; caching layer per §3.3 |
 | 8 | **Verb-aware bias** (§3.4) | medium-substantial | layered on top of #7 |
-| 9 | **Compose-GUI v2 noun-first flow** — **inc 1 built** (subject→verb→preview→run; recency reorder) | substantial | the GUI payoff slice |
+| 9 | **Compose-GUI v2 noun-first flow** — **inc 1+2 built** (gnome-do/Kupfer: side-by-side panes, type-to-filter, keyboard nav, object pane; recency reorder) | substantial | the GUI payoff slice |
 | 10 | **"Speak it back" live preview** in compose-GUI — **shipped with #9 inc 1** | small once #9 lands | |
 | 11 | **JSON Schema for plugin TOML** (§6.12) | small | static file + docs |
 | 12 | **Late-binding / error recovery** in compose-GUI | medium | UX correctness work |
@@ -703,9 +703,21 @@ The logic is the pure, unit-tested `goo_engine::compose::ComposeState`; the
 scripted `goo compose` CLI drives the **same** core, so the bats suite tests it
 headlessly. Stay on iced 0.14 (libcosmic is a separate cross-cutting swap). Build
 with `make build-gui` / run with `make run-gui`).
-**Next**: #9 **inc 2** (object pane for two-step verbs + the adverb/slot panel from
-`OPTIONS.verbs.<v>.with`), then **inc 3** (the #6 implicit-subject caption) and
-**#12** (§6.6 late-binding state preservation + §6.7 error-recovery UI).
+#9 **inc 2 + the gnome-do/Kupfer rework** — the dialog is now a keyboard-driven
+launcher: side-by-side **Subject → Verb → Object** panes, **type-to-filter**
+(fuzzy, ranked) at each step, ↑/↓ to move, Enter/Tab to pick+advance, Esc to
+clear/step-back/cancel; the object pane appears for two-step verbs (candidates by
+`mime::is_subtype` of the verb's `object_type`); the speak-it-back preview stays
+pinned. **All** interaction logic — pane state machine, query editing, selection,
+commit/advance/back, the gated-confirm beat — is a pure, unit-tested reducer
+(`goo_engine::compose::ComposeUi`), so the iced shell only performs the I/O the
+reducer returns (`ResolveSubject`/`LoadObjects`/`Run`/`Cancel`). **Safety invariant
+(tested)**: the keypress that *completes* a sentence never also runs it (it
+advances to a Ready pane), and a gated verb needs an extra armed beat — a reflex
+double-Enter can't fire a `[!!]` verb. **Next**: the adverb/slot panel (key-value
+widgets from `OPTIONS.verbs.<v>.with`; verbs run on defaults until then),
+**inc 3** (the #6 implicit-subject caption), and **#12** (§6.6 late-binding +
+§6.7 error-recovery UI).
 
 ---
 

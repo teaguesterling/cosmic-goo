@@ -1,124 +1,111 @@
 //! goo-compose-gui — the native **noun-first** compose dialog over the `goo` CLI
-//! (iced). Pick a subject, then a verb, see the exact `goo …` command it will
-//! run, and run it. The CLI stays verb-first; this GUI inverts the grammar
-//! ("I have this thing — what can I do with it?").
+//! (iced), in a gnome-do / Kupfer idiom: pick a subject, then a verb, then (when
+//! the verb needs one) an object, type-to-filter at every step, and run the exact
+//! `goo …` command shown live at the bottom.
 //!
-//! **Thin shell.** All the logic lives in the pure, unit-tested
-//! [`goo_engine::compose`] core ([`ComposeState`]); this file is the iced
-//! `update`/`view` over it plus the I/O the core deliberately excludes:
-//! resolving the picked address, reading the action history for the recency
-//! reorder, and spawning the assembled command. The scripted `goo compose` CLI
-//! drives the same core, so the bats suite tests it headlessly.
+//! **Thin shell.** Every bit of interaction logic — the pane state machine, the
+//! query editing, the selection movement, the commit/advance/back transitions,
+//! and the sentence itself — lives in the pure, unit-tested
+//! [`goo_engine::compose`] reducer ([`ComposeUi`] over [`ComposeState`]). This
+//! file is the iced `view`/`update`/`subscription` plus the *only* I/O the
+//! reducer hands back as [`UiAction`]s: resolving the picked address, enumerating
+//! object candidates, and spawning the command. So the whole keyboard flow is
+//! tested headlessly in `compose.rs` — no display required.
 //!
-//! **Increment 1** (this revision): subject pane → verb pane (OPTIONS.allow,
-//! recency-reordered, with confirm/destructive chips) → live CLI-equivalent
-//! preview → confirm pane → Run (spawns `goo argv`, propagating the exit code;
-//! a confirm/destructive verb is run with `--confirm-dangerous=<verb>` since a
-//! spawned `goo` has no stdin for the y/N gate). Object-needing and
-//! adverb-slot verbs are recognised but their panels are increment 2 — an
-//! object-needing verb shows Run disabled rather than emitting a broken command.
+//! **Input model (gnome-do):** nothing is focused; every keypress is captured
+//! globally via `event::listen_with` and fed to `ComposeUi::apply`. Type to
+//! filter, ↑/↓ to move, Enter/Tab to pick + advance, Esc to clear/step-back/
+//! cancel. The keypress that *completes* the sentence never also runs it (it
+//! advances to a Ready pane); a gated (`confirm`/`destructive`) verb needs an
+//! extra armed beat, so a reflex double-Enter can't fire it.
 //!
-//! Built on demand (`cargo build -p goo-compose-gui` / `make build-gui`) — a
-//! workspace member but not a default-member, so it never slows the core build.
-//! The MVU bones port mechanically to the eventual libcosmic swap.
+//! Built on demand (`make build-gui` / `cargo build -p goo-compose-gui`). Stay on
+//! iced 0.14; the libcosmic swap is a separate cross-cutting arc. Deferred: the
+//! adverb/slot panel (key-value widgets; verbs run on registry defaults until
+//! then) and §6.6/§6.7 late-binding + error-recovery (#12).
 
-use goo_engine::compose::ComposeState;
-use goo_engine::{address, history, registry, selection};
-use iced::widget::{button, column, container, row, scrollable, text, Space};
-use iced::{Color, Element, Length, Task, Theme};
+use goo_engine::compose::{ComposeState, ComposeUi, Item, KeyInput, Stage, UiAction};
+use goo_engine::{address, history, mime, registry, selection};
+use iced::event::{self, Event, Status};
+use iced::keyboard::{key::Named, Key};
+use iced::widget::{column, container, mouse_area, row, scrollable, text, Space};
+use iced::{Color, Element, Length, Subscription, Task, Theme};
 use serde_json::Value;
+
+const MONO: iced::Font = iced::Font::MONOSPACE;
+const RECENT_N: usize = 16;
 
 fn main() -> iced::Result {
     iced::application(App::default, App::update, App::view)
         .title(|_: &App| "cosmic-goo · compose".to_string())
         .theme(|_: &App| Theme::Dark)
-        .window_size((720.0, 640.0))
+        .subscription(App::subscription)
+        .window_size((940.0, 560.0))
         .run()
-}
-
-// ============================================================================
-// State
-// ============================================================================
-
-/// An addressable subject candidate: the canonical `goo://…` address plus a
-/// human label. The address is what gets resolved/threaded into the command;
-/// the label is display-only.
-struct Candidate {
-    addr: String,
-    label: String,
 }
 
 struct App {
     reg: Value,
-    candidates: Vec<Candidate>,
-    /// The in-progress sentence once a subject is picked (`None` = subject stage).
-    state: Option<ComposeState>,
-    /// Verbs recently run on the picked subject's type (recency reorder source).
-    recent: Vec<String>,
-    /// A transient error (e.g. an address that wouldn't resolve).
-    error: Option<String>,
+    ui: ComposeUi,
 }
 
 impl Default for App {
     fn default() -> Self {
         let reg = registry::load_all();
-        let candidates = subject_candidates(&reg);
-        App { reg, candidates, state: None, recent: Vec::new(), error: None }
+        let subjects = subject_candidates(&reg);
+        App { reg, ui: ComposeUi::new(subjects) }
     }
 }
 
 #[derive(Debug, Clone)]
 enum Message {
-    SubjectPicked(String), // canonical address
-    VerbPicked(String),    // verb name
-    Run,                   // execute the assembled sentence
-    Back,                  // verb → subject stage (or clear the verb)
-    Cancel,                // abort the dialog (exit 130)
+    /// A decoded keypress (from the global `event::listen_with` subscription).
+    Key(KeyInput),
+    /// A mouse click on row `usize` of the active pane (sets the selection, commits).
+    Click(usize),
 }
 
-// ============================================================================
-// Update
-// ============================================================================
-
 impl App {
+    fn subscription(&self) -> Subscription<Message> {
+        event::listen_with(on_event)
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
-        match message {
-            Message::SubjectPicked(addr) => match address::resolve(&addr, &self.reg, None) {
+        let action = match message {
+            Message::Key(k) => self.ui.apply(&k),
+            Message::Click(i) => {
+                self.ui.selected = i;
+                self.ui.apply(&KeyInput::Enter)
+            }
+        };
+        if let Some(action) = action {
+            self.perform(action);
+        }
+        Task::none()
+    }
+
+    /// Perform the I/O a key produced — the ONLY side-effecting code; everything
+    /// else is the pure reducer.
+    fn perform(&mut self, action: UiAction) {
+        match action {
+            UiAction::ResolveSubject(addr) => match address::resolve(&addr, &self.reg, None) {
                 Ok(subject) => {
                     let st = ComposeState::from_subject(&self.reg, &subject, addr);
-                    // Recency reorder source — read the history here (the core stays
-                    // I/O-free) and pass it into `verb_menu` at view time.
-                    self.recent = history::recent_verbs_for_type(&st.subject_type, 16);
-                    self.state = Some(st);
-                    self.error = None;
+                    let recent = history::recent_verbs_for_type(&st.subject_type, RECENT_N);
+                    self.ui.on_subject_resolved(st, recent);
                 }
-                Err(e) => self.error = Some(format!("could not resolve {addr}: {e}")),
+                Err(e) => self.ui.set_error(format!("could not resolve {addr}: {e}")),
             },
-            Message::VerbPicked(name) => {
-                if let Some(st) = self.state.as_mut() {
-                    st.select_verb(&name);
-                }
+            UiAction::LoadObjects(object_type) => {
+                self.ui.set_objects(enumerate_objects(&self.reg, &object_type));
             }
-            Message::Back => {
-                match self.state.as_mut() {
-                    // verb picked → drop it, back to the verb pane
-                    Some(st) if st.verb.is_some() => st.verb = None,
-                    // only a subject → back to the subject pane
-                    _ => self.state = None,
-                }
-                self.error = None;
-            }
-            Message::Cancel => std::process::exit(130),
-            Message::Run => {
-                if let Some(st) = self.state.as_ref() {
-                    if st.needs_object() {
-                        return Task::none(); // guarded in the view; belt-and-braces
-                    }
+            UiAction::Run => {
+                if let Some(st) = self.ui.state.as_ref() {
                     std::process::exit(run_sentence(st));
                 }
             }
+            UiAction::Cancel => std::process::exit(130),
         }
-        Task::none()
     }
 
     // ========================================================================
@@ -126,139 +113,121 @@ impl App {
     // ========================================================================
 
     fn view(&self) -> Element<'_, Message> {
-        let body: Element<_> = match &self.state {
-            None => self.view_subjects(),
-            Some(st) if st.verb.is_none() => self.view_verbs(st),
-            Some(st) => self.view_review(st),
-        };
-        let mut col = column![text("goo-compose · noun-first").size(22)].spacing(10);
-        if let Some(e) = &self.error {
-            col = col.push(text(format!("⚠ {e}")).size(13).color(Color::from_rgb(0.95, 0.5, 0.4)));
-        }
-        col = col.push(body);
-        container(col).padding(16).into()
-    }
+        let ui = &self.ui;
 
-    /// Stage 1 — pick the subject.
-    fn view_subjects(&self) -> Element<'_, Message> {
-        let mut list = column![text("Pick a subject:").size(14)].spacing(4);
-        for c in &self.candidates {
-            let b = button(
-                row![
-                    text(c.addr.clone()).size(13).font(iced::Font::MONOSPACE).width(Length::Fixed(220.0)),
-                    text(c.label.clone()).size(13).color(Color::from_rgb(0.6, 0.64, 0.83)),
-                ]
-                .spacing(8),
-            )
-            .on_press(Message::SubjectPicked(c.addr.clone()))
-            .padding([5u16, 10])
+        // The three panes, side by side. Each is active (query + filtered list),
+        // committed (the chosen value), or pending (—).
+        let subject_pane = self.pane("Subject", Stage::Subject, ui.state.as_ref().map(|s| s.subject_addr.clone()));
+        let verb_pane = self.pane("Verb", Stage::Verb, ui.state.as_ref().and_then(|s| s.verb.clone()));
+
+        let mut panes = row![subject_pane, verb_pane].spacing(10).height(Length::Fill);
+        // The object pane appears only for a two-step verb.
+        if ui.state.as_ref().map(|s| s.needs_object()).unwrap_or(false) {
+            let obj = ui.state.as_ref().and_then(|s| s.object_addr.clone());
+            panes = panes.push(self.pane("Object", Stage::Object, obj));
+        }
+
+        // Speak-it-back: the live CLI-equivalent, pinned at the bottom.
+        let preview_text = ui.state.as_ref().map(|s| s.preview()).unwrap_or_else(|| "goo".into());
+        let preview = container(text(preview_text).size(15).font(MONO).color(Color::from_rgb(0.55, 0.85, 0.6)))
+            .padding(10)
             .width(Length::Fill)
-            .style(button::text);
-            list = list.push(b);
-        }
-        scrollable(list).height(Length::Fill).into()
-    }
+            .style(panel_style);
 
-    /// Stage 2 — pick the verb (recency-reordered, with confirm/destructive chips).
-    fn view_verbs<'a>(&'a self, st: &'a ComposeState) -> Element<'a, Message> {
-        let header = text(format!("{}   ({})", st.subject_addr, st.subject_type))
-            .size(13)
-            .font(iced::Font::MONOSPACE)
-            .color(Color::from_rgb(0.6, 0.64, 0.83));
-
-        let mut list = column![text("What do you want to do?").size(14)].spacing(4);
-        for name in st.verb_menu(&self.recent) {
-            let (confirm, destructive) = st.verb_flags(&name);
-            let chip = chip_for(confirm, destructive);
-            let recent_mark = if self.recent.iter().any(|r| *r == name) { "  ·recent" } else { "" };
-            let label = format!("{name}{chip}{recent_mark}");
-            let b = button(text(label).size(14).font(iced::Font::MONOSPACE))
-                .on_press(Message::VerbPicked(name.clone()))
-                .padding([5u16, 10])
-                .width(Length::Fill)
-                .style(if destructive { button::danger } else { button::text });
-            list = list.push(b);
+        let status = self.status_line();
+        let mut footer = column![preview, text(status).size(12).color(Color::from_rgb(0.6, 0.64, 0.83))].spacing(6);
+        if let Some(e) = &ui.error {
+            footer = footer.push(text(format!("⚠ {e}")).size(12).color(Color::from_rgb(0.95, 0.5, 0.4)));
         }
 
         column![
-            header,
+            text("goo-compose · noun-first").size(20),
             Space::new().height(Length::Fixed(8.0)),
-            scrollable(list).height(Length::Fill),
-            nav_row(Message::Back, "‹ subject"),
+            panes,
+            Space::new().height(Length::Fixed(8.0)),
+            footer,
         ]
-        .spacing(8)
+        .padding(16)
         .into()
     }
 
-    /// Stage 3 — review the assembled sentence and run it.
-    fn view_review<'a>(&'a self, st: &'a ComposeState) -> Element<'a, Message> {
-        // The live CLI-equivalent ("speak it back"): exactly what will run.
-        let preview = container(
-            text(st.preview()).size(15).font(iced::Font::MONOSPACE).color(Color::from_rgb(0.55, 0.85, 0.6)),
-        )
-        .padding(10)
-        .width(Length::Fill)
-        .style(panel_style);
+    /// One pane: active (query + filtered list with the selection highlighted),
+    /// committed (the chosen value), or pending.
+    fn pane<'a>(&'a self, title: &str, stage: Stage, committed: Option<String>) -> Element<'a, Message> {
+        let active = self.ui.stage == stage;
+        let mut col = column![text(title.to_string()).size(12).color(Color::from_rgb(0.6, 0.64, 0.83))]
+            .spacing(6)
+            .width(Length::FillPortion(1));
 
-        let mut col = column![text("Run this command:").size(14), preview].spacing(8);
-
-        if st.needs_object() {
-            // Object pane is increment 2 — never emit a broken command.
-            col = col.push(
-                text(format!(
-                    "‘{}’ needs an object ({}) — the object picker arrives in increment 2.",
-                    st.verb.as_deref().unwrap_or(""),
-                    st.object_type().unwrap_or(""),
-                ))
-                .size(13)
-                .color(Color::from_rgb(0.95, 0.7, 0.35)),
-            );
-        } else if st.needs_confirm() || st.is_destructive() {
-            // The GUI's own confirm gate: a spawned `goo` has no stdin for the
-            // y/N prompt, so clicking Run here IS the confirmation (the verb is
-            // then run with --confirm-dangerous=<verb>). Gates on destructive too,
-            // so a `[!!]` verb always warns even if it didn't set `confirm`.
-            let warn = if st.is_destructive() {
-                "⚠ destructive — this cannot be undone. Click Run to confirm."
-            } else {
-                "⚠ this verb asks for confirmation. Click Run to confirm."
-            };
-            col = col.push(text(warn).size(13).color(Color::from_rgb(0.95, 0.5, 0.4)));
+        if active {
+            col = col.push(text(format!("› {}", self.ui.query)).size(15).font(MONO).color(Color::from_rgb(0.85, 0.85, 0.9)));
+            let mut list = column![].spacing(1);
+            for (i, it) in self.ui.visible().into_iter().enumerate() {
+                let selected = i == self.ui.selected;
+                let cell = container(text(it.label).size(13).font(MONO)).padding([3, 8]).width(Length::Fill);
+                let cell = if selected { cell.style(sel_style) } else { cell };
+                // Click-to-commit (mouse_area doesn't take focus, so it can't steal keys).
+                list = list.push(mouse_area(cell).on_press(Message::Click(i)));
+            }
+            col = col.push(scrollable(list).height(Length::Fill));
+        } else if let Some(v) = committed {
+            col = col.push(text(v).size(13).font(MONO).color(Color::from_rgb(0.55, 0.85, 0.6)));
+        } else {
+            col = col.push(text("—").size(13).color(Color::from_rgb(0.45, 0.48, 0.6)));
         }
 
-        // Run is enabled only when the sentence is complete (inc 1: no object gap).
-        let run = button(text(if st.is_destructive() { "Run  [!!]" } else { "Run" }).size(14))
-            .on_press_maybe((!st.needs_object()).then_some(Message::Run))
-            .padding([6u16, 16])
-            .style(if st.is_destructive() { button::danger } else { button::primary });
+        container(col).padding(8).height(Length::Fill).style(panel_style).into()
+    }
 
-        let nav = row![
-            run,
-            Space::new().width(Length::Fixed(8.0)),
-            button(text("‹ verb").size(13)).on_press(Message::Back).padding([6u16, 12]).style(button::text),
-            Space::new().width(Length::Fill),
-            button(text("Cancel").size(13)).on_press(Message::Cancel).padding([6u16, 12]).style(button::text),
-        ]
-        .align_y(iced::Alignment::Center);
-
-        col.push(Space::new().height(Length::Fixed(8.0))).push(nav).spacing(8).into()
+    /// The footer hint line — context-sensitive, and the confirm prompt in Ready.
+    fn status_line(&self) -> String {
+        match self.ui.stage {
+            Stage::Ready if self.ui.gated() && !self.ui.armed() => {
+                let what = if self.ui.state.as_ref().map(|s| s.is_destructive()).unwrap_or(false) {
+                    "destructive [!!]"
+                } else {
+                    "needs confirm [!]"
+                };
+                format!("⚠ {what} — Enter to confirm · Esc to step back")
+            }
+            Stage::Ready if self.ui.gated() => "⚠ Enter again to RUN · Esc to step back".to_string(),
+            Stage::Ready => "Enter to run · Esc to step back".to_string(),
+            _ => "type to filter · ↑/↓ move · Enter or Tab pick · Esc clear/back".to_string(),
+        }
     }
 }
 
+/// Decode a global keyboard event into the reducer's iced-free [`KeyInput`].
+/// Named (nav/control) keys are matched FIRST; only a genuine character key
+/// edits the query, so Tab/Enter/Backspace never leak a control char into it.
+fn on_event(event: Event, _status: Status, _id: iced::window::Id) -> Option<Message> {
+    let Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) = event else {
+        return None;
+    };
+    let ki = match key.as_ref() {
+        Key::Named(Named::Enter) => KeyInput::Enter,
+        Key::Named(Named::Tab) => KeyInput::Tab,
+        Key::Named(Named::Escape) => KeyInput::Escape,
+        Key::Named(Named::Backspace) => KeyInput::Backspace,
+        Key::Named(Named::ArrowUp) => KeyInput::Up,
+        Key::Named(Named::ArrowDown) => KeyInput::Down,
+        Key::Named(Named::Space) => KeyInput::Char(" ".into()),
+        Key::Character(c) => KeyInput::Char(c.to_string()),
+        _ => return None,
+    };
+    Some(Message::Key(ki))
+}
+
 // ============================================================================
-// Helpers (the I/O the pure core excludes)
+// Helpers (the I/O the pure reducer excludes)
 // ============================================================================
 
 /// Spawn `goo` with the sentence's argv and return its exit code. A
 /// confirm/destructive verb gets `--confirm-dangerous=<verb>` appended (NOT part
-/// of `argv()`/the preview — it's the gate bypass the GUI's confirm pane earns).
+/// of `argv()`/the preview — the GUI's confirm beat earns it; a spawned `goo`
+/// has no stdin for the y/N gate).
 fn run_sentence(st: &ComposeState) -> i32 {
     let mut argv = st.argv();
-    // Append the gate bypass for ANY gated verb. The CLI prompt currently keys on
-    // `confirm` only, but OPTIONS surfaces `confirm`/`destructive` independently,
-    // so a future `destructive:true, confirm:false` verb would also need it —
-    // including `|| is_destructive()` is harmless today (the flag is a no-op when
-    // the CLI wouldn't prompt) and closes that latent gap.
     if st.needs_confirm() || st.is_destructive() {
         if let Some(v) = st.verb.as_deref() {
             argv.push(format!("--confirm-dangerous={v}"));
@@ -274,79 +243,63 @@ fn run_sentence(st: &ComposeState) -> i32 {
     }
 }
 
-/// The confirm/destructive chip (the `completion-polish.md` §2 vocabulary).
-fn chip_for(confirm: bool, destructive: bool) -> &'static str {
-    if destructive {
-        "  [!!]"
-    } else if confirm {
-        "  [!]"
-    } else {
-        ""
-    }
-}
-
-/// A `‹ back`-style nav button row.
-fn nav_row(msg: Message, label: &str) -> Element<'_, Message> {
-    row![
-        button(text(label.to_string()).size(13)).on_press(msg).padding([6u16, 12]).style(button::text),
-        Space::new().width(Length::Fill),
-        button(text("Cancel").size(13)).on_press(Message::Cancel).padding([6u16, 12]).style(button::text),
-    ]
-    .align_y(iced::Alignment::Center)
-    .into()
-}
-
-fn panel_style(theme: &Theme) -> container::Style {
-    let palette = theme.extended_palette();
-    container::Style {
-        background: Some(palette.background.weak.color.into()),
-        border: iced::Border { radius: 8.0.into(), width: 1.0, color: palette.background.strong.color },
-        ..Default::default()
-    }
-}
-
-/// Subject candidates as canonical `goo://<domain>/<id>` addresses + labels: the
-/// implicit selection / clipboard first, then items from enumerable prefixed
-/// sources. Mirrors the v0 dmenu `goo-compose` candidate set.
-fn subject_candidates(reg: &Value) -> Vec<Candidate> {
+/// Subject candidates as canonical `goo://…` addresses + labels: implicit
+/// selection / clipboard first, then items from enumerable prefixed sources.
+fn subject_candidates(reg: &Value) -> Vec<Item> {
     let mut out = Vec::new();
     let trunc = |s: &str| s.chars().take(60).collect::<String>();
 
     let sel = selection::primary();
     if !sel.is_empty() {
-        out.push(Candidate { addr: "goo://sel/".into(), label: format!("selection: {}", trunc(&sel)) });
+        out.push(Item::new("goo://sel/", format!("selection: {}", trunc(&sel))));
     }
     let clip = selection::clipboard();
     if !clip.is_empty() {
-        out.push(Candidate { addr: "goo://clip/".into(), label: format!("clipboard: {}", trunc(&clip)) });
+        out.push(Item::new("goo://clip/", format!("clipboard: {}", trunc(&clip))));
     }
+    out.extend(source_items(reg, |_emits| true, true));
+    out
+}
 
-    if let Some(sources) = reg.get("sources").and_then(|s| s.as_array()) {
-        for source in sources {
-            if source.get("enumerate").and_then(Value::as_bool) == Some(false) {
-                continue;
-            }
-            let name = source.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            if name == "selection" || name == "clipboard" {
-                continue;
-            }
-            let prefix = match source.get("prefix").and_then(|p| p.as_str()).filter(|s| !s.is_empty()) {
-                Some(p) => p,
-                None => continue,
-            };
-            let lc = match source.get("list_cmd").and_then(|c| c.as_str()).filter(|s| !s.is_empty()) {
-                Some(l) => l,
-                None => continue,
-            };
-            let items: Vec<Value> = serde_json::from_str(bash_capture(lc).trim()).unwrap_or_default();
-            for it in items {
-                let id = it.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                let title = it.get("title").and_then(|t| t.as_str()).unwrap_or(id);
-                out.push(Candidate {
-                    addr: format!("goo://{prefix}/{id}"),
-                    label: format!("{title} ({name})"),
-                });
-            }
+/// Object candidates of `object_type`: items from every source whose `emits` is a
+/// subtype of the wanted type (`mime::is_subtype`, NOT exact `==`, so polymorphic
+/// object types still match).
+fn enumerate_objects(reg: &Value, object_type: &str) -> Vec<Item> {
+    source_items(reg, |emits| mime::is_subtype(emits, object_type, reg), false)
+}
+
+/// Shared source-item enumeration: run each qualifying source's `list_cmd` and
+/// build `goo://<prefix>/<id>` items. `keep` filters by the source's `emits`;
+/// `tag_source` appends the source name to the label (subjects show it).
+fn source_items(reg: &Value, keep: impl Fn(&str) -> bool, tag_source: bool) -> Vec<Item> {
+    let mut out = Vec::new();
+    let Some(sources) = reg.get("sources").and_then(|s| s.as_array()) else { return out };
+    for source in sources {
+        if source.get("enumerate").and_then(Value::as_bool) == Some(false) {
+            continue;
+        }
+        let name = source.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if name == "selection" || name == "clipboard" {
+            continue;
+        }
+        let emits = source.get("emits").and_then(|e| e.as_str()).unwrap_or("");
+        if !keep(emits) {
+            continue;
+        }
+        let prefix = match source.get("prefix").and_then(|p| p.as_str()).filter(|s| !s.is_empty()) {
+            Some(p) => p,
+            None => continue,
+        };
+        let lc = match source.get("list_cmd").and_then(|c| c.as_str()).filter(|s| !s.is_empty()) {
+            Some(l) => l,
+            None => continue,
+        };
+        let items: Vec<Value> = serde_json::from_str(bash_capture(lc).trim()).unwrap_or_default();
+        for it in items {
+            let id = it.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            let title = it.get("title").and_then(|t| t.as_str()).unwrap_or(id);
+            let label = if tag_source { format!("{title} ({name})") } else { title.to_string() };
+            out.push(Item::new(format!("goo://{prefix}/{id}"), label));
         }
     }
     out
@@ -361,4 +314,24 @@ fn bash_capture(cmd: &str) -> String {
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default()
+}
+
+fn panel_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(palette.background.weak.color.into()),
+        border: iced::Border { radius: 8.0.into(), width: 1.0, color: palette.background.strong.color },
+        ..Default::default()
+    }
+}
+
+/// The highlighted-row background (the current selection).
+fn sel_style(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(palette.primary.weak.color.into()),
+        text_color: Some(palette.primary.weak.text),
+        border: iced::Border { radius: 4.0.into(), ..Default::default() },
+        ..Default::default()
+    }
 }
