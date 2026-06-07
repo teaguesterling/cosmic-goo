@@ -157,7 +157,13 @@ impl App {
             .style(panel_style);
 
         let status = self.status_line();
-        let mut footer = column![preview, text(status).size(12).color(Color::from_rgb(0.6, 0.64, 0.83))].spacing(6);
+        let mut footer = column![].spacing(6);
+        // The adverb panel (Ready stage, selector verbs) sits above the preview so
+        // a change is reflected immediately in the speak-it-back line below it.
+        if let Some(panel) = self.adverb_panel() {
+            footer = footer.push(panel);
+        }
+        footer = footer.push(preview).push(text(status).size(12).color(Color::from_rgb(0.6, 0.64, 0.83)));
         if let Some(e) = &ui.error {
             footer = footer.push(text(format!("⚠ {e}")).size(12).color(Color::from_rgb(0.95, 0.5, 0.4)));
         }
@@ -232,6 +238,42 @@ impl App {
         }
     }
 
+    /// The Ready-stage adverb panel (only for a selector verb with slots): one row
+    /// per adverb — `name:` then its choices, the current value highlighted and the
+    /// focused slot marked. `↑`/`↓` move slots, `←`/`→` cycle the focused one.
+    fn adverb_panel(&self) -> Option<Element<'_, Message>> {
+        if self.ui.stage != Stage::Ready {
+            return None;
+        }
+        let slots = self.ui.adverb_slots();
+        let st = self.ui.state.as_ref()?;
+        if slots.is_empty() {
+            return None;
+        }
+        let mut col = column![text("Options").size(12).color(Color::from_rgb(0.6, 0.64, 0.83))].spacing(3);
+        for (i, slot) in slots.iter().enumerate() {
+            let focused = i == self.ui.adverb_sel;
+            let current = st.adverb_value(&slot.name, slot.default.as_deref());
+            let marker = if focused { "› " } else { "  " };
+            let name_color = if focused { Color::from_rgb(0.85, 0.85, 0.9) } else { Color::from_rgb(0.6, 0.64, 0.83) };
+            let mut line = row![text(format!("{marker}{}:", slot.name))
+                .size(13)
+                .font(MONO)
+                .width(Length::Fixed(96.0))
+                .color(name_color)]
+            .spacing(6)
+            .align_y(iced::Alignment::Center);
+            for v in &slot.values {
+                let is_cur = Some(v.as_str()) == current;
+                let cell = container(text(v.clone()).size(12).font(MONO)).padding([2, 8]);
+                let cell = if is_cur { cell.style(sel_style) } else { cell };
+                line = line.push(cell);
+            }
+            col = col.push(line);
+        }
+        Some(container(col).padding(8).width(Length::Fill).style(panel_style).into())
+    }
+
     /// The footer hint line — context-sensitive, and the confirm prompt in Ready.
     fn status_line(&self) -> String {
         match self.ui.stage {
@@ -244,7 +286,10 @@ impl App {
                 format!("⚠ {what} — Enter to confirm · Esc to step back")
             }
             Stage::Ready if self.ui.gated() => "⚠ Enter again to RUN · Esc to step back".to_string(),
-            Stage::Ready => "Enter to run · Esc to step back".to_string(),
+            Stage::Ready => {
+                let opts = if self.ui.adverb_slots().is_empty() { "" } else { " · ↑/↓ option · ←/→ change" };
+                format!("Enter to run{opts} · Esc to step back")
+            }
             _ => "type to filter · ↑/↓ move · Enter or Tab pick · Esc clear/back".to_string(),
         }
     }
@@ -264,6 +309,8 @@ fn on_event(event: Event, _status: Status, _id: iced::window::Id) -> Option<Mess
         Key::Named(Named::Backspace) => KeyInput::Backspace,
         Key::Named(Named::ArrowUp) => KeyInput::Up,
         Key::Named(Named::ArrowDown) => KeyInput::Down,
+        Key::Named(Named::ArrowLeft) => KeyInput::Left,
+        Key::Named(Named::ArrowRight) => KeyInput::Right,
         Key::Named(Named::Space) => KeyInput::Char(" ".into()),
         Key::Character(c) => KeyInput::Char(c.to_string()),
         _ => return None,

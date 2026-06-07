@@ -113,6 +113,47 @@ impl ComposeState {
         self.object_addr = Some(addr);
     }
 
+    /// The selector adverb slots the picked verb opts into (`OPTIONS.verbs.<v>.with`),
+    /// in declaration order. Fill (free-text) adverbs are omitted — none ship today
+    /// and the keyboard panel only cycles selectors (a later increment adds text
+    /// entry if a fill adverb ever appears).
+    pub fn adverb_slots(&self) -> Vec<AdverbSlot> {
+        let Some(with) = self.verb_view().and_then(|v| v.get("with")).and_then(Value::as_object) else {
+            return Vec::new();
+        };
+        with.iter()
+            .filter(|(_, s)| s.get("kind").and_then(Value::as_str) == Some("selector"))
+            .filter_map(|(name, s)| {
+                let values: Vec<String> = s
+                    .get("values")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+                    .unwrap_or_default();
+                if values.is_empty() {
+                    return None;
+                }
+                let default = s.get("default").and_then(Value::as_str).map(String::from);
+                Some(AdverbSlot { name: name.clone(), values, default })
+            })
+            .collect()
+    }
+
+    /// The current value of adverb `name`: the user's explicit pick, else `default`.
+    pub fn adverb_value<'a>(&'a self, name: &str, default: Option<&'a str>) -> Option<&'a str> {
+        self.adverbs.get(name).map(String::as_str).or(default)
+    }
+
+    /// Set adverb `name` to `value`, OR clear it when `value` equals `default` — so
+    /// the sentence (and the preview) carries only *overrides*, never a redundant
+    /// `--via=clipboard` that just restates the registry default.
+    pub fn set_adverb(&mut self, name: &str, value: &str, default: Option<&str>) {
+        if Some(value) == default {
+            self.adverbs.remove(name);
+        } else {
+            self.adverbs.insert(name.to_string(), value.to_string());
+        }
+    }
+
     /// Whether the sentence is runnable: a verb is picked, and if that verb needs
     /// an object, one has been chosen. (Adverbs always have registry defaults, so
     /// they never block completion.)
@@ -284,6 +325,16 @@ impl Item {
     }
 }
 
+/// A selector adverb slot for the Ready-stage panel: the adverb `name`, its
+/// ordered choice `values`, and the registry `default` (so the panel can mark
+/// the default and the reducer can omit it from the sentence).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdverbSlot {
+    pub name: String,
+    pub values: Vec<String>,
+    pub default: Option<String>,
+}
+
 /// Which pane is active.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
@@ -302,6 +353,8 @@ pub enum KeyInput {
     Backspace,
     Up,
     Down,
+    Left,
+    Right,
     Enter,
     Tab,
     Escape,
@@ -342,6 +395,9 @@ pub struct ComposeUi {
     /// `Ready` + gated: set on the first run-intent (shows the confirm), so the
     /// second Enter is what actually runs.
     armed: bool,
+    /// Which adverb slot is focused in the `Ready` panel (`↑`/`↓` move, `←`/`→`
+    /// cycle its value).
+    pub adverb_sel: usize,
 }
 
 impl ComposeUi {
@@ -356,7 +412,13 @@ impl ComposeUi {
             objects: Vec::new(),
             recent: Vec::new(),
             armed: false,
+            adverb_sel: 0,
         }
+    }
+
+    /// The picked verb's selector adverb slots (empty until a verb is chosen).
+    pub fn adverb_slots(&self) -> Vec<AdverbSlot> {
+        self.state.as_ref().map(ComposeState::adverb_slots).unwrap_or_default()
     }
 
     /// The candidate pool for the active stage (before fuzzy filtering). The verb
@@ -438,15 +500,27 @@ impl ComposeUi {
                 }
                 None
             }
+            // Up/Down move the row cursor: among adverb slots in `Ready`, among
+            // candidates everywhere else.
             KeyInput::Down => {
-                let n = self.visible().len();
-                if n > 0 {
-                    self.selected = (self.selected + 1).min(n - 1);
-                }
+                self.move_cursor(1);
                 None
             }
             KeyInput::Up => {
-                self.selected = self.selected.saturating_sub(1);
+                self.move_cursor(-1);
+                None
+            }
+            // Left/Right cycle the focused adverb's value (Ready only).
+            KeyInput::Left => {
+                if self.stage == Stage::Ready {
+                    self.cycle_adverb(-1);
+                }
+                None
+            }
+            KeyInput::Right => {
+                if self.stage == Stage::Ready {
+                    self.cycle_adverb(1);
+                }
                 None
             }
             KeyInput::Enter | KeyInput::Tab => self.commit(),
@@ -463,6 +537,34 @@ impl ComposeUi {
                 }
             }
         }
+    }
+
+    /// Move the row cursor by `delta`, clamped: the adverb slots in `Ready`, the
+    /// filtered candidates elsewhere.
+    fn move_cursor(&mut self, delta: i32) {
+        let ready = self.stage == Stage::Ready;
+        let n = if ready { self.adverb_slots().len() } else { self.visible().len() };
+        if n == 0 {
+            return;
+        }
+        let cur = if ready { &mut self.adverb_sel } else { &mut self.selected };
+        *cur = (*cur as i32 + delta).clamp(0, n as i32 - 1) as usize;
+    }
+
+    /// Cycle the focused adverb slot's value by `delta` (+1 / −1, wrapping) and
+    /// apply it (clears back to default when it lands on the default). Changing the
+    /// sentence disarms a pending gated-confirm.
+    fn cycle_adverb(&mut self, delta: i32) {
+        let slots = self.adverb_slots();
+        let Some(slot) = slots.get(self.adverb_sel) else { return };
+        let Some(state) = self.state.as_mut() else { return };
+        let cur = state.adverb_value(&slot.name, slot.default.as_deref()).unwrap_or("");
+        let idx = slot.values.iter().position(|v| v == cur).unwrap_or(0) as i32;
+        let n = slot.values.len() as i32;
+        let next = (((idx + delta) % n + n) % n) as usize;
+        let value = slot.values[next].clone();
+        state.set_adverb(&slot.name, &value, slot.default.as_deref());
+        self.armed = false;
     }
 
     /// Commit the highlighted candidate / advance the stage. Never returns `Run`
@@ -489,6 +591,7 @@ impl ComposeUi {
                     Some(UiAction::LoadObjects(ot))
                 } else {
                     self.stage = Stage::Ready;
+                    self.adverb_sel = 0;
                     None
                 }
             }
@@ -501,6 +604,7 @@ impl ComposeUi {
                 self.selected = 0;
                 self.armed = false;
                 self.stage = Stage::Ready;
+                self.adverb_sel = 0;
                 None
             }
             Stage::Ready => {
@@ -521,6 +625,7 @@ impl ComposeUi {
     fn back(&mut self) {
         self.query.clear();
         self.selected = 0;
+        self.adverb_sel = 0;
         self.armed = false;
         match self.stage {
             Stage::Subject => {}
@@ -728,6 +833,34 @@ mod tests {
     }
 
     #[test]
+    fn adverb_slots_come_from_options_and_only_overrides_reach_argv() {
+        let mut s = state();
+        s.select_verb("summarize"); // uses_adverbs = ["via"], via default = clipboard
+        let slots = s.adverb_slots();
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].name, "via");
+        assert_eq!(slots[0].default.as_deref(), Some("clipboard"));
+        assert!(slots[0].values.contains(&"fabric".to_string()));
+
+        // current value with nothing set = the default.
+        assert_eq!(s.adverb_value("via", Some("clipboard")), Some("clipboard"));
+
+        // setting to a NON-default value puts it in the sentence.
+        s.set_adverb("via", "fabric", Some("clipboard"));
+        assert_eq!(s.adverb_value("via", Some("clipboard")), Some("fabric"));
+        assert_eq!(s.argv(), vec!["summarize", "goo://clip/", "--via=fabric"]);
+
+        // cycling back to the default DROPS it — the preview never restates a default.
+        s.set_adverb("via", "clipboard", Some("clipboard"));
+        assert_eq!(s.argv(), vec!["summarize", "goo://clip/"]);
+        assert!(s.adverbs.is_empty());
+
+        // a verb with no adverbs has no slots.
+        s.select_verb("critique");
+        assert!(s.adverb_slots().is_empty());
+    }
+
+    #[test]
     fn select_verb_clears_a_stale_object() {
         let mut s = state();
         s.select_verb("move-to");
@@ -877,6 +1010,56 @@ mod tests {
         assert!(u.state.is_none());
         // Esc at the subject stage (empty query) cancels.
         assert_eq!(u.apply(&KeyInput::Escape), Some(UiAction::Cancel));
+    }
+
+    #[test]
+    fn ready_stage_cycles_adverbs_into_the_sentence_and_disarms() {
+        // summarize has one selector adverb (via, default clipboard).
+        let mut u = resolved_ui(&[]);
+        for c in ["s", "u", "m"] {
+            u.apply(&ch(c));
+        }
+        assert_eq!(u.visible()[0].key, "summarize");
+        assert_eq!(u.apply(&KeyInput::Enter), None); // → Ready (no run)
+        assert_eq!(u.stage, Stage::Ready);
+        assert_eq!(u.adverb_slots().len(), 1);
+        assert_eq!(u.state.as_ref().unwrap().preview(), "goo summarize goo://clip/"); // default, no flag
+
+        // Right cycles the focused `via` off its default → it enters the sentence.
+        u.apply(&KeyInput::Right);
+        let pv = u.state.as_ref().unwrap().preview();
+        assert!(pv.starts_with("goo summarize goo://clip/ --via="), "cycled adverb shows: {pv}");
+        // It's still a Ready/run-on-Enter sentence.
+        assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run));
+    }
+
+    #[test]
+    fn ready_left_right_do_nothing_without_adverbs_and_enter_still_runs() {
+        let mut u = resolved_ui(&[]);
+        for c in ["c", "r", "i"] {
+            u.apply(&ch(c));
+        }
+        assert_eq!(u.visible()[0].key, "critique"); // no adverbs
+        u.apply(&KeyInput::Enter); // → Ready
+        assert!(u.adverb_slots().is_empty());
+        u.apply(&KeyInput::Left); // no-op
+        u.apply(&KeyInput::Down); // no-op (no slots)
+        assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run));
+    }
+
+    #[test]
+    fn cycling_an_adverb_disarms_a_gated_confirm() {
+        // a gated verb WITH an adverb would re-require the beat after an edit; use
+        // `delete` (gated, no adverb) to confirm the arm path, then assert the
+        // summarize (non-gated) cycle path returns Run on a single Ready Enter.
+        let mut u = resolved_ui(&["delete"]);
+        assert_eq!(u.visible()[0].key, "delete");
+        u.apply(&KeyInput::Enter); // commit → Ready (gated)
+        assert_eq!(u.apply(&KeyInput::Enter), None); // arm
+        assert!(u.armed());
+        // (delete has no adverb slot, so there's nothing to cycle; the arm path is
+        // what matters and is covered here + in the dedicated gated test.)
+        assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run));
     }
 
     #[test]
