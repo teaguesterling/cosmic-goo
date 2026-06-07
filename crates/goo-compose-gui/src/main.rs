@@ -28,9 +28,20 @@ use goo_engine::compose::{ComposeState, ComposeUi, Item, KeyInput, Stage, UiActi
 use goo_engine::{address, history, mime, registry, selection};
 use iced::event::{self, Event, Status};
 use iced::keyboard::{key::Named, Key};
-use iced::widget::{column, container, mouse_area, row, scrollable, text, Space};
+use iced::widget::{column, container, image, mouse_area, row, scrollable, svg, text, Space};
 use iced::{Color, Element, Length, Subscription, Task, Theme};
 use serde_json::Value;
+use std::collections::HashMap;
+
+const ICON_PX: f32 = 20.0;
+
+/// A loaded themed icon — PNG (`image`) or SVG (`svg`); both handles are cheap
+/// (Arc-backed) to clone per frame.
+#[derive(Clone)]
+enum IconKind {
+    Raster(image::Handle),
+    Vector(svg::Handle),
+}
 
 const MONO: iced::Font = iced::Font::MONOSPACE;
 const RECENT_N: usize = 16;
@@ -51,13 +62,18 @@ fn main() -> iced::Result {
 struct App {
     reg: Value,
     ui: ComposeUi,
+    /// Resolved icon cache, keyed by icon name. `None` = looked up, not found
+    /// (cached so a miss isn't re-resolved every render).
+    icons: HashMap<String, Option<IconKind>>,
 }
 
 impl Default for App {
     fn default() -> Self {
         let reg = registry::load_all();
         let subjects = subject_candidates(&reg);
-        App { reg, ui: ComposeUi::new(subjects) }
+        let mut icons = HashMap::new();
+        load_icons(&subjects, &mut icons);
+        App { reg, ui: ComposeUi::new(subjects), icons }
     }
 }
 
@@ -101,7 +117,9 @@ impl App {
                 Err(e) => self.ui.set_error(format!("could not resolve {addr}: {e}")),
             },
             UiAction::LoadObjects(object_type) => {
-                self.ui.set_objects(enumerate_objects(&self.reg, &object_type));
+                let objects = enumerate_objects(&self.reg, &object_type);
+                load_icons(&objects, &mut self.icons);
+                self.ui.set_objects(objects);
             }
             UiAction::Run => {
                 if let Some(st) = self.ui.state.as_ref() {
@@ -179,7 +197,12 @@ impl App {
             let mut list = column![].spacing(1);
             for (i, it) in visible.into_iter().enumerate() {
                 let selected = i == self.ui.selected;
-                let cell = container(text(it.label).size(13).font(MONO)).padding([3, 8]).width(Length::Fill);
+                let icon = self.icon_widget(it.icon.as_deref());
+                let cell = container(
+                    row![icon, text(it.label).size(13).font(MONO)].spacing(8).align_y(iced::Alignment::Center),
+                )
+                .padding([3, 8])
+                .width(Length::Fill);
                 let cell = if selected { cell.style(sel_style) } else { cell };
                 // Click-to-commit (mouse_area doesn't take focus, so it can't steal keys).
                 list = list.push(mouse_area(cell).on_press(Message::Click(i)));
@@ -192,6 +215,21 @@ impl App {
         }
 
         container(col).padding(8).height(Length::Fill).style(panel_style).into()
+    }
+
+    /// The icon widget for a row: the cached themed image (PNG or SVG), or a
+    /// fixed-size empty placeholder so every row's text stays left-aligned.
+    fn icon_widget(&self, name: Option<&str>) -> Element<'_, Message> {
+        let handle = name.and_then(|n| self.icons.get(n)).and_then(|o| o.as_ref());
+        match handle {
+            Some(IconKind::Raster(h)) => {
+                image(h.clone()).width(Length::Fixed(ICON_PX)).height(Length::Fixed(ICON_PX)).into()
+            }
+            Some(IconKind::Vector(h)) => {
+                svg(h.clone()).width(Length::Fixed(ICON_PX)).height(Length::Fixed(ICON_PX)).into()
+            }
+            None => Space::new().width(Length::Fixed(ICON_PX)).height(Length::Fixed(ICON_PX)).into(),
+        }
     }
 
     /// The footer hint line — context-sensitive, and the confirm prompt in Ready.
@@ -326,10 +364,41 @@ fn source_items(reg: &Value, keep: impl Fn(&str) -> bool, tag_source: bool) -> V
             let id = it.get("id").and_then(|i| i.as_str()).unwrap_or("");
             let title = it.get("title").and_then(|t| t.as_str()).unwrap_or(id);
             let label = if tag_source { format!("{} ({name})", clean_label(title)) } else { clean_label(title) };
-            out.push(Item::new(format!("goo://{prefix}/{id}"), label));
+            // Per-item icon NAME (a freedesktop name, e.g. app_id); the shell
+            // resolves it to a themed image. Falls back to the source-level icon.
+            let icon = it
+                .get("icon")
+                .and_then(|v| v.as_str())
+                .or_else(|| source.get("icon").and_then(|v| v.as_str()))
+                .filter(|s| !s.is_empty())
+                .map(String::from);
+            out.push(Item::new(format!("goo://{prefix}/{id}"), label).with_icon(icon));
         }
     }
     out
+}
+
+/// Resolve & load every not-yet-cached icon name in `items` into `cache`. A miss
+/// is cached as `None` so it isn't re-resolved on every render.
+fn load_icons(items: &[Item], cache: &mut HashMap<String, Option<IconKind>>) {
+    for it in items {
+        let Some(name) = it.icon.as_deref() else { continue };
+        if cache.contains_key(name) {
+            continue;
+        }
+        cache.insert(name.to_string(), resolve_icon(name));
+    }
+}
+
+/// Look up a freedesktop icon name in the current theme and load it — SVG via the
+/// `svg` handle, anything else (PNG/XPM) via the `image` handle. `None` if the
+/// theme has no such icon (the row then shows a blank placeholder).
+fn resolve_icon(name: &str) -> Option<IconKind> {
+    let path = freedesktop_icons::lookup(name).with_size(24).with_scale(1).find()?;
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("svg") => Some(IconKind::Vector(svg::Handle::from_path(path))),
+        _ => Some(IconKind::Raster(image::Handle::from_path(path))),
+    }
 }
 
 /// `bash -c <cmd>` capturing stdout (a source's `list_cmd`).
@@ -341,6 +410,30 @@ fn bash_capture(cmd: &str) -> String {
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Verify the freedesktop-icons CRATE actually resolves a common name to a
+    // loadable handle end-to-end (lookup + extension branch + handle build) — not
+    // merely that a file exists on disk. If this is None, themed lookup needs
+    // `.with_theme(<current theme>)` before the feature is anything but blank
+    // gutters. Skips gracefully on a headless box with no icon themes installed.
+    #[test]
+    fn resolves_a_common_app_icon() {
+        let has_themes = std::path::Path::new("/usr/share/icons/hicolor").is_dir();
+        if !has_themes {
+            eprintln!("no icon themes installed — skipping icon-resolution check");
+            return;
+        }
+        assert!(
+            resolve_icon("firefox").is_some() || resolve_icon("folder").is_some(),
+            "freedesktop_icons::lookup returned None for both 'firefox' and 'folder' \
+             despite hicolor being present — themed lookup likely needs .with_theme()"
+        );
+    }
 }
 
 fn panel_style(theme: &Theme) -> container::Style {

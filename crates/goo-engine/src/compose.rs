@@ -262,16 +262,25 @@ pub fn fuzzy_rank(items: &[Item], query: &str) -> Vec<Item> {
 // ============================================================================
 
 /// A candidate row: `key` is the value committed (a `goo://` address or a verb
-/// name); `label` is what the user sees and types against.
+/// name); `label` is what the user sees and types against; `icon` is an optional
+/// freedesktop icon *name* (a plain string — resolution to a themed image is the
+/// shell's job, so the reducer stays pure and iced-free).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
     pub key: String,
     pub label: String,
+    pub icon: Option<String>,
 }
 
 impl Item {
     pub fn new(key: impl Into<String>, label: impl Into<String>) -> Item {
-        Item { key: key.into(), label: label.into() }
+        Item { key: key.into(), label: label.into(), icon: None }
+    }
+
+    /// Attach an icon name (chainable on [`Item::new`]).
+    pub fn with_icon(mut self, icon: Option<String>) -> Item {
+        self.icon = icon;
+        self
     }
 }
 
@@ -365,7 +374,7 @@ impl ComposeUi {
                             let (c, d) = s.verb_flags(&n);
                             let chip = if d { "  [!!]" } else if c { "  [!]" } else { "" };
                             let recent = if self.recent.iter().any(|r| *r == n) { "  ·recent" } else { "" };
-                            Item { key: n.clone(), label: format!("{n}{chip}{recent}") }
+                            Item::new(n.clone(), format!("{n}{chip}{recent}"))
                         })
                         .collect()
                 })
@@ -751,6 +760,17 @@ mod tests {
         let items2 = vec![Item::new("scatter", "supercilious"), Item::new("prefix", "submarine")];
         let su = fuzzy_rank(&items2, "sub");
         assert_eq!(su[0].key, "prefix"); // "sub"marine starts with it
+    }
+
+    #[test]
+    fn item_icon_is_carried_through_filtering() {
+        let items = vec![Item::new("a", "Firefox").with_icon(Some("firefox".into())), Item::new("b", "plain")];
+        // the icon name survives a fuzzy filter (the shell resolves it to an image).
+        let got = fuzzy_rank(&items, "fire");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].icon.as_deref(), Some("firefox"));
+        // a plain item has no icon.
+        assert_eq!(Item::new("b", "plain").icon, None);
     }
 
     // ---- reducer (ComposeUi) ----

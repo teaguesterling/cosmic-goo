@@ -15,7 +15,7 @@ emits = "application/vnd.cos-cli.app"
 # Use full path to cos-cli because ~/.cargo/bin is not on the non-interactive
 # bash PATH on this host (see recon/findings.md). When packaged, install
 # cos-cli to /usr/bin or rely on the user's PATH instead.
-list_cmd = "$HOME/.cargo/bin/cos-cli info --json | jq '[.apps[] | {id: .app_id, title: .title, subtitle: .app_id, metadata: .}]'"
+list_cmd = "$HOME/.cargo/bin/cos-cli info --json | jq '[.apps[] | {id: .app_id, title: .title, subtitle: .app_id, icon: (.icon // .app_id), metadata: .}]'"
 
 # Per-TOPLEVEL window switcher. cos-cli reports one entry per Wayland toplevel
 # already (a multi-window app like CosmicEdit emits N entries with the same
@@ -36,6 +36,7 @@ list_cmd = '''$HOME/.cargo/bin/cos-cli info --json 2>/dev/null \
       id: "\(.app_id)/\(.index)",
       title: (.title // .app_id),
       subtitle: "\(.app_id) · ws \(.workspaces[0] // "?")",
+      icon: (.icon // .app_id),
       metadata: .
     }]' '''
 
@@ -50,7 +51,7 @@ name = "focused"
 emits = "application/vnd.cos-cli.app"
 implicit = true
 enumerate = false
-list_cmd = "$HOME/.cargo/bin/cos-cli info --json | jq '[.apps[] | select(.state[]? == \"activated\") | {id: .app_id, title: .title, subtitle: .app_id, metadata: .}] | .[0:1]'"
+list_cmd = "$HOME/.cargo/bin/cos-cli info --json | jq '[.apps[] | select(.state[]? == \"activated\") | {id: .app_id, title: .title, subtitle: .app_id, icon: (.icon // .app_id), metadata: .}] | .[0:1]'"
 
 [[verbs]]
 name = "activate"
