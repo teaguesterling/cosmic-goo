@@ -87,10 +87,14 @@ build-gui:  ## Build the native compose-GUI (iced; opt-in — pulls iced, not in
 	@echo "Building goo-compose-gui (iced)"
 	@cd crates && cargo build -p goo-compose-gui
 
-run-gui:  ## Launch the compose-GUI; Run spawns the debug goo (builds both first)
+run-gui:  ## Launch the compose-GUI against the repo plugins; Run spawns the debug goo
 	@cd crates && cargo build -p goo -p goo-compose-gui
-	@echo "Launching goo-compose-gui (Run spawns $(GOO_DEBUG))"
-	@GOO_BIN="$$(pwd)/$(GOO_DEBUG)" sh -c 'cd crates && cargo run -p goo-compose-gui'
+	@echo "Launching goo-compose-gui (plugins: ./plugins · Run spawns $(GOO_DEBUG))"
+	@# Point the in-process registry at the repo plugins so the verb pane is
+	@# populated, and the spawned goo (inheriting this env) executes against the
+	@# same set. Without it the GUI defaults to /usr/share and shows no verbs.
+	@GOO_BIN="$$(pwd)/$(GOO_DEBUG)" COSMIC_GOO_BUILTIN_PLUGINS_DIR="$$(pwd)/plugins" \
+		sh -c 'cd crates && cargo run -p goo-compose-gui'
 
 install: build  ## Install goo (Rust binary; standalone core+desktop tiers) to $PREFIX (default ~/.local)
 	@echo "Installing goo (Rust) to $(PREFIX) [tiers: $(TIERS)]"

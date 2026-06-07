@@ -40,6 +40,10 @@ fn main() -> iced::Result {
         .title(|_: &App| "cosmic-goo · compose".to_string())
         .theme(|_: &App| Theme::Dark)
         .subscription(App::subscription)
+        // A frameless, centered floating launcher (gnome-do idiom) — no titlebar
+        // chrome; Esc is the close affordance.
+        .decorations(false)
+        .position(iced::window::Position::Centered)
         .window_size((940.0, 560.0))
         .run()
 }
@@ -161,8 +165,19 @@ impl App {
 
         if active {
             col = col.push(text(format!("› {}", self.ui.query)).size(15).font(MONO).color(Color::from_rgb(0.85, 0.85, 0.9)));
+            let visible = self.ui.visible();
+            if visible.is_empty() {
+                // Never a silent empty pane. On the verb stage with nothing applicable
+                // the usual cause is an unloaded plugin set, so say so.
+                let hint = match (stage, self.ui.query.is_empty()) {
+                    (Stage::Verb, true) => "no verbs for this subject\n(plugins loaded? COSMIC_GOO_BUILTIN_PLUGINS_DIR)",
+                    (_, true) => "no candidates",
+                    (_, false) => "no matches",
+                };
+                col = col.push(text(hint.to_string()).size(12).color(Color::from_rgb(0.7, 0.55, 0.4)));
+            }
             let mut list = column![].spacing(1);
-            for (i, it) in self.ui.visible().into_iter().enumerate() {
+            for (i, it) in visible.into_iter().enumerate() {
                 let selected = i == self.ui.selected;
                 let cell = container(text(it.label).size(13).font(MONO)).padding([3, 8]).width(Length::Fill);
                 let cell = if selected { cell.style(sel_style) } else { cell };
