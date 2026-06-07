@@ -146,11 +146,77 @@ pub fn default_for(reg: &Value, type_: &str) -> Option<Value> {
         .cloned()
 }
 
+/// The specificity floor for a *specific* match — an exact type or an `is_a`/
+/// lattice match. A match scoring below this came only from a broad `family/*`
+/// or `*/*` glob. (Couples to the tiers in [`pattern_specificity`]: exact =
+/// `i32::MAX`, lattice = `1_000_000`, glob = a small prefix length.)
+const SPECIFIC_MATCH_FLOOR: i32 = 1_000_000;
+
+/// The declared `kind` of a type (`handle`/`content`/`surface`/…) from the
+/// registry `[[types]]`, if any.
+pub fn type_kind(reg: &Value, t: &str) -> Option<String> {
+    reg.get("types")?
+        .as_array()?
+        .iter()
+        .find(|d| d.get("name").and_then(Value::as_str) == Some(t))
+        .and_then(|d| d.get("kind").and_then(Value::as_str))
+        .map(String::from)
+}
+
+/// The family ("type") part of a MIME — `application` of `application/vnd.x`.
+fn mime_family(t: &str) -> &str {
+    t.split('/').next().unwrap_or(t)
+}
+
+/// Whether `verb` reaches a `kind=handle` `stype` ONLY by *coincidental namespace
+/// glob* — every accept that matches is a glob over the handle's OWN family
+/// (`application/*` catching `application/vnd.cos-cli.app`) or the universal
+/// `*/*`. Such a match is noise: the handle is an opaque reference, and a content
+/// verb caught it only because their MIME families happen to share a prefix.
+///
+/// **Crucially keeps** a glob that reaches `stype` THROUGH an `is_a` supertype —
+/// a *declared* content kinship: `mount is_a inode/directory` legitimately admits
+/// an `inode/*` verb (open / reveal / copy-path), because the type author said
+/// the handle IS a filesystem object. Also keeps any exact or `is_a`/lattice
+/// (non-glob) match. `false` when the verb doesn't match at all.
+pub fn glob_noise_for_handle(verb: &Value, stype: &str, reg: &Value) -> bool {
+    let accepts: Vec<&str> = verb
+        .get("accepts")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let sfam = mime_family(stype);
+    let mut matched = false;
+    for p in &accepts {
+        let Some(s) = pattern_specificity(stype, p, reg) else { continue };
+        matched = true;
+        if s >= SPECIFIC_MATCH_FLOOR {
+            return false; // exact or is_a/lattice match → a real affordance
+        }
+        // A sub-floor (glob) match. Keep the verb if the glob reaches `stype`
+        // via is_a — i.e. its family differs from the handle's own family and it
+        // isn't the universal catch-all.
+        if let Some(gfam) = p.strip_suffix("/*") {
+            if gfam != "*" && gfam != sfam {
+                return false; // matched through an is_a supertype → keep
+            }
+        }
+        // else: same-family glob or `*/*` → coincidental; keep scanning.
+    }
+    matched // matched, and every match was coincidental namespace noise
+}
+
 /// Every verb applicable to `subject` — type-accepted *and* passing its
 /// `valid_when`. With cross-plugin polymorphism (multiple verbs of the same name
 /// with different `accepts`), this returns **one verb per name** — the
 /// most-specific impl for the subject type. Order: registry order of the kept
 /// verbs, so the picker sees the natural sequence.
+///
+/// A `kind=handle` subject additionally drops verbs that match it only by
+/// coincidental namespace glob ([`glob_noise_for_handle`]) — `application/*`
+/// catching `application/vnd.*` references — while keeping exact matches and
+/// `is_a`-derived ones (so a `mount is_a inode/directory` still admits `inode/*`
+/// file verbs).
 pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
     let stype = match subject.get("type").and_then(|t| t.as_str()) {
         Some(s) if !s.is_empty() => s,
@@ -160,6 +226,7 @@ pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
         Some(v) => v,
         None => return Vec::new(),
     };
+    let is_handle = type_kind(reg, stype).as_deref() == Some("handle");
     // Walk in registry order; for each name, keep the best-specificity impl seen
     // (>= so later-registered wins ties, matching `lookup`'s tie-break).
     use std::collections::HashMap;
@@ -170,6 +237,12 @@ pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
         }
         let Some(name) = v.get("name").and_then(Value::as_str) else { continue };
         if let Some(s) = verb_specificity(v, stype, reg) {
+            // Handle subjects: a coincidental same-namespace glob match is noise
+            // (sha256 over a window), but an is_a-derived glob is real (open over
+            // a mount). Skip only the former.
+            if is_handle && glob_noise_for_handle(v, stype, reg) {
+                continue;
+            }
             best.entry(name.to_string())
                 .and_modify(|e| {
                     if s >= e.0 {
@@ -687,6 +760,45 @@ template_var = { depth_prefix = "Ultrathink about" }
         for unwanted in ["echo-text", "critique"] {
             assert!(!n.contains(&unwanted.to_string()), "unexpected {unwanted}");
         }
+    }
+
+    #[test]
+    fn handle_subject_drops_coincidental_glob_but_keeps_is_a_derived_glob() {
+        let reg = json!({
+            "types": [
+                { "name": "application/vnd.x.window", "kind": "handle" },
+                { "name": "application/vnd.x.mount", "kind": "handle", "is_a": ["inode/directory"] }
+            ],
+            "verbs": [
+                { "name": "activate", "accepts": ["application/vnd.x.window"], "cmd": "x" }, // exact
+                { "name": "hash", "accepts": ["application/*"], "cmd": "x" },                // same-family glob
+                { "name": "anything", "accepts": ["*/*"], "cmd": "x" },                      // catch-all
+                { "name": "open", "accepts": ["inode/*"], "cmd": "x" }                       // is_a-derived glob
+            ]
+        });
+        // Window handle (no is_a): keep only the exact verb; the same-family glob
+        // and the catch-all are coincidental noise. `open` (inode/*) doesn't match
+        // a window at all.
+        let win = names(&for_subject(&reg, &json!({"type":"application/vnd.x.window","id":"a"})));
+        assert_eq!(win, vec!["activate".to_string()], "window keeps only its exact verb");
+
+        // Mount handle is_a inode/directory: `open` (inode/*) reaches it THROUGH
+        // is_a — a declared content kinship — so it's kept. But `hash`
+        // (application/*) catches it only by same-namespace coincidence → dropped,
+        // as does the `*/*` catch-all.
+        let mnt = names(&for_subject(&reg, &json!({"type":"application/vnd.x.mount","id":"m"})));
+        assert!(mnt.contains(&"open".to_string()), "is_a-derived inode/* glob kept on the mount");
+        assert!(!mnt.contains(&"hash".to_string()), "coincidental application/* dropped on the mount");
+        assert!(!mnt.contains(&"anything".to_string()), "*/* catch-all dropped on the mount");
+
+        // The SAME globs still match a non-handle CONTENT type — the rule only
+        // fires for handles.
+        let content = names(&for_subject(
+            &json!({ "types": [], "verbs": reg["verbs"].clone() }),
+            &json!({"type":"application/json","text":"{}"}),
+        ));
+        assert!(content.contains(&"hash".to_string()), "glob still matches a content type");
+        assert!(content.contains(&"anything".to_string()), "catch-all still matches a content type");
     }
 
     #[test]
