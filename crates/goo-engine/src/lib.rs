@@ -6,6 +6,7 @@
 
 pub mod address;
 pub mod adverbs;
+pub mod compose;
 pub mod dispatch;
 pub mod exec;
 pub mod history;

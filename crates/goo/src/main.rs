@@ -8,7 +8,9 @@
 //! XDG dirs `registry::dirs()` reads); no path magic. Exit codes: 0 / 1
 //! (catch-all) / 130 (cancel).
 
-use goo_engine::{address, dispatch as disp, exec, history, inference, mime, negotiation, options, registry, selection, verbs};
+use goo_engine::{
+    address, compose, dispatch as disp, exec, history, inference, mime, negotiation, options, registry, selection, verbs,
+};
 use serde_json::{json, Map, Value};
 use std::io::IsTerminal;
 
@@ -2274,22 +2276,25 @@ fn cmd_compose() -> i32 {
         Ok(s) => s,
         Err(_) => return die(format!("compose: could not resolve subject '{subj_addr}'")),
     };
-    let subject_type = subject.get("type").and_then(|t| t.as_str()).unwrap_or("text/plain").to_string();
 
-    // 2. Verb (must accept the subject's type).
-    let mut verb_names: Vec<String> = verbs::for_subject(&reg, &subject)
-        .iter()
-        .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
-        .collect();
-    verb_names.sort();
-    verb_names.dedup();
-    if verb_names.is_empty() {
+    // The shared compose core (`goo_engine::compose`) — the SAME model the
+    // compose-GUI drives, so this scripted CLI path is the headless test surface
+    // for it. It owns the subject's type and the applicable-verb menu.
+    let mut state = compose::ComposeState::from_subject(&reg, &subject, subj_addr.clone());
+    let subject_type = state.subject_type.clone();
+
+    // 2. Verb. The menu is `verb_menu` (OPTIONS.allow, recency-reordered) — the
+    // GUI's verb pane and this picker share one source of truth. Recency comes
+    // from the action history (most-recently-run-on-this-type first).
+    let recent = history::recent_verbs_for_type(&subject_type, 16);
+    if state.verb_menu(&recent).is_empty() {
         return die(format!("compose: no verbs accept type {subject_type}"));
     }
     let verb_name = match dialog_pick() {
         Some(v) => v,
         None => return cancel(),
     };
+    state.select_verb(&verb_name);
     let verb = match verbs::lookup(&reg, &verb_name, None) {
         Some(v) => v,
         None => return die(format!("compose: unknown verb '{verb_name}'")),

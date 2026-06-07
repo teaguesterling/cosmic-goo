@@ -82,6 +82,16 @@ build:  ## Build the Rust goo binary (release)
 	@echo "Building $(GOO_RELEASE) (release)"
 	@cd crates && cargo build --release -p goo
 
+build-gui:  ## Build the native compose-GUI (iced; opt-in — pulls iced, not in the core build)
+	@command -v cargo >/dev/null 2>&1 || { echo "cargo not found. Install Rust (https://rustup.rs)"; exit 1; }
+	@echo "Building goo-compose-gui (iced)"
+	@cd crates && cargo build -p goo-compose-gui
+
+run-gui:  ## Launch the compose-GUI; Run spawns the debug goo (builds both first)
+	@cd crates && cargo build -p goo -p goo-compose-gui
+	@echo "Launching goo-compose-gui (Run spawns $(GOO_DEBUG))"
+	@GOO_BIN="$$(pwd)/$(GOO_DEBUG)" sh -c 'cd crates && cargo run -p goo-compose-gui'
+
 install: build  ## Install goo (Rust binary; standalone core+desktop tiers) to $PREFIX (default ~/.local)
 	@echo "Installing goo (Rust) to $(PREFIX) [tiers: $(TIERS)]"
 	@install -d "$(GOO_SHARE)/bin" "$(GOO_SHARE)/plugins" "$(PREFIX)/bin"

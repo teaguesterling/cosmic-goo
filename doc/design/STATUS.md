@@ -66,7 +66,7 @@ them. Design: [data-entry-ux](data-entry-ux.md), [completion-polish](completion-
 | **Bands are calibrated, not proven** — the floors clear the *current* scoring-distribution gaps but aren't validated against a real corpus; treat band boundaries as tunable | **calibrated, not proven** | §3.2.2 |
 | **Conversion suggestions on 415** (§6.8 / #14) — a verb that 415s with no route now also names the verbs that accept the subject's type *directly* (`try a verb that accepts <type>: …`), from `OPTIONS.allow` minus the failed verb and any `destructive` verb — a safe-by-construction alternative list (running one can't 415). One `alt_verbs_hint` on the no-route 415 `die` in `exec_negotiated` (not the teaching-415, which already offers `--hops`/`--force`), so coercion-415 and present-verb-415 share it | **built** (Rust) | `alt_verbs_hint`/`exec_negotiated`; `suggest-415.bats` |
 | **Noun-first dispatch** (`goo do <addr> [verb]`, §4.3 / #15) — the CLI's explicit noun-first surface. With a verb, `goo do <addr> <verb> [args]` is a pure reorder of `goo <verb> <addr> [args]` — re-enters `cmd_verb` verbatim, so subject/object/adverb parsing, confirm-gating, negotiation, and history recording are byte-identical (locked by an equivalence test). With no verb, it's the verb-pick — delegates to `goo what` (the Gate-4 SSOT listing; no interactive picker). New `do` subcommand, reserved against alias shadowing. Deliberate asymmetry: `do <addr>` *lists* where bare `goo <addr>` *runs* the default verb | **built** (Rust) | `cmd_do`; `do.bats` |
-| **Remaining roadmap** — #9 compose-GUI v2 noun-first flow (incl. the #6 GUI caption + #10 "speak it back"), #13 recent-action *reorder* (the menu-reorder home for §6.3; `goo again`/§6.1 + the `goo what` recency hint/§6.3 shipped — reorder awaits #9; the CLI `goo do` verb-pick/#15 lists but doesn't reorder) | **designed** | [data-entry-ux §8](data-entry-ux.md) |
+| **Remaining roadmap** — #9 compose-GUI v2 (**inc 1 built** — see the compose-gui row below; inc 2 object/adverb panels, inc 3 #6 caption, #12 late-binding/error-recovery remain), #13 recent-action *reorder* (**now shipped in the GUI** via #9 inc 1; the `goo what` recency hint/§6.3 + `goo again`/§6.1 shipped earlier; the CLI `goo do` verb-pick/#15 lists but doesn't reorder, by Gate-4) | **partly built** | [data-entry-ux §8](data-entry-ux.md) |
 
 ## The interface / protocol layer
 
@@ -78,12 +78,12 @@ them. Design: [data-entry-ux](data-entry-ux.md), [completion-polish](completion-
 | Content-dispatch `[[dispatch]]`, completion, filters, aliases | **built** | [plugin-authoring](../plugin-authoring.md) |
 | Presentation negotiation — `Accept:`/`From:`, `--as`/`--to`/`--on`/`--using`, inherited-channel default | **designed** | [goo-protocol §12](goo-protocol.md) |
 | Request/wire protocol — slots, OPTIONS, status codes; the `good` daemon | **designed** | [goo-protocol](goo-protocol.md) |
-| `goo-compose-gui` (iced → libcosmic) | **scaffolded** | `crates/goo-compose-gui` |
+| `goo-compose-gui` (iced → libcosmic) — **v2 noun-first, increment 1**: subject pane → verb pane (`OPTIONS.allow`, **recency-reordered** via `history::recent_verbs_for_type` — the GUI is freed from the CLI's Gate-4 order-equality, so this is the §6.3 menu-home) → live CLI-equivalent preview (#10 "speak it back") → confirm pane → Run (spawns `goo argv`, propagating the exit code; confirm/destructive verbs run with `--confirm-dangerous=<verb>` since a spawned `goo` has no stdin). Logic lives in the pure, unit-tested `goo_engine::compose::ComposeState` (the scripted `goo compose` CLI drives the same core, so bats tests it headlessly). Object pane + adverb slots are inc 2; #6 caption inc 3; §6.6 late-binding + §6.7 error recovery are #12 | **v2 inc 1 built** (iced) | `crates/goo-compose-gui`, `goo-engine/src/compose.rs` |
 
 ## Surfaces
 
 - **Engine + CLI** — the Rust `goo` is the **canonical** engine (`make install`); the bash bin/goo is a **legacy reference** (`make install-bash`), feature-frozen pre-negotiation.
 - **Plugins** — 29 TOML plugins (~92 verbs, 21 sources), incl. non-text handle domains and content-inspection verbs. Authoring is schema-assisted: `schema/cosmic-goo-plugin.schema.json` (#11) gives editors validation/completion (associate via a `#:schema` header or the repo `.taplo.toml`); `tests/schema.bats` validates every shipped plugin against it.
-- **Tests** — bats conformance suite (433 tests; ~28% skip on bash by design, the Rust-only divergence) + 215 engine unit tests.
+- **Tests** — bats conformance suite (433 tests; ~28% skip on bash by design, the Rust-only divergence) + 226 engine unit tests (incl. the `compose` core).
 
 See [limitations.md](../limitations.md) for the user-facing roadmap.
