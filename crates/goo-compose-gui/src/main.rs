@@ -262,18 +262,30 @@ fn run_sentence(st: &ComposeState) -> i32 {
 /// selection / clipboard first, then items from enumerable prefixed sources.
 fn subject_candidates(reg: &Value) -> Vec<Item> {
     let mut out = Vec::new();
-    let trunc = |s: &str| s.chars().take(60).collect::<String>();
-
     let sel = selection::primary();
     if !sel.is_empty() {
-        out.push(Item::new("goo://sel/", format!("selection: {}", trunc(&sel))));
+        out.push(Item::new("goo://sel/", format!("selection: {}", clean_label(&sel))));
     }
     let clip = selection::clipboard();
     if !clip.is_empty() {
-        out.push(Item::new("goo://clip/", format!("clipboard: {}", trunc(&clip))));
+        out.push(Item::new("goo://clip/", format!("clipboard: {}", clean_label(&clip))));
     }
     out.extend(source_items(reg, |_emits| true, true));
     out
+}
+
+/// A one-line candidate label: collapse all whitespace (newlines, tabs, runs) to
+/// single spaces and cap the length, so a long/multi-line selection or title
+/// can't wrap across the pane.
+fn clean_label(s: &str) -> String {
+    const MAX: usize = 52;
+    let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > MAX {
+        let kept: String = collapsed.chars().take(MAX - 1).collect();
+        format!("{kept}…")
+    } else {
+        collapsed
+    }
 }
 
 /// Object candidates of `object_type`: items from every source whose `emits` is a
@@ -313,7 +325,7 @@ fn source_items(reg: &Value, keep: impl Fn(&str) -> bool, tag_source: bool) -> V
         for it in items {
             let id = it.get("id").and_then(|i| i.as_str()).unwrap_or("");
             let title = it.get("title").and_then(|t| t.as_str()).unwrap_or(id);
-            let label = if tag_source { format!("{title} ({name})") } else { title.to_string() };
+            let label = if tag_source { format!("{} ({name})", clean_label(title)) } else { clean_label(title) };
             out.push(Item::new(format!("goo://{prefix}/{id}"), label));
         }
     }
