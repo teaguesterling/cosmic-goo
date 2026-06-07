@@ -65,7 +65,8 @@ them. Design: [data-entry-ux](data-entry-ux.md), [completion-polish](completion-
 | **No-watch warm caching — remaining** — command/dbus sources (apps, bluetooth, …) recompute every run on the one-shot CLI rather than risk staleness; true warm caching is a `good`-daemon job (inotify + dbus) | **designed** | daemon #31 |
 | **Bands are calibrated, not proven** — the floors clear the *current* scoring-distribution gaps but aren't validated against a real corpus; treat band boundaries as tunable | **calibrated, not proven** | §3.2.2 |
 | **Conversion suggestions on 415** (§6.8 / #14) — a verb that 415s with no route now also names the verbs that accept the subject's type *directly* (`try a verb that accepts <type>: …`), from `OPTIONS.allow` minus the failed verb and any `destructive` verb — a safe-by-construction alternative list (running one can't 415). One `alt_verbs_hint` on the no-route 415 `die` in `exec_negotiated` (not the teaching-415, which already offers `--hops`/`--force`), so coercion-415 and present-verb-415 share it | **built** (Rust) | `alt_verbs_hint`/`exec_negotiated`; `suggest-415.bats` |
-| **Remaining roadmap** — #9 compose-GUI v2 noun-first flow (incl. the #6 GUI caption + #10 "speak it back"), #13 recent-action *reorder* (the menu-reorder home for §6.3; `goo again`/§6.1 + the `goo what` recency hint/§6.3 shipped — reorder awaits #9), #15 `goo do <addr>` | **designed** | [data-entry-ux §8](data-entry-ux.md) |
+| **Noun-first dispatch** (`goo do <addr> [verb]`, §4.3 / #15) — the CLI's explicit noun-first surface. With a verb, `goo do <addr> <verb> [args]` is a pure reorder of `goo <verb> <addr> [args]` — re-enters `cmd_verb` verbatim, so subject/object/adverb parsing, confirm-gating, negotiation, and history recording are byte-identical (locked by an equivalence test). With no verb, it's the verb-pick — delegates to `goo what` (the Gate-4 SSOT listing; no interactive picker). New `do` subcommand, reserved against alias shadowing. Deliberate asymmetry: `do <addr>` *lists* where bare `goo <addr>` *runs* the default verb | **built** (Rust) | `cmd_do`; `do.bats` |
+| **Remaining roadmap** — #9 compose-GUI v2 noun-first flow (incl. the #6 GUI caption + #10 "speak it back"), #13 recent-action *reorder* (the menu-reorder home for §6.3; `goo again`/§6.1 + the `goo what` recency hint/§6.3 shipped — reorder awaits #9; the CLI `goo do` verb-pick/#15 lists but doesn't reorder) | **designed** | [data-entry-ux §8](data-entry-ux.md) |
 
 ## The interface / protocol layer
 
@@ -83,6 +84,6 @@ them. Design: [data-entry-ux](data-entry-ux.md), [completion-polish](completion-
 
 - **Engine + CLI** — the Rust `goo` is the **canonical** engine (`make install`); the bash bin/goo is a **legacy reference** (`make install-bash`), feature-frozen pre-negotiation.
 - **Plugins** — 29 TOML plugins (~92 verbs, 21 sources), incl. non-text handle domains and content-inspection verbs. Authoring is schema-assisted: `schema/cosmic-goo-plugin.schema.json` (#11) gives editors validation/completion (associate via a `#:schema` header or the repo `.taplo.toml`); `tests/schema.bats` validates every shipped plugin against it.
-- **Tests** — bats conformance suite (426 tests; ~28% skip on bash by design, the Rust-only divergence) + 215 engine unit tests.
+- **Tests** — bats conformance suite (433 tests; ~28% skip on bash by design, the Rust-only divergence) + 215 engine unit tests.
 
 See [limitations.md](../limitations.md) for the user-facing roadmap.

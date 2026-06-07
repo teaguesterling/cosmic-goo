@@ -418,10 +418,11 @@ verb-position. See §4 noun-first for how this looks.)
 ### 4.3 What's missing for full noun-first
 
 1. **Bare entity names** resolving as nouns (§3 — the keystone fix).
-2. **Verb-pick after a noun (CLI)**. Today after `goo :app/firefox <space>` the parser expects a second positional (object). The grammar's ambiguous here. Possible forms:
+2. **Verb-pick after a noun (CLI)** — **shipped (#15)** as `goo do <addr> [verb]`.
+   Today after `goo :app/firefox <space>` the parser expects a second positional (object). The grammar's ambiguous here. The forms considered:
    - `goo :app/firefox close` → ambiguous (is `close` the verb or a token to pass?). Could disambiguate by: if the second positional is a known verb AND the first positional is an address, reinterpret as `goo close :app/firefox` (reorder). Subtle but workable. Optional `--reorder` flag for explicit opt-in.
    - `goo --on :app/firefox close` → explicit "noun-first" marker. Unambiguous. Adds a flag.
-   - `goo do <addr> [verb]` → new subcommand that pops verb-pick if verb omitted. Cleanest CLI surface.
+   - `goo do <addr> [verb]` → new subcommand that pops verb-pick if verb omitted. Cleanest CLI surface. **This is what shipped.** With a verb, `goo do <addr> <verb> [args]` is a pure reorder of `goo <verb> <addr> [args]` — it re-enters the verb-first path (`cmd_verb`) verbatim, so subject/object/adverb parsing, confirm-gating, negotiation, and history recording are byte-identical (an equivalence locked by a test). With no verb it's the verb-pick: it prints the applicable-verbs listing (delegates to `goo what`, the Gate-4 SSOT — no interactive stdin picker; printing the menu matches how MEDIUM-band inference and `goo what` already work). The `--reorder` flag and `--on` marker were *not* taken — a dedicated subcommand avoids overloading the positional grammar entirely.
 3. **Inline-launcher noun-first** — the pop-launcher meta-plugin (planned, not built). Type → entity matches → Enter for default verb, → opens actions menu. Spotlight-style.
 4. **Compose-GUI noun-first** — the GUI builds noun-first by default: subject candidates surface first (PRIMARY/clip/recent + fuzzy source items), then verb-pick from OPTIONS.allow.
 
@@ -429,7 +430,7 @@ verb-position. See §4 noun-first for how this looks.)
 
 | Surface | Default grammar | When to break it |
 |---|---|---|
-| CLI (`goo`) | **verb-first** | `goo <addr>` no-verb → GOO default. Optional `goo do <addr>` for noun-first verb-pick. |
+| CLI (`goo`) | **verb-first** | `goo <addr>` no-verb → GOO default (**runs**). `goo do <addr>` → noun-first verb-pick (**lists**); `goo do <addr> <verb>` → reorder. |
 | Shell completion | follows CLI | augmented with entity inference (§3) at the verb-position |
 | Compose-GUI | **noun-first** | Subject first, then verb. CLI-equivalent preview shown live. |
 | Inline launcher | **noun-first** | Spotlight pattern; one keystroke discovers entities. |
@@ -614,7 +615,7 @@ the editor.
 |---|---|---|---|
 | Bare entity-name resolution | "unknown verb" | §3 inference: try as noun if not verb | ✓ — only fires when verb-lookup fails |
 | `prefix/rest` shortcut | text/plain | §3.1: `:prefix/rest` if `prefix` is a source-prefix | ✓ — only when the prefix matches |
-| Noun-first verb-pick | not supported | `goo do <addr> [verb]` (new subcommand) OR `goo <addr> <verb>` with `--reorder` | additive |
+| Noun-first verb-pick | **shipped (#15)** | `goo do <addr> [verb]` — new subcommand (the `--reorder`/`--on` variants were not taken) | additive |
 | GOO-default error | "no default verb" | helpful suggestions list | message-only |
 | Polymorphic chip / confirm chip | none | completion-time annotation | additive |
 
@@ -644,7 +645,7 @@ unless noted).
 | 12 | **Late-binding / error recovery** in compose-GUI | medium | UX correctness work |
 | 13 | **"Again" / recent-actions** (§6.1, §6.3) | medium | persistent history layer |
 | 14 | **Conversion suggestions on 415** (§6.8) — **shipped** | medium | extends teaching 415 |
-| 15 | **`goo do <addr>`** noun-first subcommand | small | bin |
+| 15 | **`goo do <addr>`** noun-first subcommand — **shipped** | small | bin |
 
 **Suggested first slice**: #1 + #2 + #3 together as "completion polish"
 (all small, all visible). Then #4 as the first inference taste. Then
@@ -685,8 +686,17 @@ no route, the error now also names the verbs that accept the subject's type
 the failed verb and any `destructive` verb; one shared `alt_verbs_hint` on the
 no-route 415 `die` in `exec_negotiated` (not the teaching-415), so both
 coercion-415 and present-verb-415 get it — both covered in
-`tests/integration/suggest-415.bats`). **Next**: the #9 compose-GUI v2 arc
-(incl. the §6.3 reorder + #6 caption), or the smaller win #15 (`goo do <addr>`).
+`tests/integration/suggest-415.bats`). #15 (**`goo do <addr> [verb]`** — the CLI's
+explicit noun-first surface; with a verb it's a pure reorder of `goo <verb> <addr>`
+that re-enters `cmd_verb` verbatim (subject/object/adverb/confirm/history all
+identical — locked by an equivalence test), with no verb it's the verb-pick that
+delegates to `goo what`; new `do` subcommand reserved against alias shadowing;
+`tests/integration/do.bats`). Note the deliberate asymmetry: `goo do <addr>`
+*lists* (discovery) where bare `goo <addr>` *runs* the default verb (§4.4).
+**Next**: the #9 compose-GUI v2 arc (incl. the §6.3 menu-reorder + #6 caption) —
+the remaining large slice, and the home for the noun-first verb-pick *menu* (the
+CLI `goo do` lists; the GUI is where recent-first reordering and a real picker
+live).
 
 ---
 

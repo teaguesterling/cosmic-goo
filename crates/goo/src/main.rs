@@ -96,6 +96,12 @@ fn dispatch(args: &[String], alias_depth: u32) -> i32 {
             _ => die("what: usage: goo what <subject>"),
         },
         Some("dispatch") => cmd_dispatch(args.get(1).map(String::as_str)),
+        // `goo do <addr> [verb]` — noun-first dispatch (#15 / §4.3). Name the
+        // subject first; with a verb it's `goo <verb> <addr>` reordered, with no
+        // verb it's the verb-pick (`goo what`). Sits ahead of the verb-lookup arm,
+        // so it shadows any verb/alias named `do` (none exists; see `validate`'s
+        // RESERVED list, which also blocks an alias from reclaiming it).
+        Some("do") => cmd_do(&registry::load_all(), &args[1..]),
         Some("reload") => cmd_reload(),
         Some("again") => cmd_again(&registry::load_all(), &args[1..]),
         Some("forget") => cmd_forget(),
@@ -372,6 +378,33 @@ fn cmd_goo(reg: &Value, addr: &str, rest: &[String]) -> i32 {
     exec_verb(reg, &verb, &subject, &object, &adverbs)
 }
 
+/// `goo do <addr> [verb] [args…]` — the CLI's explicit noun-first surface (#15 /
+/// §4.3). The grammar stays verb-first by default; `do` is the opt-in inversion
+/// for the discovery mood ("I have this thing — what can I do with it?").
+///
+/// - **With a verb**: `goo do <addr> <verb> [args]` ≡ `goo <verb> <addr> [args]`
+///   — a pure reorder that re-enters `cmd_verb` verbatim, so subject resolution,
+///   object/adverb parsing, confirm-gating, negotiation, and history recording
+///   all behave identically to the verb-first form (nothing forked).
+/// - **Without a verb**: the verb-pick — delegate to `cmd_what`, which prints the
+///   applicable-verbs listing (the Gate-4 SSOT `OPTIONS.allow`). Note this
+///   *lists* rather than *runs*: unlike bare `goo <addr>` (which runs the type's
+///   default verb), `goo do <addr>` is discovery, so it shows the menu. See §4.4.
+fn cmd_do(reg: &Value, rest: &[String]) -> i32 {
+    let addr = match rest.first() {
+        Some(a) if !a.is_empty() => a.clone(),
+        _ => return die("do: usage: goo do <subject> [verb] [args…]"),
+    };
+    match rest.get(1).map(String::as_str).filter(|s| !s.is_empty()) {
+        Some(verb) => {
+            let mut argv = vec![verb.to_string(), addr];
+            argv.extend(rest.iter().skip(2).cloned());
+            cmd_verb(reg, &argv)
+        }
+        None => cmd_what(reg, &addr),
+    }
+}
+
 /// `goo what <addr>` — informational: print the applicable-verbs list for a
 /// subject, with chips and descriptions. The same projection (`options::options_for`)
 /// the dispatch-error path consumes — divergence is a bug. Single-source-of-truth
@@ -632,6 +665,7 @@ fn print_usage() {
 USAGE
     goo <verb> [POSITIONAL...] [--FLAG=VALUE]
     goo <address>                        Resolve the address, run its type's default verb (GOO)
+    goo do <address> [verb] [args...]    Noun-first: with a verb, run it on the address; without, list applicable verbs
     goo list <source>                    Emit source items as JSON
     goo describe <verb>                  Show verb details
     goo dispatch <input>                 Classify content and route to a verb
@@ -1717,7 +1751,7 @@ fn cmd_validate() -> i32 {
     // Reserved subcommands an alias can never shadow.
     const RESERVED: &[&str] = &[
         "compose", "list", "describe", "plugins", "validate", "dispatch", "reload", "again", "forget",
-        "__complete", "help",
+        "__complete", "help", "do",
         "options", "what", "-h", "--help",
     ];
 
@@ -1911,7 +1945,7 @@ fn cmd_complete(args: &[String]) -> i32 {
     let arg = args.get(1).map(String::as_str).unwrap_or("");
     match stage {
         "subcommands" => {
-            println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nreload\nagain\nforget\nwhat\nhelp");
+            println!("list\ndescribe\nplugins\nvalidate\ncompose\ndispatch\nreload\nagain\nforget\nwhat\ndo\nhelp");
             for v in arr("verbs") {
                 if let Some(n) = v.get("name").and_then(|n| n.as_str()) {
                     println!("{n}");
