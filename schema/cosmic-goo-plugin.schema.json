@@ -92,6 +92,7 @@
         "applies_to_verbs": { "type": "array", "items": { "type": "string" }, "description": "Offered only for these named verbs." },
         "default": { "type": "string", "description": "Default selector value." },
         "prompt": { "type": "string", "description": "Prompt for a fill adverb." },
+        "values_cmd": { "type": "string", "description": "Shell command emitting extra completion candidates (one per line), merged after the static values. For live discovery, e.g. the model adverb curling woollama's /v1/models." },
         "values": {
           "type": "object",
           "description": "Selector alternatives, one table per value: [adverbs.values.NAME].",

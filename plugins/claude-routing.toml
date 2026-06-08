@@ -34,10 +34,18 @@ description = "Where to send the rendered prompt"
 description = "Run the prompt through the local woollama router (picks {model})"
 template = '''sock="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/woollama.sock"
 test -S "$sock" || { echo "goo: woollama not running ($sock)" >&2; exit 1; }
-m={model|q}
+# Resolve the model: alias expansion ({model}, e.g. fast→ollama/qwen3:8b) wins;
+# else the raw selected value ({adverbs.model}, e.g. --model=ollama/qwen3:14b or
+# a woollama/<recipe>) passes through; else a hard default. A typo'd model thus
+# reaches woollama and surfaces its error rather than silently using the default.
+# Each {…|q} is assigned bare (so shell quote-removal yields a clean value), then
+# combined — putting {…|q} inside ${:-} within double quotes would keep the quotes.
+alias_m={model|q}
+raw_m={adverbs.model|q}
+m="${alias_m:-${raw_m:-ollama/qwen3:8b}}"
 resp="$(curl -sS --unix-socket "$sock" http://localhost/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d "$(jq -nc --arg m "${m:-ollama/qwen3:8b}" --arg p {verb.prompt|q} '{model:$m,messages:[{role:"user",content:$p}]}')")"
+  -d "$(jq -nc --arg m "$m" --arg p {verb.prompt|q} '{model:$m,messages:[{role:"user",content:$p}]}')")"
 content="$(printf '%s' "$resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)"
 if [ -n "$content" ]; then
   printf '%s\n' "$content"
@@ -73,6 +81,11 @@ kind = "selector"
 applies_to = ["text/*"]
 default = "fast"
 description = "Which woollama model runs the prompt"
+# Live discovery: tab-completion merges these curated aliases with every id
+# woollama currently serves (`<provider>/<model>` + `woollama/<recipe>`). A raw id
+# selected this way passes through the route verbatim. Daemon down → just the
+# aliases (graceful). Used for completion only; the GUI panel stays curated.
+values_cmd = '''curl -s --unix-socket "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/woollama.sock" http://localhost/v1/models 2>/dev/null | jq -r '.data[].id' 2>/dev/null'''
 
 [adverbs.values.fast]
 description = "Local qwen3:8b — quick, no API key"

@@ -2002,6 +2002,18 @@ fn cmd_complete(args: &[String]) -> i32 {
                         println!("{k}");
                     }
                 }
+                // A selector may also source live candidates from a command (e.g. the
+                // `model` adverb curls woollama's /v1/models). Merged AFTER the static
+                // keys; a failed/absent command yields nothing (graceful — the static
+                // aliases still complete).
+                if let Some(cmd) = a.get("values_cmd").and_then(|c| c.as_str()).filter(|s| !s.is_empty()) {
+                    for line in bash_capture(cmd).lines() {
+                        let line = line.trim();
+                        if !line.is_empty() {
+                            println!("{line}");
+                        }
+                    }
+                }
             }
         }
         "source-prefixes" => {
