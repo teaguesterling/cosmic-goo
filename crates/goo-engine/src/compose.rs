@@ -584,15 +584,15 @@ impl ComposeUi {
                 self.query.clear();
                 self.selected = 0;
                 self.armed = false;
-                if st.needs_object() {
-                    let ot = st.object_type().unwrap_or("").to_string();
+                // Compute both before `ready_or_run` re-borrows `self` (ends `st`).
+                let needs_object = st.needs_object();
+                let object_type = st.object_type().unwrap_or("").to_string();
+                if needs_object {
                     self.objects = Vec::new();
                     self.stage = Stage::Object;
-                    Some(UiAction::LoadObjects(ot))
+                    Some(UiAction::LoadObjects(object_type))
                 } else {
-                    self.stage = Stage::Ready;
-                    self.adverb_sel = 0;
-                    None
+                    self.ready_or_run()
                 }
             }
             Stage::Object => {
@@ -603,9 +603,7 @@ impl ComposeUi {
                 self.query.clear();
                 self.selected = 0;
                 self.armed = false;
-                self.stage = Stage::Ready;
-                self.adverb_sel = 0;
-                None
+                self.ready_or_run()
             }
             Stage::Ready => {
                 // We reached Ready by *advancing* on the previous commit (no run),
@@ -618,6 +616,23 @@ impl ComposeUi {
                     Some(UiAction::Run)
                 }
             }
+        }
+    }
+
+    /// A commit just *completed* the sentence (landing it in `Ready`). A plain
+    /// verb — not gated, no adverb slots to tweak — runs on that completing
+    /// keypress: gnome-do directness, and no review is lost because the
+    /// speak-it-back preview was already visible during verb/object selection. A
+    /// gated verb or one with adverb slots dwells in `Ready` instead (arm-then-run,
+    /// or tweak-then-run). The completing keypress for a *gated* verb still never
+    /// runs — that safety beat lives in the `Stage::Ready` arm.
+    fn ready_or_run(&mut self) -> Option<UiAction> {
+        self.stage = Stage::Ready;
+        self.adverb_sel = 0;
+        if !self.gated() && self.adverb_slots().is_empty() {
+            Some(UiAction::Run)
+        } else {
+            None
         }
     }
 
@@ -896,6 +911,23 @@ mod tests {
     }
 
     #[test]
+    fn a_window_row_is_found_by_app_name_only_when_the_label_leads_with_it() {
+        // Regression (the real bug): window rows were labeled by TITLE alone, so an
+        // Alacritty window titled "git--woollama ● 1 claude" was unfindable by typing
+        // "alacritty". The control proves the title-only label fails; the fix is to
+        // lead the label with the app id (done in plugins/apps.toml's :win source).
+        let title_only = vec![Item::new("goo://win/Alacritty/6", "git--woollama ● 1 claude")];
+        assert!(
+            fuzzy_rank(&title_only, "alacritty").is_empty(),
+            "title-only label is NOT found by app name — the bug"
+        );
+        let app_led = vec![Item::new("goo://win/Alacritty/6", "Alacritty — git--woollama ● 1 claude")];
+        let got = fuzzy_rank(&app_led, "alacritty");
+        assert_eq!(got.len(), 1, "an app-led label IS found by the app name — the fix");
+        assert_eq!(got[0].key, "goo://win/Alacritty/6");
+    }
+
+    #[test]
     fn item_icon_is_carried_through_filtering() {
         let items = vec![Item::new("a", "Firefox").with_icon(Some("firefox".into())), Item::new("b", "plain")];
         // the icon name survives a fuzzy filter (the shell resolves it to an image).
@@ -944,20 +976,20 @@ mod tests {
     }
 
     #[test]
-    fn one_step_verb_advances_to_ready_without_running_then_enter_runs() {
+    fn one_step_plain_verb_runs_on_the_completing_keypress() {
+        // A plain (non-gated, no-adverb) verb runs on the keypress that completes
+        // the sentence — gnome-do directness. No review is lost: the speak-it-back
+        // preview is already visible while selecting the verb. (Gated verbs and
+        // verbs with adverb slots still dwell in Ready — covered below.)
         let mut u = resolved_ui(&[]);
         assert_eq!(u.stage, Stage::Verb);
-        // filter to "critique", commit.
         for c in ["c", "r", "i"] {
             u.apply(&ch(c));
         }
         assert_eq!(u.visible()[0].key, "critique");
-        // committing the verb COMPLETES the sentence but must NOT run.
-        assert_eq!(u.apply(&KeyInput::Enter), None);
-        assert_eq!(u.stage, Stage::Ready);
-        assert_eq!(u.state.as_ref().unwrap().preview(), "goo critique goo://clip/");
-        // a fresh Enter in Ready (non-gated) runs.
+        // ONE Enter both completes and runs the sentence (no dwell, no second press).
         assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run));
+        assert_eq!(u.state.as_ref().unwrap().preview(), "goo critique goo://clip/");
     }
 
     #[test]
@@ -990,9 +1022,11 @@ mod tests {
         // shell supplies candidates; pick one.
         u.set_objects(vec![Item::new("goo://ws/1", "Workspace 1"), Item::new("goo://ws/2", "Workspace 2")]);
         u.apply(&ch("2"));
-        assert_eq!(u.apply(&KeyInput::Enter), None); // → Ready, not run
-        assert_eq!(u.stage, Stage::Ready);
+        // The OBJECT pick completes a plain two-step sentence → it runs on that
+        // keypress too (the short-circuit is symmetric across the completing commit).
+        let act = u.apply(&KeyInput::Enter);
         assert_eq!(u.state.as_ref().unwrap().argv(), vec!["move-to", "goo://clip/", "goo://ws/2"]);
+        assert_eq!(act, Some(UiAction::Run));
     }
 
     #[test]
@@ -1034,16 +1068,21 @@ mod tests {
     }
 
     #[test]
-    fn ready_left_right_do_nothing_without_adverbs_and_enter_still_runs() {
-        let mut u = resolved_ui(&[]);
-        for c in ["c", "r", "i"] {
-            u.apply(&ch(c));
-        }
-        assert_eq!(u.visible()[0].key, "critique"); // no adverbs
-        u.apply(&KeyInput::Enter); // → Ready
+    fn ready_arrows_are_safe_no_ops_when_a_dwelling_verb_has_no_adverb_slots() {
+        // A plain verb now runs on commit (never dwells), so the only verb that sits
+        // in Ready with NO adverb slots is a gated one. `delete` is gated → it dwells;
+        // Left/Right/Down must be safe no-ops there, and the arm→run beat still works.
+        let mut u = resolved_ui(&["delete"]);
+        assert_eq!(u.visible()[0].key, "delete");
+        assert_eq!(u.apply(&KeyInput::Enter), None); // commit → Ready (gated dwell)
+        assert_eq!(u.stage, Stage::Ready);
         assert!(u.adverb_slots().is_empty());
-        u.apply(&KeyInput::Left); // no-op
-        u.apply(&KeyInput::Down); // no-op (no slots)
+        u.apply(&KeyInput::Left); // no-op (no slots)
+        u.apply(&KeyInput::Right); // no-op
+        u.apply(&KeyInput::Down); // no-op
+        assert!(!u.armed(), "arrows didn't arm anything");
+        assert_eq!(u.apply(&KeyInput::Enter), None); // arm
+        assert!(u.armed());
         assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run));
     }
 
