@@ -50,7 +50,10 @@ setup() {
     [[ "$output" == *'"via"'* ]]
     [[ "$output" == *'"kind": "selector"'* ]]
     [[ "$output" == *'"clipboard"'* ]]   # one of the via values
-    [[ "$output" == *'"fabric"'* ]]      # another via value
+    [[ "$output" == *'"woollama"'* ]]    # the canonical inference route (was fabric)
+    # critique now also uses the `model` adverb (picks the woollama backend).
+    [[ "$output" == *'"model"'* ]]
+    [[ "$output" == *'"fast"'* ]]        # a model selector value
 }
 
 @test "options: think exposes BOTH via and depth (multi-adverb verb)" {

@@ -1,6 +1,6 @@
 name = "claude-routing"
 tier = "desktop"
-description = "Routes text verbs to Fabric, Claude Desktop, Claude Code, or clipboard"
+description = "Routes text verbs to woollama (inference), Claude Desktop, Claude Code, or clipboard"
 
 # Templates use substitution filters (see doc/plugin-authoring.md):
 #   {verb.prompt|q}    shell-quoted — safe as a bare argv / here-string token
@@ -8,11 +8,12 @@ description = "Routes text verbs to Fabric, Claude Desktop, Claude Code, or clip
 # This keeps arbitrary selected content (quotes, parens, newlines, $(...))
 # inert without the verbose quoted-heredoc dance.
 
-# LEGACY (deprecated). The `via` adverb conflates two slots: Using: (a process —
-# `fabric`) and To: (a destination — `clipboard`, `claude-desktop`, `claude-code`).
-# It predates the negotiation slot model (see doc/design/goo-protocol.md §3
-# Terminology). When the Using:/To: run-path lands, this decomposes:
-#   --via=fabric         → --using=goo://channel/fabric
+# LEGACY shape (deprecated). The `via` adverb conflates two slots: Using: (a
+# process — `woollama`) and To: (a destination — `clipboard`, `claude-desktop`,
+# `claude-code`). It predates the negotiation slot model (see
+# doc/design/goo-protocol.md §3 Terminology). When the Using:/To: run-path lands,
+# this decomposes:
+#   --via=woollama       → --using=goo://channel/woollama
 #   --via=clipboard      → --to=goo://chat/clipboard
 #   --via=claude-desktop → --to=goo://chat/claude-desktop
 #   --via=claude-code    → --to=goo://chat/claude-code
@@ -21,12 +22,29 @@ description = "Routes text verbs to Fabric, Claude Desktop, Claude Code, or clip
 name = "via"
 kind = "selector"
 applies_to = ["text/*"]
-default = "clipboard"
+default = "woollama"
 description = "Where to send the rendered prompt"
 
-[adverbs.values.fabric]
-description = "Pipe through Fabric (Anthropic API)"
-template = "fabric -p {verb.fabric_pattern} <<< {verb.prompt|q}"
+# woollama is the canonical inference route: POST the rendered prompt to the local
+# woollama router (~/Projects/woollama) over its Unix socket and print the model's
+# reply. The `model` adverb (below) picks the backend via {model}. JSON body is
+# built with `jq -n --arg` because there is no `|json` substitution filter — a
+# `|q`-quoted value is one shell word, handed raw to jq, which does the escaping.
+[adverbs.values.woollama]
+description = "Run the prompt through the local woollama router (picks {model})"
+template = '''sock="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/woollama.sock"
+test -S "$sock" || { echo "goo: woollama not running ($sock)" >&2; exit 1; }
+m={model|q}
+resp="$(curl -sS --unix-socket "$sock" http://localhost/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d "$(jq -nc --arg m "${m:-ollama/qwen3:8b}" --arg p {verb.prompt|q} '{model:$m,messages:[{role:"user",content:$p}]}')")"
+content="$(printf '%s' "$resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)"
+if [ -n "$content" ]; then
+  printf '%s\n' "$content"
+else
+  echo "goo: woollama: $(printf '%s' "$resp" | jq -r '.error.message // "empty or unparseable response"' 2>/dev/null)" >&2
+  exit 1
+fi'''
 
 [adverbs.values.claude-desktop]
 description = "Open new chat in Claude Desktop"
@@ -43,14 +61,45 @@ description = "Copy assembled prompt to clipboard"
 template = "wl-copy <<< {verb.prompt|q}"
 
 
+# The model picker for the woollama route. Curated aliases → real woollama model
+# ids (`<provider>/<model>`), injected as {model} via template_var (the same
+# pattern as urls.toml's `engine` adverb). Selector, so it shows in the
+# compose-GUI adverb panel today. Full /v1/models discovery + recipes
+# (woollama/<recipe>) are a follow-on. Only consumed by the woollama route; inert
+# on clipboard/claude-* routes.
+[[adverbs]]
+name = "model"
+kind = "selector"
+applies_to = ["text/*"]
+default = "fast"
+description = "Which woollama model runs the prompt"
+
+[adverbs.values.fast]
+description = "Local qwen3:8b — quick, no API key"
+template_var = { model = "ollama/qwen3:8b" }
+
+[adverbs.values.local]
+description = "Local qwen3:14b — stronger"
+template_var = { model = "ollama/qwen3:14b" }
+
+[adverbs.values.code]
+description = "Local qwen2.5-coder:7b — coding"
+template_var = { model = "ollama/qwen2.5-coder:7b" }
+
+[adverbs.values.big]
+description = "Local gpt-oss:20b — heaviest"
+template_var = { model = "ollama/gpt-oss:20b" }
+
+
 # ---------------------------------------------------------------------------
 # Per-verb CLOUD model defaults (informational).
 #
 # From the opus-graded scribe verb evals (scoreboard v4, 15 cases). The rule:
 # pick the CHEAPEST Claude tier that still scores >=4 on the verb, since Opus
-# sweeps everything at 5.00 but is overkill for structured transforms. These
-# are actionable on the `fabric` route (Fabric takes `-m <model>`); the
-# claude-desktop / claude-code routes use whatever model the app is set to.
+# sweeps everything at 5.00 but is overkill for structured transforms. These are
+# CLOUD-tier guidance (Claude); the `model` adverb above selects the actual
+# woollama backend per run. Informational only — the engine does not read this
+# table; the claude-desktop / claude-code routes use whatever model the app is set to.
 #
 # Haiku is the workhorse — it scores 4-5 on transforms (extract, memorize,
 # rewrite, summarize, translate) at the lowest cost. Escalate to Sonnet for

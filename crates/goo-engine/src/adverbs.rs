@@ -107,6 +107,12 @@ accepts = ["text/*"]
 uses_adverbs = ["via", "depth"]
 prompt = "{depth_prefix}:\n{subject.text}"
 
+[[verbs]]
+name = "summarize"
+accepts = ["text/*"]
+uses_adverbs = ["via", "model"]
+prompt = "Summarize:\n{subject.text}"
+
 [[adverbs]]
 name = "via"
 kind = "selector"
@@ -118,6 +124,9 @@ template = "cat <<< '{verb.prompt}' | fabric -p {verb.fabric_pattern}"
 [adverbs.values.clipboard]
 template = "cat <<< '{verb.prompt}'"
 
+[adverbs.values.woollama]
+template = "woollama {model} <<< {verb.prompt|q}"
+
 [[adverbs]]
 name = "depth"
 kind = "selector"
@@ -128,6 +137,17 @@ template_var = { depth_prefix = "Think about" }
 
 [adverbs.values.ultra]
 template_var = { depth_prefix = "Ultrathink about" }
+
+[[adverbs]]
+name = "model"
+kind = "selector"
+default = "fast"
+
+[adverbs.values.fast]
+template_var = { model = "ollama/qwen3:8b" }
+
+[adverbs.values.big]
+template_var = { model = "ollama/gpt-oss:20b" }
 "#,
         )
     }
@@ -178,6 +198,25 @@ template_var = { depth_prefix = "Ultrathink about" }
         let reg = fixture();
         let r = resolve(&reg, verb(&reg, "think"), &json!({"via": "clipboard"}));
         assert_eq!(r["template_vars"]["depth_prefix"], json!("Think about"));
+    }
+
+    #[test]
+    fn woollama_route_is_captured_and_the_model_adverb_injects_its_id() {
+        // The inference path: `via=woollama` supplies the route template, and the
+        // separate `model` selector injects the chosen model id as a template_var
+        // that the route references via {model}. (Mirrors plugins/claude-routing.toml.)
+        let reg = fixture();
+        // Defaults: via=woollama (explicit here), model=fast → ollama/qwen3:8b.
+        let r = resolve(&reg, verb(&reg, "summarize"), &json!({"via": "woollama"}));
+        assert_eq!(r["selected"]["via"], json!("woollama"));
+        assert_eq!(r["selected"]["model"], json!("fast")); // model's own default
+        assert_eq!(r["template_vars"]["model"], json!("ollama/qwen3:8b"));
+        assert_eq!(r["route_template"], json!("woollama {model} <<< {verb.prompt|q}"));
+
+        // A model override changes only the injected id, not the route.
+        let r2 = resolve(&reg, verb(&reg, "summarize"), &json!({"via": "woollama", "model": "big"}));
+        assert_eq!(r2["template_vars"]["model"], json!("ollama/gpt-oss:20b"));
+        assert_eq!(r2["route_template"], json!("woollama {model} <<< {verb.prompt|q}"));
     }
 
     #[test]

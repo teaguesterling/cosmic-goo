@@ -372,8 +372,19 @@ assert '$v' in d['allow'], f'$v not in allow for $vtype: ' + str(d['allow'])
 @test "real plugins: claude-routing via adverb has all four routes" {
     run "$GOO" __complete adverb-values via </dev/null
     [ "$status" -eq 0 ]
-    for r in fabric claude-desktop claude-code clipboard; do
+    # woollama is the canonical inference route (succeeded fabric, which is gone).
+    for r in woollama claude-desktop claude-code clipboard; do
         echo "$output" | grep -qx "$r" || { echo "missing route: $r" >&2; return 1; }
+    done
+    echo "$output" | grep -qx fabric && { echo "fabric route should be removed" >&2; return 1; }
+    true
+}
+
+@test "real plugins: model adverb offers the curated woollama backends" {
+    run "$GOO" __complete adverb-values model </dev/null
+    [ "$status" -eq 0 ]
+    for m in fast local code big; do
+        echo "$output" | grep -qx "$m" || { echo "missing model alias: $m" >&2; return 1; }
     done
 }
 

@@ -6,7 +6,7 @@ description = "Selection-aware text actions (critique, summarize, think, draft-r
 name = "critique"
 description = "Expert review of the passage"
 accepts = ["text/*"]
-uses_adverbs = ["via"]
+uses_adverbs = ["via", "model"]
 fabric_pattern = "analyze_claims"
 prompt = """You are providing expert review of the following passage.
 Deduce the desired intent and tone, then critique accordingly.
@@ -18,7 +18,7 @@ Deduce the desired intent and tone, then critique accordingly.
 name = "summarize"
 description = "Summarize the passage"
 accepts = ["text/*"]
-uses_adverbs = ["via"]
+uses_adverbs = ["via", "model"]
 fabric_pattern = "summarize"
 prompt = """Summarize the following passage:
 
@@ -29,7 +29,7 @@ prompt = """Summarize the following passage:
 name = "think"
 description = "Think about the passage; depth adverb modulates how hard"
 accepts = ["text/*"]
-uses_adverbs = ["via", "depth"]
+uses_adverbs = ["via", "depth", "model"]
 fabric_pattern = "extract_wisdom"
 prompt = """{depth_prefix} the following passage:
 
@@ -40,7 +40,7 @@ prompt = """{depth_prefix} the following passage:
 name = "draft-response"
 description = "Draft a reply to the selected text"
 accepts = ["text/*"]
-uses_adverbs = ["via"]
+uses_adverbs = ["via", "model"]
 fabric_pattern = "create_summary"
 prompt = """Consider the following selected text and begin drafting a response.
 Identify key answers or information needed, and questions we should ask
