@@ -535,7 +535,7 @@ The checker is conservative — it doesn't yet verify that referenced types exis
 
 ### Editor validation (JSON Schema)
 
-`goo validate` is runtime (load-time) validation; for **authoring-time** help — completion, hovers, and catching typos as you type — there's a JSON Schema at [`schema/cosmic-goo-plugin.schema.json`](../schema/cosmic-goo-plugin.schema.json). It documents every section and field, enums the constrained ones (`kind`, channel `cost`/`consumes`, `tier`), and catches the classic singular-vs-plural slip (`[[verb]]` instead of `[[verbs]]`).
+`goo validate` is runtime (load-time) validation; for **authoring-time** help — completion, hovers, and catching typos as you type — there's a JSON Schema at [`schema/cosmic-goo-plugin.schema.json`](https://github.com/teaguesterling/cosmic-goo/blob/main/schema/cosmic-goo-plugin.schema.json). It documents every section and field, enums the constrained ones (`kind`, channel `cost`/`consumes`, `tier`), and catches the classic singular-vs-plural slip (`[[verb]]` instead of `[[verbs]]`).
 
 Associate it with your plugin files one of two ways:
 
@@ -543,7 +543,7 @@ Associate it with your plugin files one of two ways:
   ```toml
   #:schema https://raw.githubusercontent.com/teaguesterling/cosmic-goo/main/schema/cosmic-goo-plugin.schema.json
   ```
-- **Per project** — the repo's [`.taplo.toml`](../.taplo.toml) already maps `plugins/*.toml` to the schema, so editing in-tree validates automatically.
+- **Per project** — the repo's [`.taplo.toml`](https://github.com/teaguesterling/cosmic-goo/blob/main/.taplo.toml) already maps `plugins/*.toml` to the schema, so editing in-tree validates automatically.
 
 Item objects allow extra keys (a verb's custom `{verb.*}` template vars, for instance), so the schema guides without getting in the way; `tests/schema.bats` keeps it honest by validating every shipped plugin against it.
 
