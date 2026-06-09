@@ -94,7 +94,7 @@ $ goo ~/notes.md         # → the file default verb (open)
 
 ## 4. Adverbs: modifying *how* a verb runs
 
-Some verbs take **adverbs** — `--name=value` modifiers. The classic is `--via`, which routes a text verb's prompt somewhere:
+Some verbs take **adverbs** — `--name=value` modifiers. The classic is `--via`, which routes a text verb's prompt somewhere. Route to the clipboard first — it always works (no daemon) and *shows you* the assembled prompt:
 
 ```
 $ goo critique "this paragraph could be tighter" --via=clipboard
@@ -107,13 +107,20 @@ $ wl-paste | head -1
 Ultrathink: exhaustively analyze every angle of the following passage:
 ```
 
-`--via` values: `clipboard` (safe default), `fabric` (Anthropic API, needs `fabric`), `claude-desktop`, `claude-code`. `--depth` (on `think`) swaps the prompt's prefix. Tab-complete shows the options — see §7.
+**By default**, though, `--via=woollama` sends that prompt to your local [woollama](https://github.com/teaguesterling/woollama) router and prints the model's reply (so `goo summarize "…"` just answers — provided woollama is running):
+
+```
+$ goo summarize "the mitochondria is the powerhouse of the cell"
+Mitochondria produce the cell's ATP through respiration.
+```
+
+`--via` values: `woollama` (default — needs the woollama daemon), `clipboard` (assemble the prompt, no LLM), `claude-desktop`, `claude-code`. The `--model` adverb picks woollama's backend — aliases (`fast`/`local`/`code`/`big`) or any live `<provider>/<model>` id (tab-complete lists what woollama serves). `--depth` (on `think`) swaps the prompt's prefix. Tab-complete shows the options — see §7.
 
 ```
 $ goo describe think
 verb: think
 accepts: text/*
-uses_adverbs: via, depth
+uses_adverbs: via, depth, model
 ...
 ```
 
@@ -179,8 +186,9 @@ With completion installed (`source ~/.bashrc`, or `make install-completion`), TA
 
 ```
 goo <TAB>                  # subcommands + all verbs
-goo critique --<TAB>       # → --via=
-goo critique --via=<TAB>   # → claude-code  claude-desktop  clipboard  fabric
+goo critique --<TAB>       # → --via=  --model=
+goo critique --via=<TAB>   # → claude-code  claude-desktop  clipboard  woollama
+goo critique --model=<TAB> # → fast local code big  + live woollama ids (ollama/…, woollama/…)
 goo activate <TAB>         # → running apps (bare-positional handle completion)
 goo switch :<TAB>          # → :app: :bt: :clip: :file: :hist: :net: :repo: :sel: :sink: :svc: :tmux: :ws:
 goo switch :ws:<TAB>       # → :ws:0:0  :ws:0:1  :ws:1:0  :ws:1:1

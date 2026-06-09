@@ -138,9 +138,10 @@ A verb can be performed by different **instruments** — `goo <verb> X --using
 <channel>` pins which one, and it composes with `--to` (instrument and destination
 are orthogonal slots). The mechanism ships and is tested. But **no built-in verb
 offers an instrument *choice* yet**, so there's nothing to demo it with on a stock
-install — the headline instrument, **`fabric`** ("summarize this *via* the LLM
-tool"), is still being decomposed out of the legacy `--via` adverb. So treat
-`--using` as wired-and-waiting: real, but without its first shipped instrument.
+install — the headline instrument, **`woollama`** ("summarize this *via* the LLM
+router"), still rides the legacy `--via` adverb rather than the `--using` slot it
+will eventually decompose into. So treat `--using` as wired-and-waiting: real, but
+without its first shipped instrument.
 
 ---
 
@@ -153,7 +154,8 @@ tool"), is still being decomposed out of the legacy `--via` adverb. So treat
   the OS MIME database (e.g. `/usr/share/mime`) and goo types files by extension and
   knows the type lattice (an SVG is also text); without it, typing falls back to
   libmagic, which already handles most real files.
-- **Not yet:** chat/contact destinations, the `fabric` instrument, and
+- **Not yet:** chat/contact destinations, the `woollama` *instrument* slot (the
+  route ships as a `--via` adverb; the `--using` decomposition is pending), and
   multi-recipient routing. See [limitations.md](limitations.md).
 
 > **Stuck?** `goo --explain <verb> <subject>` shows what would happen and why — the

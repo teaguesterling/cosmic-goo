@@ -25,7 +25,7 @@ Not yet shipped: the pop-launcher meta-plugin for *inline* composition in `cosmi
 $ goo plugins
 apps — Running applications via cos-cli
   plugins/apps.toml
-claude-routing — Routes text verbs to Fabric, Claude Desktop, Claude Code, or clipboard
+claude-routing — Routes text verbs to woollama (inference), Claude Desktop, Claude Code, or clipboard
   plugins/claude-routing.toml
 selection — Implicit subjects from the current PRIMARY selection and clipboard
   plugins/selection.toml

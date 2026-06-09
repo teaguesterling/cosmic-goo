@@ -6,13 +6,13 @@ The MS Natural 4000 has a lot of underused special keys. This doc maps the cosmi
 
 | Modifier | Endpoint | Where the result lands |
 |---|---|---|
-| Plain | Fabric → Anthropic API | terminal / notification |
+| Plain | woollama → LLM router | terminal / notification |
 | Shift | Claude Desktop (new chat) | Claude Desktop |
 | Alt | Claude Code (new session) | new Code session |
 | Alt+Shift | Claude Code (existing tmux session) | existing terminal |
 | Ctrl | clipboard only | clipboard |
 
-Modifiers select adverb values; they never change the verb. `F10` plain → `goo critique --via=fabric`; `F10` Ctrl → `goo critique --via=clipboard`.
+Modifiers select adverb values; they never change the verb. `F10` plain → `goo critique --via=woollama`; `F10` Ctrl → `goo critique --via=clipboard`.
 
 ## F-row (F-Lock OFF)
 

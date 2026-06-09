@@ -191,15 +191,14 @@ object_valid_when = '.metadata.output == "{subject.metadata.output}"'
 [[verbs]]
 name = "critique"
 accepts = ["text/*"]
-uses_adverbs = ["via"]
-fabric_pattern = "analyze_claims"   # available in templates as {verb.fabric_pattern}
+uses_adverbs = ["via", "model"]
 prompt = """You are reviewing:
 
 ---
 {subject.text}"""
 ```
 
-The `via` adverb (defined in `claude-routing.toml`) selects which route runs the rendered prompt: `fabric`, `claude-desktop`, `claude-code`, or `clipboard`. The verb owns the prompt; the adverb owns the routing.
+The `via` adverb (defined in `claude-routing.toml`) selects which route runs the rendered prompt: `woollama` (the default — POST it to the local [woollama](https://github.com/teaguesterling/woollama) router and print the model's reply), `claude-desktop`, `claude-code`, or `clipboard`. The `model` adverb picks which backend woollama uses (`fast`/`local`/… or any live `<provider>/<model>` id). The verb owns the prompt; the adverbs own the routing and the model.
 
 **Destructive verb** with a confirmation prompt:
 
@@ -298,18 +297,25 @@ Adverbs modify *how* a verb runs. Two flavors:
 name = "via"
 kind = "selector"
 applies_to = ["text/*"]       # scope: any verb accepting these types
-default = "clipboard"
+default = "woollama"
 
 [adverbs.values.clipboard]
 description = "Copy assembled prompt to clipboard"
 template = "wl-copy <<< {verb.prompt|q}"
 
-[adverbs.values.fabric]
-description = "Pipe through Fabric"
-template = "fabric -p {verb.fabric_pattern} <<< {verb.prompt|q}"
+[adverbs.values.woollama]
+description = "Run the prompt through the local woollama router"
+# Abbreviated — see claude-routing.toml for the full route (socket guard +
+# error handling). The key idea: build the JSON body with `jq -n --arg`.
+template = '''curl -s --unix-socket "$XDG_RUNTIME_DIR/woollama.sock" \
+  http://localhost/v1/chat/completions -H 'content-type: application/json' \
+  -d "$(jq -nc --arg p {verb.prompt|q} '{model:"ollama/qwen3:8b",messages:[{role:"user",content:$p}]}')" \
+  | jq -r '.choices[0].message.content''''
 ```
 
 **Convention**: selector values live at `[adverbs.values.NAME]` (attached to the most-recent `[[adverbs]]` entry). The dispatcher reads them as `adverbs[i].values.NAME.template`.
+
+> **Building JSON bodies safely.** Substitution filters are `|q` (POSIX shell-quote), `|uri`, and `|raw` — there is **no `|json` filter**. To embed arbitrary content (a prompt, a selection) in a JSON request body, never interpolate it into a literal — build the body with `jq -n --arg`: a `|q`-quoted value arrives as one shell word, which `--arg` hands to jq raw, and jq does the JSON escaping. This keeps quotes, newlines, and `$(…)` inert.
 
 Selector values can also inject *template variables* that the verb's prompt template can use:
 
@@ -328,6 +334,35 @@ template_var = { depth_prefix = "Ultrathink: exhaustively analyze every angle of
 ```
 
 The verb's prompt can then write `"{depth_prefix} the following..."` and the dispatcher swaps in the chosen value's prefix.
+
+A selected value is also available verbatim as `{adverbs.<name>}`, *separately* from any `template_var` it injects. So a route can prefer an alias's expanded variable but fall back to a raw selected value — this is how the `model` adverb lets you pass either a friendly alias (`--model=fast`) or any literal id (`--model=ollama/qwen3:14b`):
+
+```sh
+# in the route template — alias expansion wins, else the raw selected value
+alias_m={model|q}            # the chosen value's template_var (empty for a non-alias)
+raw_m={adverbs.model|q}      # the literal --model value
+m="${alias_m:-${raw_m:-ollama/qwen3:8b}}"
+```
+
+(Assign each `{…|q}` to its own bare variable first — putting `{…|q}` inside `${:-}` *within* double quotes would keep the literal quotes.)
+
+**Dynamic completion — `values_cmd`.** A selector's tab-completion normally lists its static `[adverbs.values.*]` keys. Add a `values_cmd` (a shell command emitting one candidate per line) to **merge live candidates after** the static keys — e.g. the `model` adverb lists woollama's available models on top of its curated aliases:
+
+```toml
+[[adverbs]]
+name = "model"
+kind = "selector"
+applies_to = ["text/*"]
+default = "fast"
+values_cmd = '''curl -s --unix-socket "$XDG_RUNTIME_DIR/woollama.sock" \
+  http://localhost/v1/models 2>/dev/null | jq -r '.data[].id' 2>/dev/null'''
+
+[adverbs.values.fast]
+template_var = { model = "ollama/qwen3:8b" }
+# … more curated aliases …
+```
+
+`values_cmd` runs only for `--<adverb>=<TAB>` completion (not on every verb run); a failing/empty command degrades to the static values, so a down daemon just means "aliases only". It's a completion aid — the values you can actually *use* are whatever the route accepts (here, any id passes through via the `{adverbs.model}` fallback above). *(Rust-engine only.)*
 
 **Fill adverb** — takes a free-form value, no enumerated alternatives:
 

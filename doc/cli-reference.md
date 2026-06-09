@@ -119,7 +119,8 @@ $ goo options @text/markdown
   "default": null,
   "allow": ["critique", "summarize", "think", …],
   "verbs": { "think": { "using": [],
-    "with": { "via":   {"kind":"selector","default":"clipboard","values":["clipboard","fabric",…]},
+    "with": { "via":   {"kind":"selector","default":"woollama","values":["woollama","clipboard",…]},
+              "model": {"kind":"selector","default":"fast","values":["fast","local","code","big"]},
               "depth": {"kind":"selector","default":"normal","values":["normal","ultra"]} },
     "object_type": null } … } }
 ```
