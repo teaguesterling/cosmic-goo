@@ -24,7 +24,7 @@
 //! adverb/slot panel (key-value widgets; verbs run on registry defaults until
 //! then) and §6.6/§6.7 late-binding + error-recovery (#12).
 
-use goo_engine::compose::{ComposeState, ComposeUi, Item, KeyInput, Stage, UiAction};
+use goo_engine::compose::{ComposeState, ComposeUi, Item, KeyInput, RunResult, Stage, UiAction};
 use goo_engine::{address, history, mime, registry, selection};
 use iced::event::{self, Event, Status};
 use iced::keyboard::{key::Named, Key};
@@ -83,6 +83,8 @@ enum Message {
     Key(KeyInput),
     /// A mouse click on row `usize` of the active pane (sets the selection, commits).
     Click(usize),
+    /// The off-thread verb run finished with this captured output.
+    RunComplete(RunResult),
 }
 
 impl App {
@@ -91,42 +93,79 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        let action = match message {
-            Message::Key(k) => self.ui.apply(&k),
+        match message {
+            Message::Key(k) => {
+                let action = self.ui.apply(&k);
+                self.perform(action)
+            }
             Message::Click(i) => {
                 self.ui.selected = i;
-                self.ui.apply(&KeyInput::Enter)
+                let action = self.ui.apply(&KeyInput::Enter);
+                self.perform(action)
             }
-        };
-        if let Some(action) = action {
-            self.perform(action);
+            // The off-thread run finished — feed its output back to the reducer,
+            // which flips to the Result stage (success view or error recovery).
+            Message::RunComplete(r) => {
+                self.ui.on_run_result(r.stdout, r.stderr, r.code);
+                Task::none()
+            }
         }
-        Task::none()
     }
 
     /// Perform the I/O a key produced — the ONLY side-effecting code; everything
-    /// else is the pure reducer.
-    fn perform(&mut self, action: UiAction) {
+    /// else is the pure reducer. Returns a `Task` so a slow verb (an LLM call) can
+    /// run off the UI thread without freezing the window.
+    fn perform(&mut self, action: Option<UiAction>) -> Task<Message> {
+        let Some(action) = action else { return Task::none() };
         match action {
-            UiAction::ResolveSubject(addr) => match address::resolve(&addr, &self.reg, None) {
-                Ok(subject) => {
-                    let st = ComposeState::from_subject(&self.reg, &subject, addr);
-                    let recent = history::recent_verbs_for_type(&st.subject_type, RECENT_N);
-                    self.ui.on_subject_resolved(st, recent);
+            UiAction::ResolveSubject(addr) => {
+                match address::resolve(&addr, &self.reg, None) {
+                    Ok(subject) => {
+                        let st = ComposeState::from_subject(&self.reg, &subject, addr);
+                        let recent = history::recent_verbs_for_type(&st.subject_type, RECENT_N);
+                        self.ui.on_subject_resolved(st, recent);
+                    }
+                    Err(e) => self.ui.set_error(format!("could not resolve {addr}: {e}")),
                 }
-                Err(e) => self.ui.set_error(format!("could not resolve {addr}: {e}")),
-            },
+                Task::none()
+            }
             UiAction::LoadObjects(object_type) => {
                 let objects = enumerate_objects(&self.reg, &object_type);
                 load_icons(&objects, &mut self.icons);
                 self.ui.set_objects(objects);
+                Task::none()
             }
             UiAction::Run => {
-                if let Some(st) = self.ui.state.as_ref() {
-                    std::process::exit(run_sentence(st));
-                }
+                let Some(st) = self.ui.state.as_ref() else { return Task::none() };
+                let argv = run_argv(st);
+                self.ui.on_run_started(); // → Running stage; the view shows "running…"
+                // Run the (blocking) child on a worker thread; await its result via
+                // a oneshot so the iced executor — and the UI — stay responsive.
+                Task::perform(
+                    async move {
+                        let (tx, rx) = iced::futures::channel::oneshot::channel();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(run_capture(argv));
+                        });
+                        rx.await.unwrap_or_else(|_| RunResult {
+                            stdout: String::new(),
+                            stderr: "compose-gui: run thread died".into(),
+                            code: 1,
+                        })
+                    },
+                    Message::RunComplete,
+                )
             }
-            UiAction::Cancel => std::process::exit(130),
+            UiAction::CopyResult(s) => {
+                copy_to_clipboard(&s);
+                Task::none()
+            }
+            // Dismiss: propagate the run's exit code (130 if nothing ran, 0 on a
+            // successful result, the verb's code on a failed one).
+            UiAction::Cancel => {
+                let code = self.ui.run_output().map(|r| r.code).unwrap_or(130);
+                std::process::exit(code);
+            }
         }
     }
 
@@ -136,6 +175,11 @@ impl App {
 
     fn view(&self) -> Element<'_, Message> {
         let ui = &self.ui;
+
+        // Post-run: a full-pane result/error view instead of the slot panes (#12).
+        if matches!(ui.stage, Stage::Running | Stage::Result) {
+            return self.result_view();
+        }
 
         // The three panes, side by side. Each is active (query + filtered list),
         // committed (the chosen value), or pending (—).
@@ -174,6 +218,61 @@ impl App {
             panes,
             Space::new().height(Length::Fixed(8.0)),
             footer,
+        ]
+        .padding(16)
+        .into()
+    }
+
+    /// The post-run view (#12): the sentence that ran, then either "running…", the
+    /// captured output (success), or stderr + retry/edit/cancel (failure). The
+    /// sentence preview stays on screen throughout (§6.7 preserves the state).
+    fn result_view(&self) -> Element<'_, Message> {
+        let ui = &self.ui;
+        let running = ui.stage == Stage::Running;
+        let r = ui.run_output().cloned().unwrap_or_default();
+        let failed = !running && r.code != 0;
+
+        let preview = ui.state.as_ref().map(|s| s.preview()).unwrap_or_else(|| "goo".into());
+        let header = container(text(preview).size(14).font(MONO).color(Color::from_rgb(0.55, 0.85, 0.6)))
+            .padding(10)
+            .width(Length::Fill)
+            .style(panel_style);
+
+        let body: Element<Message> = if running {
+            text("running… ⟳").size(16).color(Color::from_rgb(0.85, 0.82, 0.5)).into()
+        } else if failed {
+            let msg = if r.stderr.trim().is_empty() {
+                format!("verb failed (exit {})", r.code)
+            } else {
+                r.stderr.clone()
+            };
+            scrollable(text(msg).size(13).font(MONO).color(Color::from_rgb(0.95, 0.5, 0.4)))
+                .height(Length::Fill)
+                .into()
+        } else {
+            let out = if r.stdout.trim().is_empty() { "(no output)".to_string() } else { r.stdout.clone() };
+            scrollable(text(out).size(14).font(MONO).color(Color::from_rgb(0.85, 0.88, 0.92)))
+                .height(Length::Fill)
+                .into()
+        };
+        let body_pane = container(body).padding(12).width(Length::Fill).height(Length::Fill).style(panel_style);
+
+        let (status, status_color) = if running {
+            ("running… (esc can't interrupt yet)".to_string(), Color::from_rgb(0.6, 0.64, 0.83))
+        } else if failed {
+            (format!("[r]etry · [e]dit · [Esc] cancel   (exit {})", r.code), Color::from_rgb(0.95, 0.5, 0.4))
+        } else {
+            ("Enter/Esc to close · c to copy".to_string(), Color::from_rgb(0.6, 0.84, 0.6))
+        };
+
+        column![
+            text(if failed { "goo-compose · failed" } else { "goo-compose · result" }).size(20),
+            Space::new().height(Length::Fixed(8.0)),
+            header,
+            Space::new().height(Length::Fixed(8.0)),
+            body_pane,
+            Space::new().height(Length::Fixed(8.0)),
+            text(status).size(13).color(status_color),
         ]
         .padding(16)
         .into()
@@ -322,24 +421,49 @@ fn on_event(event: Event, _status: Status, _id: iced::window::Id) -> Option<Mess
 // Helpers (the I/O the pure reducer excludes)
 // ============================================================================
 
-/// Spawn `goo` with the sentence's argv and return its exit code. A
-/// confirm/destructive verb gets `--confirm-dangerous=<verb>` appended (NOT part
-/// of `argv()`/the preview — the GUI's confirm beat earns it; a spawned `goo`
-/// has no stdin for the y/N gate).
-fn run_sentence(st: &ComposeState) -> i32 {
+/// The sentence's argv for `goo`. A confirm/destructive verb gets
+/// `--confirm-dangerous=<verb>` appended (NOT part of `argv()`/the preview — the
+/// GUI's confirm beat earns it; a spawned `goo` has no stdin for the y/N gate).
+fn run_argv(st: &ComposeState) -> Vec<String> {
     let mut argv = st.argv();
     if st.needs_confirm() || st.is_destructive() {
         if let Some(v) = st.verb.as_deref() {
             argv.push(format!("--confirm-dangerous={v}"));
         }
     }
+    argv
+}
+
+/// Run `goo <argv>` and **capture** stdout/stderr + exit code (`.output()`, not
+/// `.status()`), so the result can be shown in the GUI instead of vanishing to an
+/// inherited fd. Runs on a worker thread (it can block for a slow LLM call).
+fn run_capture(argv: Vec<String>) -> RunResult {
     let goo = std::env::var("GOO_BIN").unwrap_or_else(|_| "goo".to_string());
-    match std::process::Command::new(&goo).args(&argv).status() {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(e) => {
-            eprintln!("goo-compose-gui: failed to exec {goo}: {e}");
-            1
+    match std::process::Command::new(&goo).args(&argv).output() {
+        Ok(o) => RunResult {
+            stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+            code: o.status.code().unwrap_or(1),
+        },
+        Err(e) => RunResult {
+            stdout: String::new(),
+            stderr: format!("compose-gui: failed to exec {goo}: {e}"),
+            code: 1,
+        },
+    }
+}
+
+/// Put a successful run's reply on the Wayland clipboard (`wl-copy`).
+fn copy_to_clipboard(s: &str) {
+    use std::io::Write;
+    if let Ok(mut child) = std::process::Command::new("wl-copy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(s.as_bytes());
         }
+        let _ = child.wait();
     }
 }
 

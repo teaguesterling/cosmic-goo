@@ -343,6 +343,22 @@ pub enum Stage {
     Object,
     /// The sentence is complete; the preview shows what will run.
     Ready,
+    /// The verb is executing; the shell is awaiting its output (off the UI
+    /// thread). Keys are inert here — v1 can't interrupt a running verb.
+    Running,
+    /// The verb finished. On success the output is shown; on failure (`code != 0`)
+    /// stderr is shown with retry / edit / cancel (§6.7 error recovery). The
+    /// sentence (`state`) is preserved throughout.
+    Result,
+}
+
+/// What a finished verb run produced — fed back into the reducer by the shell
+/// via [`ComposeUi::on_run_result`].
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct RunResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub code: i32,
 }
 
 /// A keypress, decoded by the shell from iced's keyboard event into this
@@ -368,9 +384,14 @@ pub enum UiAction {
     ResolveSubject(String),
     /// Enumerate candidates of this object type; call [`ComposeUi::set_objects`].
     LoadObjects(String),
-    /// Execute the sentence (`state.argv()`).
+    /// Execute the sentence (`state.argv()`). The shell calls
+    /// [`ComposeUi::on_run_started`] then runs it off-thread, feeding the output
+    /// back via [`ComposeUi::on_run_result`].
     Run,
-    /// Abort the dialog (exit 130).
+    /// Copy the successful run's output to the clipboard (the result view's `c`).
+    CopyResult(String),
+    /// Abort the dialog (exit 130 from an input stage; exit 0 when dismissing a
+    /// successful result — the shell decides from [`ComposeUi::run_failed`]).
     Cancel,
 }
 
@@ -378,11 +399,12 @@ pub enum UiAction {
 /// compose sentence. Pure — `apply` mutates state and returns the I/O the shell
 /// must perform, so the whole keyboard flow is unit-testable without a display.
 ///
-/// **Safety invariant**: [`UiAction::Run`] is returned ONLY from [`Stage::Ready`],
-/// never from the keypress that *completes* the sentence (committing a pane
-/// always advances to `Ready` without running). A gated verb
-/// (`confirm`/`destructive`) needs an extra armed beat in `Ready`, so a reflex
-/// double-Enter can't fire it.
+/// **Safety invariant**: a verb is run only from Stage::Ready, or a Result-stage
+/// retry of a *non-gated* verb — never from the keypress that *completes* the
+/// sentence (committing a pane always advances to Ready without running). A gated
+/// verb (confirm/destructive) needs an extra armed beat in Ready, and a retry of a
+/// gated verb routes back through Ready to re-earn it — so a reflex keypress can
+/// never fire a destructive op.
 pub struct ComposeUi {
     pub stage: Stage,
     pub query: String,
@@ -398,6 +420,8 @@ pub struct ComposeUi {
     /// Which adverb slot is focused in the `Ready` panel (`↑`/`↓` move, `←`/`→`
     /// cycle its value).
     pub adverb_sel: usize,
+    /// The finished run's output (set in `Result`; `None` elsewhere).
+    run: Option<RunResult>,
 }
 
 impl ComposeUi {
@@ -413,6 +437,7 @@ impl ComposeUi {
             recent: Vec::new(),
             armed: false,
             adverb_sel: 0,
+            run: None,
         }
     }
 
@@ -442,7 +467,7 @@ impl ComposeUi {
                 })
                 .unwrap_or_default(),
             Stage::Object => self.objects.clone(),
-            Stage::Ready => Vec::new(),
+            Stage::Ready | Stage::Running | Stage::Result => Vec::new(),
         }
     }
 
@@ -481,8 +506,39 @@ impl ComposeUi {
         self.error = Some(msg);
     }
 
+    /// The shell calls this when it kicks off the off-thread run (on `UiAction::Run`).
+    pub fn on_run_started(&mut self) {
+        self.stage = Stage::Running;
+        self.run = None;
+        self.armed = false;
+        self.query.clear();
+    }
+
+    /// The shell calls this when the run finishes, with its captured output.
+    pub fn on_run_result(&mut self, stdout: String, stderr: String, code: i32) {
+        self.run = Some(RunResult { stdout, stderr, code });
+        self.stage = Stage::Result;
+        self.selected = 0;
+    }
+
+    /// In `Result`: did the verb fail (non-zero exit)?
+    pub fn run_failed(&self) -> bool {
+        self.run.as_ref().map(|r| r.code != 0).unwrap_or(false)
+    }
+
+    /// The finished run's output (only meaningful in `Result`).
+    pub fn run_output(&self) -> Option<&RunResult> {
+        self.run.as_ref()
+    }
+
     /// Feed a keypress; mutate state and return any I/O the shell must perform.
     pub fn apply(&mut self, key: &KeyInput) -> Option<UiAction> {
+        // Post-run stages have their own key handling (not the pane-nav vocabulary).
+        match self.stage {
+            Stage::Running => return None, // inert — v1 can't interrupt a running verb
+            Stage::Result => return self.apply_result(key),
+            _ => {}
+        }
         // Nav/control keys are matched here FIRST; only `Char` edits the query, so
         // a Tab/Enter/Backspace can never leak a control char into the filter.
         match key {
@@ -536,6 +592,46 @@ impl ComposeUi {
                     None
                 }
             }
+        }
+    }
+
+    /// Key handling in the `Result` stage. On failure (§6.7): `r` retry, `e` edit
+    /// (back to `Ready`, sentence preserved), `Enter`/`Esc` cancel. On success:
+    /// `c` copy the reply, `Enter`/`Esc`/`q` close. Arrows etc. are inert.
+    fn apply_result(&mut self, key: &KeyInput) -> Option<UiAction> {
+        let failed = self.run_failed();
+        match key {
+            KeyInput::Enter | KeyInput::Escape => Some(UiAction::Cancel),
+            KeyInput::Char(c) => match (failed, c.as_str()) {
+                // Retry re-runs the still-intact sentence. A gated verb must
+                // re-earn its armed beat (a single r must not re-fire a destructive
+                // op), so route it back through Ready instead of firing directly.
+                (true, "r") | (true, "R") => {
+                    if self.gated() {
+                        self.run = None;
+                        self.armed = false;
+                        self.adverb_sel = 0;
+                        self.stage = Stage::Ready;
+                        None
+                    } else {
+                        Some(UiAction::Run)
+                    }
+                }
+                // Edit drops back into Ready with the sentence preserved.
+                (true, "e") | (true, "E") => {
+                    self.run = None;
+                    self.stage = Stage::Ready;
+                    self.adverb_sel = 0;
+                    None
+                }
+                // Copy the successful reply to the clipboard.
+                (false, "c") | (false, "C") => {
+                    self.run.as_ref().map(|r| UiAction::CopyResult(r.stdout.clone()))
+                }
+                (_, "q") | (_, "Q") => Some(UiAction::Cancel),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -616,6 +712,8 @@ impl ComposeUi {
                     Some(UiAction::Run)
                 }
             }
+            // Running/Result are intercepted in `apply` before `commit` is reached.
+            Stage::Running | Stage::Result => None,
         }
     }
 
@@ -670,6 +768,8 @@ impl ComposeUi {
                     self.stage = Stage::Verb;
                 }
             }
+            // Post-run stages handle their own navigation in `apply_result`.
+            Stage::Running | Stage::Result => {}
         }
     }
 }
@@ -1114,5 +1214,106 @@ mod tests {
             u.apply(&KeyInput::Down);
         }
         assert_eq!(u.selected, n - 1); // clamped at the last row
+    }
+
+    // ---- #12: run → result / error stage ----
+
+    /// Drive a plain verb to the point the shell would run it, returning the UI in
+    /// the `Running` stage (the shell then awaits output off-thread).
+    fn ran_ui() -> ComposeUi {
+        let mut u = resolved_ui(&[]);
+        for c in ["c", "r", "i"] {
+            u.apply(&ch(c));
+        }
+        assert_eq!(u.visible()[0].key, "critique");
+        assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run)); // plain verb runs on commit
+        u.on_run_started();
+        assert_eq!(u.stage, Stage::Running);
+        u
+    }
+
+    #[test]
+    fn running_stage_ignores_keys() {
+        let mut u = ran_ui();
+        for k in [KeyInput::Enter, KeyInput::Escape, ch("x"), KeyInput::Down] {
+            assert_eq!(u.apply(&k), None);
+            assert_eq!(u.stage, Stage::Running); // inert; can't interrupt a running verb
+        }
+    }
+
+    #[test]
+    fn success_shows_the_output_and_c_copies_then_enter_closes() {
+        let mut u = ran_ui();
+        u.on_run_result("Tighten the second clause.".into(), String::new(), 0);
+        assert_eq!(u.stage, Stage::Result);
+        assert!(!u.run_failed());
+        assert_eq!(u.run_output().unwrap().stdout, "Tighten the second clause.");
+        // `c` copies the reply; the dialog stays open.
+        assert_eq!(u.apply(&ch("c")), Some(UiAction::CopyResult("Tighten the second clause.".into())));
+        assert_eq!(u.stage, Stage::Result);
+        // Enter/Esc dismiss (the shell exits 0 on a successful result).
+        assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Cancel));
+    }
+
+    #[test]
+    fn failure_preserves_the_sentence_and_offers_retry_edit_cancel() {
+        // Retry re-runs the still-intact sentence (§6.7).
+        let mut u = ran_ui();
+        let preview = u.state.as_ref().unwrap().preview();
+        u.on_run_result(String::new(), "goo: woollama: unknown model namespace".into(), 1);
+        assert_eq!(u.stage, Stage::Result);
+        assert!(u.run_failed());
+        assert_eq!(u.run_output().unwrap().stderr, "goo: woollama: unknown model namespace");
+        // `r` retries — and the sentence is byte-identical (nothing was cleared).
+        assert_eq!(u.apply(&ch("r")), Some(UiAction::Run));
+        assert_eq!(u.state.as_ref().unwrap().verb.as_deref(), Some("critique"));
+        assert_eq!(u.state.as_ref().unwrap().preview(), preview);
+
+        // `e` edits — back to Ready with the sentence preserved.
+        let mut u = ran_ui();
+        u.on_run_result(String::new(), "boom".into(), 1);
+        assert_eq!(u.apply(&ch("e")), None);
+        assert_eq!(u.stage, Stage::Ready);
+        assert_eq!(u.state.as_ref().unwrap().verb.as_deref(), Some("critique"));
+
+        // `Esc` cancels a failed result.
+        let mut u = ran_ui();
+        u.on_run_result(String::new(), "boom".into(), 1);
+        assert_eq!(u.apply(&KeyInput::Escape), Some(UiAction::Cancel));
+    }
+
+    #[test]
+    fn on_run_started_clears_a_pending_armed_gate() {
+        // A gated verb arms in Ready; once the shell starts the run, the armed beat
+        // is cleared (so a later edit→re-run still needs a fresh confirm).
+        let mut u = resolved_ui(&["delete"]);
+        assert_eq!(u.visible()[0].key, "delete");
+        assert_eq!(u.apply(&KeyInput::Enter), None); // → Ready (gated dwell)
+        assert_eq!(u.apply(&KeyInput::Enter), None); // arm
+        assert!(u.armed());
+        assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run)); // fire
+        u.on_run_started();
+        assert!(!u.armed());
+    }
+
+    #[test]
+    fn gated_verb_retry_routes_back_through_ready_not_a_direct_run() {
+        // A destructive verb that failed must NOT re-fire on a single 'r'; retry
+        // routes back to Ready so the armed beat is re-earned (safety invariant).
+        let mut u = resolved_ui(&["delete"]);
+        u.apply(&KeyInput::Enter); // → Ready (gated dwell)
+        u.apply(&KeyInput::Enter); // arm
+        assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run)); // fire
+        u.on_run_started();
+        u.on_run_result(String::new(), "rm: permission denied".into(), 1);
+        assert!(u.run_failed());
+        // retry of a gated verb → back to Ready, NOT a direct Run, and disarmed.
+        assert_eq!(u.apply(&ch("r")), None);
+        assert_eq!(u.stage, Stage::Ready);
+        assert!(!u.armed());
+        assert_eq!(u.state.as_ref().unwrap().verb.as_deref(), Some("delete"));
+        // the normal gated beat applies again: arm, then fire.
+        assert_eq!(u.apply(&KeyInput::Enter), None); // arm
+        assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run)); // fire
     }
 }
