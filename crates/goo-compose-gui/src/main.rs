@@ -104,10 +104,11 @@ impl App {
                 self.perform(action)
             }
             // The off-thread run finished — feed its output back to the reducer,
-            // which flips to the Result stage (success view or error recovery).
+            // which flips to the Result stage (success view or error recovery), or
+            // returns Cancel to auto-close a no-output success (a side-effect verb).
             Message::RunComplete(r) => {
-                self.ui.on_run_result(r.stdout, r.stderr, r.code);
-                Task::none()
+                let act = self.ui.on_run_result(r.stdout, r.stderr, r.code);
+                self.perform(act)
             }
         }
     }

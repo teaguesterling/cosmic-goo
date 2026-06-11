@@ -515,10 +515,20 @@ impl ComposeUi {
     }
 
     /// The shell calls this when the run finishes, with its captured output.
-    pub fn on_run_result(&mut self, stdout: String, stderr: String, code: i32) {
+    /// Returns Some(Cancel) when a side-effect verb *succeeded with nothing to
+    /// show* (activate / open / a clipboard route) — the shell then just closes,
+    /// rather than dwelling on an empty "(no output)" screen. Otherwise None: dwell
+    /// in Result (show the reply, or stderr + recovery on failure).
+    pub fn on_run_result(&mut self, stdout: String, stderr: String, code: i32) -> Option<UiAction> {
+        let auto_close = code == 0 && stdout.trim().is_empty();
         self.run = Some(RunResult { stdout, stderr, code });
         self.stage = Stage::Result;
         self.selected = 0;
+        if auto_close {
+            Some(UiAction::Cancel)
+        } else {
+            None
+        }
     }
 
     /// In `Result`: did the verb fail (non-zero exit)?
@@ -1244,7 +1254,8 @@ mod tests {
     #[test]
     fn success_shows_the_output_and_c_copies_then_enter_closes() {
         let mut u = ran_ui();
-        u.on_run_result("Tighten the second clause.".into(), String::new(), 0);
+        // Non-empty success dwells in Result (None, no auto-close).
+        assert_eq!(u.on_run_result("Tighten the second clause.".into(), String::new(), 0), None);
         assert_eq!(u.stage, Stage::Result);
         assert!(!u.run_failed());
         assert_eq!(u.run_output().unwrap().stdout, "Tighten the second clause.");
@@ -1294,6 +1305,21 @@ mod tests {
         assert_eq!(u.apply(&KeyInput::Enter), Some(UiAction::Run)); // fire
         u.on_run_started();
         assert!(!u.armed());
+    }
+
+    #[test]
+    fn empty_output_success_auto_closes_instead_of_dwelling() {
+        // A side-effect verb (activate / open, a clipboard route) succeeds with no
+        // stdout — the dialog just closes, not a "(no output)" dwell.
+        let mut u = ran_ui();
+        assert_eq!(u.on_run_result(String::new(), String::new(), 0), Some(UiAction::Cancel));
+        // whitespace-only stdout counts as empty too.
+        let mut u = ran_ui();
+        assert_eq!(u.on_run_result("\n".into(), String::new(), 0), Some(UiAction::Cancel));
+        // but a FAILURE with empty stdout must NOT auto-close (show the error).
+        let mut u = ran_ui();
+        assert_eq!(u.on_run_result(String::new(), "boom".into(), 1), None);
+        assert_eq!(u.stage, Stage::Result);
     }
 
     #[test]
