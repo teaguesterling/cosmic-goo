@@ -93,7 +93,8 @@ A source is a place to enumerate typed items. Each source declares one primary `
 [[sources]]
 name = "things"
 prefix = "thing"               # for :thing addressing (and launcher scoping)
-icon = "applications-other"    # freedesktop icon-theme name
+icon = "applications-other"    # freedesktop icon-theme name — the compose-GUI
+                               # themes each source's entries with it
 emits = "application/vnd.my-tool.thing"
 list_cmd = "my-tool list --json"
 preview_cmd = "my-tool show {subject.id}"   # optional
@@ -337,6 +338,14 @@ The verb's prompt can then write `"{depth_prefix} the following..."` and the dis
 
 A selected value is also available verbatim as `{adverbs.<name>}`, *separately* from any `template_var` it injects. So a route can prefer an alias's expanded variable but fall back to a raw selected value — this is how the `model` adverb lets you pass either a friendly alias (`--model=fast`) or any literal id (`--model=ollama/qwen3:14b`):
 
+> **Recipe — the value-passthrough selector (the "model-adverb pattern").** This
+> three-tier fallback — alias `{model}` (a `template_var`) → raw `{adverbs.model}`
+> (whatever the user typed) → a hard default — is a reusable pattern any time you
+> want a selector that *both* offers curated aliases *and* lets a power user pass an
+> arbitrary literal through verbatim. Pair it with the **`values_cmd`** note just
+> below for live-discovered completions on top of the static aliases: completion
+> *lists* live ids, and this fallback *accepts* any id the route is handed.
+
 ```sh
 # in the route template — alias expansion wins, else the raw selected value
 alias_m={model|q}            # the chosen value's template_var (empty for a non-alias)
@@ -370,7 +379,7 @@ template_var = { model = "ollama/qwen3:8b" }
 [[adverbs]]
 name = "name"
 kind = "fill"
-applies_to_verbs = ["rename", "create-scene"]
+applies_to_verbs = ["rename", "tag"]
 prompt = "New name:"
 ```
 

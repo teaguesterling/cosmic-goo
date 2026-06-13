@@ -1,49 +1,86 @@
 # cosmic-goo
 
-> **G**rammar **O**f **O**perations — a compositional sentence layer over the COSMIC launcher.
+> **G**rammar **O**f **O**perations — a compositional sentence layer over the COSMIC desktop.
 
-cosmic-goo adds noun → verb → object composition over the COSMIC desktop, inspired by gnome-do and Quicksilver. The same plugin-driven backend powers:
+cosmic-goo lets you name a thing on your desktop — an app, a window, a file, a git repo, a
+Bluetooth device, a workspace — and say what to do with it, in one uniform **noun → verb →
+object** grammar (inspired by gnome-do and Quicksilver). **[Read the model](the-model.md)**
+for the one-page idea.
 
-- a CLI (`goo`)
-- inline composition in the COSMIC launcher (Phase 2)
-- an on-demand compose dialog (Phase 4)
+The same plugin-driven backend powers several surfaces:
 
-Plugins are TOML files declaring any combination of **types**, **sources**, **verbs**, and **adverbs**. The CLI is the canonical entry point — every UI surface eventually shells to it.
+- the **CLI** (`goo`) — the canonical entry point; every other surface shells to it
+- a **compose dialog** (`goo-compose-gui`) — a keyboard-first, gnome-do-style launcher
+  that assembles the same `goo …` sentence live
+- inline composition in the COSMIC launcher — *future* (a pop-launcher meta-plugin)
+
+Plugins are TOML files declaring any combination of **types**, **sources**, **verbs**, and
+**adverbs** — so new domains (a new kind of object, a new verb) are config, not code.
 
 ## Status
 
-**The `goo` CLI is fully usable.** 24 built-in plugins (~82 verbs, 17 sources), subject addressing with sigils + native file/URL detection, `{var|q|uri}` template filters, bash tab completion, a registry cache, and a picker-driven compose dialog — covered by ~190 tests. E.g. `goo critique "text" --via=clipboard` renders a prompt onto the clipboard; `goo activate Alacritty` focuses the app; `goo calc "2+2*10"` → `22`; `goo qr-encode https://…` draws a QR in the terminal.
+**The `goo` CLI is fully usable.** ~30 built-in plugins (~92 verbs, 21 sources, 19 types),
+subject addressing with sigils + native file/URL detection, polymorphic verbs and on-demand
+type coercion (`--explain` shows the route), `{var|q|uri}` template filters, bash tab
+completion, an entity cache, noun-first dispatch (`goo do`), action history (`goo again`),
+and the `goo-compose-gui` launcher — covered by **445 conformance tests + 251 engine unit
+tests**.
 
-Not yet shipped: the pop-launcher meta-plugin for *inline* composition in `cosmic-launcher` (Phase 2), the scenes plugin (Phase 3), and the native libcosmic compose GUI (the current dialog is a shell-driven picker). See [`docs/vision/cosmic-goo-implementation-plan.md`](https://github.com/teaguesterling/cosmic-goo/blob/main/docs/vision/cosmic-goo-implementation-plan.md) for the full plan and [`tutorial.md`](tutorial.md) to learn the CLI by example.
+```sh
+goo activate :app/firefox       # focus an app
+goo status :repo:cosmic-goo     # short git status of a repo (fuzzy-match the name)
+goo move-to :app:alacritty :ws/0:1   # move an app to a workspace
+goo summarize                   # summarise the current selection through a local model
+goo calc "2+2*10"               # → 22
+```
 
-**New here? Start with the [quickstart](quickstart.md)** — goo's core values
-(address → verb → coerce → route) in five minutes.
+Not yet shipped: the pop-launcher meta-plugin for *inline* composition in
+`cosmic-launcher`, the scenes plugin, and the libcosmic port of the compose GUI (the iced
+version ships today). See
+[`docs/vision/cosmic-goo-implementation-plan.md`](https://github.com/teaguesterling/cosmic-goo/blob/main/docs/vision/cosmic-goo-implementation-plan.md)
+for the full plan.
+
+**New here?** Read **[The model](the-model.md)**, then the **[Quickstart](quickstart.md)** —
+goo's core moves (address → verb → coerce → route) in five minutes.
 
 ## Quick taste
 
-```
-$ goo plugins
-apps — Running applications via cos-cli
-  plugins/apps.toml
-claude-routing — Routes text verbs to woollama (inference), Claude Desktop, Claude Code, or clipboard
-  plugins/claude-routing.toml
-selection — Implicit subjects from the current PRIMARY selection and clipboard
-  plugins/selection.toml
-text-verbs — Selection-aware text actions (critique, summarize, think, draft-response)
-  plugins/text-verbs.toml
+Address any kind of thing, then act on it:
 
-$ goo critique "this paragraph could be tighter" --via=clipboard
-$ wl-paste
-You are providing expert review of the following passage.
-Deduce the desired intent and tone, then critique accordingly.
+```sh
+$ goo what :repo:cosmic-goo        # what can I do with this repo?
+applicable verbs for :repo:cosmic-goo  (type: application/vnd.git.repo)
+    status      Show short status
+    pull        Pull the current branch
+    gh-pr-list  List open GitHub PRs
+    open        Open in its default application   # a repo is also a directory, so
+    reveal      Open the containing folder        # it inherits file verbs too
+    …
 
----
-this paragraph could be tighter
+$ goo status :repo:cosmic-goo      # run one
+## main...origin/main
+
+$ goo do :app/firefox              # noun-first: name the thing, see its verbs
+$ goo move-to :app/firefox :ws/0:1 # verb + subject + object
+$ goo connect :bt/headphones       # one connect verb works across bt / ssh / net
 ```
+
+Types coerce automatically — ask a JSON verb to run on a CSV and goo finds the route:
+
+```sh
+$ goo --explain json-keys data.csv
+subject: text/csv (via libmagic)
+text/csv → csv2json → application/json → (json-keys) → …
+```
+
+And text is just one more subject type — `goo summarize`, `goo upper`, `goo sha256`,
+`goo critique --model=big` (text verbs borrow the selection/clipboard when given no subject).
 
 ## Getting it running
 
-cosmic-goo's engine is now the Rust `goo` binary (the original bash engine stays alongside as the reference, installable via `make install-bash`). The Rust bin still shells out to `bash` + `jq` at runtime. Clone the repo and you're done:
+cosmic-goo's engine is the Rust `goo` binary (the original bash engine stays alongside as a
+frozen reference, installable via `make install-bash`). The Rust bin still shells out to
+`bash` + `jq` at runtime. Clone the repo and you're done:
 
 ```bash
 git clone <repo>
@@ -66,4 +103,6 @@ make install            # builds + installs the Rust binary + plugins under ~/.l
 make install-bash       # or install the bash engine instead (the reference)
 ```
 
-`make install` puts the real binary at `$PREFIX/share/cosmic-goo/bin/goo-bin` behind a thin launcher that points it at the installed plugins, and links `$PREFIX/bin/goo`. Use `PREFIX=…` to relocate; `make uninstall` removes it.
+`make install` puts the real binary at `$PREFIX/share/cosmic-goo/bin/goo-bin` behind a thin
+launcher that points it at the installed plugins, and links `$PREFIX/bin/goo`. Use
+`PREFIX=…` to relocate; `make uninstall` removes it.

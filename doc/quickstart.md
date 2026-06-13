@@ -1,12 +1,13 @@
 # goo quickstart
 
 **goo** is a *grammar of operations* for your desktop: `goo <verb> <subject>`. One
-sentence — a verb acting on a thing you address.
+sentence — a verb acting on a thing you address. (See **[The model](the-model.md)** for
+the one-page idea.)
 
 Why this isn't "a fancy way to run jq": **jq reads a file. goo operates on your
-*desktop*** — a file, yes, but also a running app, a window, the clipboard, a URL,
-your ssh hosts — with *one* grammar. Verbs adapt to whatever type the thing is (it
-**coerces**), and the result lands **wherever you point it**. Four moves:
+*desktop*** — a file, yes, but also a running app, a window, a git repo, a Bluetooth
+device, your ssh hosts — with *one* grammar. Verbs adapt to whatever type the thing is
+(it **coerces**), and the result lands **wherever you point it**. Four moves:
 
 > **address → verb → coerce → route**
 
@@ -21,48 +22,48 @@ but lacks the negotiation/coercion/routing features below — use the Rust `goo`
   the binary at the repo's plugins:
   `export COSMIC_GOO_BUILTIN_PLUGINS_DIR="$PWD/plugins"`.
 
-Every example below is real — copy-paste it.
-
 ---
 
 ## 1. Address anything (the noun)
 
-A subject is a **reference**, not just a filename. Plain text and files work:
-
-```
-$ goo upper "hello world"
-HELLO WORLD
-
-$ goo sha256 "goo"
-eeea394806ada30568999051…
-
-$ echo "from a pipe" | goo upper
-FROM A PIPE
-```
-
-…but the point is what *else* you can address — with short **sigils** for the
-things you reach for, or the full `goo://` form:
+A subject is a **reference** to any desktop thing — an app, a window, a repo, a device,
+a file, the clipboard — not just a string. You name it with a short **sigil** for the
+domain, or the full `goo://` form:
 
 | you type | is |
 |---|---|
-| `./report.md`, `~/notes.txt` | a file |
-| `^` | the clipboard |
-| `+literal text` | text, verbatim (no inference) |
-| `:apps/firefox` | the Firefox app · `goo://apps/firefox` |
-| `:ssh-hosts/prod`, `:tmux`, `:processes` | a source entity (17 sources ship) |
+| `:app/firefox` | the Firefox app · `goo://app/firefox` |
+| `:repo:goo` | a git repo (fuzzy-matched by name) |
+| `:ws/0:1` · `:win/firefox/2` | a workspace · a specific window |
+| `:bt:head` · `:ssh/prod` · `:svc/woollama` | a device · an ssh host · a service |
+| `./report.md` · `~/notes.txt` · `https://…` | a file · a URL (native shapes — no sigil) |
+| `^` · `+literal` | the clipboard · text, verbatim (no inference) |
 
-A bare subject that names an **existing file** resolves as that file — `goo
-json-keys data.json` just works. Force literal text with `+`: `goo upper +data.json`
-uppercases the string `data.json`, not the file.
+`:dom/id` is an **exact** id; `:dom:query` **fuzzy-searches** the domain. **21 sources**
+ship (apps, windows, workspaces, repos, branches, files, mounts, bluetooth, network, ssh,
+services, containers, audio sinks, tmux, processes, clipboard-history, emoji, …) — see
+[The model](the-model.md) for the full set, or `goo plugins` for what's loaded.
+
+So you operate on *things*, not just bytes:
 
 ```
-$ goo upper ^                       # uppercase whatever's on the clipboard
-$ goo activate firefox              # focus the app  (operate on a running app — jq can't)
-$ goo list processes                # a source, as JSON
-[{"id":"1","title":"systemd"}, …]
+$ goo activate :app/firefox         # focus a running app   (jq can't do this)
+$ goo switch :ws/0:1                 # switch workspace
+$ goo status :repo:cosmic-goo        # short git status of a repo
+$ goo do :app/firefox                # noun-first: name the thing, then pick a verb
 ```
 
-`goo describe <verb>` shows what a verb takes; `goo --help` lists the rest.
+Plain text and files are just other subject types — they work the same way:
+
+```
+$ goo upper "hello world"            # → HELLO WORLD
+$ echo "from a pipe" | goo upper     # text from stdin
+$ goo json-keys data.json            # a bare existing file resolves as that file
+```
+
+Force literal text with `+`: `goo upper +data.json` uppercases the *string*
+`data.json`, not the file. `goo describe <verb>` shows what a verb takes; `goo what
+<subject>` lists the verbs that apply to a thing.
 
 ## 2. Types just work (coerce)
 
@@ -93,7 +94,9 @@ goo: 415 · no route — can't route text/csv through 'json-keys' — install: m
 ```
 
 `--explain` also shows *how* goo typed the subject — `via libmagic` / `via
-extension` / `via checker`.
+extension` / `via checker`. The same coercion is why a `view` verb that wants an
+image still works on a screenshot, and a verb that 415s suggests alternatives that
+*do* accept your subject's type.
 
 ## 3. Route the result anywhere (`--to` / `-o`)
 
@@ -128,9 +131,10 @@ HELLO FROM MY PLUGIN
 $ goo shout "and route it" -o out.txt          # your verb gets coercion + routing for free
 ```
 
-A plugin can declare verbs, types, sources, and adverbs — the whole grammar is
-data. The 25 built-in plugins (~88 verbs) are just TOML shipped in the box. Full
-reference: [`plugin-authoring.md`](plugin-authoring.md).
+A plugin can declare verbs, types, **sources** (new kinds of addressable thing), and
+adverbs — the whole grammar is data. The **~30 built-in plugins (~92 verbs, 21
+sources)** are just TOML shipped in the box. Full reference:
+[`plugin-authoring.md`](plugin-authoring.md).
 
 ## 5. Instruments — *what performs* a verb (`--using`, preview)
 
@@ -150,6 +154,9 @@ without its first shipped instrument.
 - **Coercion is tool-aware.** A route may need a converter tool (`mlr`, `chafa`, …);
   if it's missing you get an `install: X` hint, and `--explain` shows the route
   regardless of what's installed.
+- **Noun-first + history.** `goo do <subject>` names the thing first; `goo again`
+  repeats your last verb+adverbs on a new subject; the `goo-compose-gui` launcher
+  builds the same sentence with type-to-filter panes.
 - **Extension-based typing is an opt-in power-up.** Point `COSMIC_GOO_MIME_DIRS` at
   the OS MIME database (e.g. `/usr/share/mime`) and goo types files by extension and
   knows the type lattice (an SVG is also text); without it, typing falls back to

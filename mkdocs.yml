@@ -33,6 +33,7 @@ theme:
 
 nav:
   - Intro: index.md
+  - The model: the-model.md
   - Quickstart: quickstart.md
   - Tutorial: tutorial.md
   - CLI reference: cli-reference.md

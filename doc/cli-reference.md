@@ -7,18 +7,74 @@ goo                                      # no args: prints this usage (a true CL
 goo <verb> [POSITIONAL ...] [--FLAG=VALUE ...]
 goo <verb> <subject> [--as TYPE] [--to DEST | -o FILE] [--using CHANNEL] [--hops N | --force]
 goo <address>                            # no verb: resolve the address, run its type's default verb
+goo do <address> [verb] [args …]         # noun-first: list a subject's verbs, or run one
+goo what <subject|=TYPE>                  # list the verbs applicable to a subject (recency-first)
+goo again [subject]                       # repeat the last verb (+adverbs) on a new subject
+goo forget                               # clear the recorded action history
+goo reload                               # drop the entity-list cache (force a fresh re-read)
 goo --explain <verb> [=TYPE|subject] …   # show the negotiation plan (route / 415) — never executes
 goo -c <file|dir> <verb> …               # merge an extra plugin config for this run (repeatable)
 goo list <source>
 goo describe <verb>
 goo plugins
 goo validate
+goo dispatch <input>                     # classify raw content and route it to a verb
 goo compose                              # build a sentence (scripted via GOO_COMPOSE_ANSWERS)
 goo options <subject|=TYPE>              # JSON: applicable verbs + their slots (discovery; unstable v1)
 goo --help | -h | help
 ```
 
 ## Subcommands
+
+### `goo do <address> [verb] [args …]`
+
+Noun-first dispatch: name the **subject** first, then optionally a verb. With **no
+verb**, it lists the verbs that apply to the subject (recency-first, the same view as
+`goo what`); with a verb, it runs it. It's a pure reorder of `goo <verb> <subject>` —
+handy when you have the thing in hand and want to see your options.
+
+```
+$ goo do :app/firefox            # name the app → see its verbs
+$ goo do :app/firefox close      # → goo close :app/firefox
+$ goo do .config.json json-keys  # → goo json-keys .config.json
+```
+
+### `goo what <subject | =TYPE>`
+
+Lists the verbs applicable to a subject, **most-recently-used first**, with destructive
+verbs flagged `[!]`. Read-only discovery — it resolves the subject's type and projects
+the verbs that accept it (including those reached by type coercion). `=TYPE` asks the
+question about a type virtually, with no real subject.
+
+```
+$ goo what :repo:cosmic-goo
+applicable verbs for :repo:cosmic-goo  (type: application/vnd.git.repo)
+    status       Show short status
+    pull  [!]    Pull the current branch
+    gh-pr-list   List open GitHub PRs
+    open         Open in its default application   # a repo is_a directory, so it
+    reveal       Open the containing folder        # inherits the file verbs too
+    …
+```
+
+### `goo again [subject]` / `goo forget`
+
+`goo again` repeats your **last verb (and its adverbs)** on a new subject — say it once,
+then aim it at the next thing. With no subject it re-runs the whole previous invocation.
+`goo forget` clears the recorded action history. History recording is off when
+`GOO_NO_HISTORY=1` is set.
+
+```
+$ goo summarize ./report.md --model=big
+$ goo again ./minutes.md          # summarize --model=big, new subject
+$ goo forget                      # clear the history
+```
+
+### `goo reload`
+
+Drops the entity-list cache, forcing a fresh re-read of source `list_cmd`s on the next
+address resolution. Use it when the desktop changed underneath a warm cache (a new app
+launched, a device paired) and a sigil isn't seeing it yet.
 
 ### `goo plugins`
 
@@ -40,7 +96,12 @@ Walks the registry and checks for structural problems:
 - adverbs missing both `applies_to` and `applies_to_verbs` scope
 - selector adverbs with no `values`
 
-Exit 0 if everything looks good; non-zero with diagnostics on stderr otherwise. Prints a one-line summary on success: `goo validate: OK (N plugins, T types, S sources, V verbs, A adverbs)`.
+Exit 0 if everything looks good; non-zero with diagnostics on stderr otherwise. Prints a one-line summary on success — for the built-in set today:
+
+```
+$ goo validate
+goo validate: OK (30 plugins, 19 types, 21 sources, 92 verbs, 5 adverbs, 2 sigils, 0 aliases, 5 channels, 0 dispatch)
+```
 
 ### `goo describe <verb>`
 
@@ -82,7 +143,15 @@ printf '%s\n' :clip: wrap dump yes > answers
 GOO_COMPOSE_ANSWERS=answers goo compose
 ```
 
-> **Interactive** picker-driven compose (auto-detecting `fuzzel`/`rofi`/`wofi`/`fzf`, `zenity` fallback; override with `GOO_PICKER`) lives in the bash engine — `bin/goo compose` — and, ahead, in the native libcosmic `goo-compose` dialog ([#39](https://github.com/teaguesterling/cosmic-goo/issues/39)). The Rust CLI stays a pure command-line tool; spawning a launcher is a GUI front-end's job, not the CLI's.
+> **Interactive** compose lives in dedicated front-ends, not the Rust CLI (which stays a
+> pure command-line tool — spawning a launcher is a GUI's job). The shipped one is
+> **`goo-compose-gui`** (iced): a keyboard-first, gnome-do/Kupfer-style launcher. Type to
+> filter a **Subject**, then a **Verb** (filtered to those that accept it), then an
+> **Object** and adverbs, watch the exact `goo …` command assemble live, then run it —
+> with the result (or a recoverable error, with retry/edit) shown in place. The bash
+> engine also keeps a picker-driven `bin/goo compose` (auto-detecting
+> `fuzzel`/`rofi`/`wofi`/`fzf`, `zenity` fallback; override with `GOO_PICKER`). A native
+> **libcosmic** port of the compose GUI is planned; the iced version ships today.
 
 ### `goo dispatch <input>`
 
@@ -157,6 +226,29 @@ A subject argument can take several forms. They all resolve through one model: e
 | `goo://dom/path` | the canonical URI directly (machines/IPC) | `goo summarize 'goo://file//abs/x.md'` |
 
 **One canonical form:** everything rewrites to `goo://<domain>/<path>[;q=<query>][?refine]`. A **value** (`goo://app/firefox`, sigil `:app/firefox`) is the **exact** id; a **search** (`goo://app/;q=firefox`, sigil `:app:firefox`) is **fuzzy** over the domain's items. Resolution is strict — the form says which you mean. The built-in **value domains** `text` / `file` / `clip` / `sel` / `stdin` / `url` cover the non-source subjects; every other domain is a `[[sources]]` entry (by `name` or `prefix`).
+
+#### The built-in domains
+
+Each `[[sources]]` plugin contributes a domain you address with `:dom/exact-id` (value) or
+`:dom:query` (fuzzy). The built-in set today:
+
+| sigil | addresses | sigil | addresses |
+|---|---|---|---|
+| `:app:` | a running app | `:bt:` | a Bluetooth device |
+| `:win:` | a window | `:net:` | a network connection |
+| `:ws:` | a workspace | `:ssh:` | an SSH host (`~/.ssh/config`) |
+| `:repo:` | a git repository | `:svc:` | a systemd user service |
+| `:br:` | a git branch | `:ctr:` | a container (docker/podman) |
+| `:file:` | a file in the cwd | `:sink:` | an audio output |
+| `:recent:` | a recently-opened file | `:tmux:` | a tmux session |
+| `:mnt:` | a mount point | `:ps:` | a process |
+| `:hist:` | a clipboard-history entry | `:emo:` | an emoji |
+| `:sel:` | the PRIMARY selection (text) | `:clip:` / `^` | the clipboard (text) |
+
+A few **id shapes** are worth knowing, because the exact (`/`) form needs the literal id:
+app ids are the app id (`:app/firefox` ✓), but **repo** ids are filesystem **paths**, so
+`:repo/cosmic-goo` won't resolve — use the fuzzy `:repo:cosmic-goo`. When unsure, fuzzy
+(`:dom:query`) is the forgiving form. `goo list <source>` dumps a domain's raw ids.
 
 Sigils are terminal shorthand (machines emit `goo://` directly). The built-ins — `:` (domained: `/`=value, `:`=search), `+` (text), `^` (clip) — use only shell-unquoted characters, so you never quote an address. Everything else is a **user alias**: a single char that expands into a goo:// form. `@` ships undefined — claim it:
 
@@ -235,21 +327,36 @@ Adverbs accumulate into a single JSON object passed to the verb dispatcher.
 
 ### Examples
 
+The grammar is one shape — `goo <verb> <subject>` — across every kind of desktop thing:
+
 ```bash
-# Render the critique prompt and copy it to the clipboard
-goo critique "this passage could use more concrete examples"
+# Apps & windows
+goo activate :app/firefox            # focus a running app (default verb — just `goo :app/firefox`)
+goo move-to :app:alacritty :ws/0:1   # verb + subject + object: move an app to a workspace
 
-# Same, but use the current PRIMARY selection as the subject
-goo critique --via=clipboard
+# Git repos & branches
+goo status :repo:cosmic-goo          # short git status (fuzzy-match the repo — its id is a path)
+goo gh-pr-list :repo:cosmic-goo      # list open GitHub PRs for the repo
+goo log :br/main                     # a branch's default verb
 
-# Multi-adverb invocation: think harder than usual, route to clipboard
-goo think "the nature of recursion" --depth=ultra --via=clipboard
+# Files & directories
+goo open ./report.pdf                # open a file in its default app
+goo tree ./doc                       # two-level listing of a directory
 
-# Activate a running app by name (handle resolution from positional)
-goo activate Firefox
+# Devices — one polymorphic verb across domains
+goo connect :bt/headphones           # pair a Bluetooth device
+goo connect :ssh/prod                # …or open an SSH session — same verb
 
-# List the items a source surfaces, for debugging
-goo list apps | jq .
+# Coercion: ask a JSON verb for a CSV; goo finds the route and takes it
+goo json-keys data.csv               # text/csv → csv2json → application/json → json-keys
+
+# Text is one more subject family (borrows the selection/clipboard with no subject)
+goo summarize ./notes.md --model=big # an LLM verb with a model adverb
+goo upper "hello"                    # a pure text util
+
+# Discovery & debugging
+goo what :sink:speakers              # what can I do with this audio output?
+goo list apps | jq .                 # raw items a source surfaces
 ```
 
 ## Presentation & coercion (the negotiation engine)
@@ -265,8 +372,9 @@ and goo plans the cheapest route through them. This is why
 goo json-keys data.csv      # json-keys accepts application/json; csv is coerced first
 ```
 
-just works — `data.csv` is routed `text/csv → [csv→json channel] → application/json`,
-then the verb runs. No matching route ⇒ a clean **`415`** (it never runs the verb
+works — `data.csv` is routed `text/csv → [csv→json channel] → application/json`,
+then the verb runs (given the channel's converter tool, here `mlr`, is installed; if it
+isn't, the 415 names it). No matching route ⇒ a clean **`415`** (it never runs the verb
 on the wrong type).
 
 ### Coercion & routing flags
