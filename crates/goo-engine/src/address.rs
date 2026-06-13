@@ -216,6 +216,24 @@ pub fn resolve(raw: &str, reg: &Value, _verb: Option<&Value>) -> Result<Value, S
             Ok(json!({ "type": "text/plain", "text": selection::clipboard() }))
         }
         "sel" | "selection" => Ok(json!({ "type": "text/plain", "text": selection::primary() })),
+        // The current working directory as a subject — a contextual/virtual
+        // subject like the selection or clipboard. Type `application/vnd.goo.cwd`
+        // (declared in the working-directory plugin); the natural home for dynamic
+        // `[[providers]]` (e.g. blq's per-project command registry). `:cwd` / `:wd`.
+        "cwd" | "wd" | "working-directory" => {
+            let p = std::env::current_dir()
+                .ok()
+                .map(|d| d.to_string_lossy().into_owned())
+                .or_else(|| std::env::var("PWD").ok())
+                .unwrap_or_default();
+            let name = p.rsplit('/').find(|s| !s.is_empty()).unwrap_or("/").to_string();
+            Ok(json!({
+                "type": "application/vnd.goo.cwd",
+                "id": p,
+                "title": name,
+                "metadata": { "path": p },
+            }))
+        }
         "stdin" => {
             let mut s = String::new();
             std::io::stdin().read_to_string(&mut s).ok();

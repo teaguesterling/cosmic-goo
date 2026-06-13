@@ -100,7 +100,7 @@ Exit 0 if everything looks good; non-zero with diagnostics on stderr otherwise. 
 
 ```
 $ goo validate
-goo validate: OK (30 plugins, 19 types, 21 sources, 92 verbs, 5 adverbs, 2 sigils, 0 aliases, 5 channels, 0 dispatch)
+goo validate: OK (31 plugins, 20 types, 21 sources, 92 verbs, 5 adverbs, 2 sigils, 0 aliases, 5 channels, 0 providers, 0 dispatch)
 ```
 
 ### `goo describe <verb>`

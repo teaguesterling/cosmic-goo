@@ -566,10 +566,14 @@ fn applicable_verbs_listing(reg: &Value, subject: &Value, max: Option<usize>) ->
     // representative — `goo describe <name>` is the right surface for
     // per-impl detail.
     let registry_verbs = reg.get("verbs").and_then(Value::as_array);
+    // Dynamic (provider) verbs aren't in reg["verbs"]; for_subject includes them
+    // (with descriptions). One extra provider list_cmd on a `what` of a
+    // provider-backed subject — acceptable; memoize only if it shows up hot.
+    let dynamic_verbs = verbs::for_subject(reg, subject);
     let description_for = |name: &str| -> Option<String> {
-        registry_verbs?
-            .iter()
-            .find(|v| v.get("name").and_then(Value::as_str) == Some(name))
+        registry_verbs
+            .and_then(|vs| vs.iter().find(|v| v.get("name").and_then(Value::as_str) == Some(name)))
+            .or_else(|| dynamic_verbs.iter().find(|v| v.get("name").and_then(Value::as_str) == Some(name)))
             .and_then(|v| v.get("description").and_then(Value::as_str))
             .map(String::from)
     };
@@ -1875,8 +1879,8 @@ fn cmd_validate() -> i32 {
     if errors == 0 {
         let n = |k: &str| arr(k).len();
         println!(
-            "goo validate: OK ({} plugins, {} types, {} sources, {} verbs, {} adverbs, {} sigils, {} aliases, {} channels, {} dispatch)",
-            n("plugins"), n("types"), n("sources"), n("verbs"), n("adverbs"), n("sigils"), n("aliases"), n("channels"), n("dispatch")
+            "goo validate: OK ({} plugins, {} types, {} sources, {} verbs, {} adverbs, {} sigils, {} aliases, {} channels, {} providers, {} dispatch)",
+            n("plugins"), n("types"), n("sources"), n("verbs"), n("adverbs"), n("sigils"), n("aliases"), n("channels"), n("providers"), n("dispatch")
         );
         0
     } else {
@@ -2405,11 +2409,42 @@ fn alias_expansion(reg: &Value, name: &str) -> Option<String> {
 
 // ---------------- verb invocation ----------------
 
+/// A dynamic (provider-supplied) verb named `verb_name`, IF the first positional
+/// is an explicit address whose subject type a `[[providers]]` entry serves.
+///
+/// The guard matters: a bare typo (`goo tset`) must still die fast with "unknown
+/// verb" — so this only fires when there are providers AND the positional is an
+/// explicit address (`address::is_explicit`), never resolving a subject or
+/// running a provider's `list_cmd` for a plain mistyped verb.
+fn dynamic_verb_for(reg: &Value, verb_name: &str, rest: &[String]) -> Option<Value> {
+    // Fast path: no providers, no dynamic verbs.
+    if reg.get("providers").and_then(Value::as_array).map(|a| a.is_empty()).unwrap_or(true) {
+        return None;
+    }
+    let (positionals, _adverbs) = parse_args(rest);
+    let addr = positionals.first()?;
+    if addr.is_empty() || !address::is_explicit(addr, reg) {
+        return None;
+    }
+    let subject = address::resolve(addr, reg, None).ok()?;
+    verbs::for_subject(reg, &subject).into_iter().find(|v| {
+        v.get("name").and_then(Value::as_str) == Some(verb_name)
+            && v.get("dynamic").and_then(Value::as_bool).unwrap_or(false)
+    })
+}
+
 fn cmd_verb(reg: &Value, args: &[String]) -> i32 {
     let verb_name = &args[0];
     let verb = match verbs::lookup(reg, verb_name, None) {
         Some(v) => v,
-        None => return die(format!("unknown verb or subcommand: {verb_name} (try 'goo plugins')")),
+        // Not a static verb — it may be a dynamic one a `[[providers]]` entry
+        // contributes for the subject's type (e.g. blq's commands on :cwd). This
+        // is the verb-first path (`goo tiers :cwd`); `goo do :cwd tiers` also
+        // reorders through here.
+        None => match dynamic_verb_for(reg, verb_name, &args[1..]) {
+            Some(v) => v,
+            None => return die(format!("unknown verb or subcommand: {verb_name} (try 'goo plugins')")),
+        },
     };
 
     // Capture piped stdin once (a TTY means interactive use — no piped subject).

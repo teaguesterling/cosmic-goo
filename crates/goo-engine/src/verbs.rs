@@ -255,7 +255,81 @@ pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
     // Re-emit in original registry order so consumers see a stable picker list.
     let mut kept: Vec<(usize, Value)> = best.values().map(|(_, i)| (*i, verbs[*i].clone())).collect();
     kept.sort_by_key(|(i, _)| *i);
-    kept.into_iter().map(|(_, v)| v).collect()
+    let mut out: Vec<Value> = kept.into_iter().map(|(_, v)| v).collect();
+
+    // Dynamic verbs contributed by `[[providers]]` (e.g. blq's per-cwd command
+    // registry). Appended after the static verbs, which WIN on a name collision —
+    // a provider can't shadow a built-in. The fast path returns empty unless a
+    // provider's `for_type` matches this subject, so only subjects like `:cwd` pay.
+    let have: std::collections::HashSet<String> = out
+        .iter()
+        .filter_map(|v| v.get("name").and_then(Value::as_str).map(String::from))
+        .collect();
+    for pv in provider_verbs_for(reg, subject) {
+        match pv.get("name").and_then(Value::as_str) {
+            Some(name) if !have.contains(name) => out.push(pv),
+            _ => {} // collision with a static verb (or nameless) — static wins
+        }
+    }
+    out
+}
+
+/// Dynamic verbs contributed by `[[providers]]` whose `for_type` matches the
+/// subject's type. IMPURE: runs each matching provider's `list_cmd` to enumerate
+/// `[{name, description}]`, synthesizing one verb per entry with the provider's
+/// `run` template as its `cmd` (so `{verb.name}` resolves at render time, since
+/// `build_context` puts the synthesized verb into the substitution context).
+///
+/// Graceful by contract — this runs during verb *listing* (`what`/`do`/OPTIONS/
+/// completion/compose). A provider whose `list_cmd` fails, whose tool is absent,
+/// or that emits non-JSON yields no verbs; it must never break the listing. The
+/// hot path costs nothing unless `reg["providers"]` is non-empty AND the subject
+/// type matches a provider's `for_type` (gated by `is_subtype` before any exec).
+pub fn provider_verbs_for(reg: &Value, subject: &Value) -> Vec<Value> {
+    let providers = match reg.get("providers").and_then(Value::as_array) {
+        Some(p) if !p.is_empty() => p,
+        _ => return Vec::new(), // fast path: no providers declared
+    };
+    let stype = match subject.get("type").and_then(Value::as_str) {
+        Some(s) if !s.is_empty() => s,
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for prov in providers {
+        let for_type = prov.get("for_type").and_then(Value::as_str).unwrap_or("");
+        if for_type.is_empty() || !mime::is_subtype(stype, for_type, reg) {
+            continue;
+        }
+        let list_cmd = prov.get("list_cmd").and_then(Value::as_str).unwrap_or("");
+        let run = prov.get("run").and_then(Value::as_str).unwrap_or("");
+        if list_cmd.is_empty() || run.is_empty() {
+            continue;
+        }
+        // Enumerate verb stubs. Non-zero exit / non-JSON / non-array → no verbs.
+        let stubs = match serde_json::from_str::<Value>(bash_stdout(list_cmd).trim()) {
+            Ok(Value::Array(a)) => a,
+            _ => continue,
+        };
+        let confirm = prov.get("confirm").and_then(Value::as_bool).unwrap_or(false);
+        let pname = prov.get("name").and_then(Value::as_str).unwrap_or("");
+        for stub in stubs {
+            let name = match stub.get("name").and_then(Value::as_str) {
+                Some(n) if !n.is_empty() => n,
+                _ => continue,
+            };
+            let desc = stub.get("description").and_then(Value::as_str).unwrap_or("");
+            out.push(json!({
+                "name": name,
+                "description": desc,
+                "accepts": [for_type],
+                "cmd": run,
+                "confirm": confirm,
+                "dynamic": true,
+                "provider": pname,
+            }));
+        }
+    }
+    out
 }
 
 /// A fully-rendered command, ready for `bash -c`. `confirm` mirrors the verb's
@@ -1133,5 +1207,78 @@ template_var = { depth_prefix = "Ultrathink about" }
     fn false_and_null_are_not_truthy() {
         assert!(!satisfies(".nope", &json!({"text": "x"}))); // null
         assert!(!satisfies(r#".text == "other""#, &json!({"text": "x"}))); // false
+    }
+
+    // ---------------- dynamic verb providers ----------------
+
+    fn reg_with_provider(list_cmd: &str) -> Value {
+        json!({
+            "verbs": [],
+            "types": [{ "name": "application/vnd.goo.cwd", "kind": "handle" }],
+            "providers": [{
+                "name": "fix",
+                "for_type": "application/vnd.goo.cwd",
+                "list_cmd": list_cmd,
+                "run": "echo ran-{verb.name}",
+            }],
+        })
+    }
+
+    #[test]
+    fn provider_verbs_synthesized_with_run_template_and_for_type() {
+        let reg = reg_with_provider(
+            r#"printf '[{"name":"foo","description":"d-foo"},{"name":"bar","description":"d-bar"}]'"#,
+        );
+        let subject = json!({ "type": "application/vnd.goo.cwd", "id": "/x" });
+        let v = provider_verbs_for(&reg, &subject);
+        let names: Vec<&str> = v.iter().filter_map(|x| x["name"].as_str()).collect();
+        assert_eq!(names, ["foo", "bar"]);
+        // Each carries the provider's run template as cmd, the for_type as accepts,
+        // and the dynamic marker — render substitutes {verb.name} from context.
+        assert_eq!(v[0]["cmd"], json!("echo ran-{verb.name}"));
+        assert_eq!(v[0]["accepts"], json!(["application/vnd.goo.cwd"]));
+        assert_eq!(v[0]["dynamic"], json!(true));
+        assert_eq!(v[0]["description"], json!("d-foo"));
+    }
+
+    #[test]
+    fn provider_does_not_fire_for_non_matching_type() {
+        let reg = reg_with_provider(r#"printf '[{"name":"foo"}]'"#);
+        // A text subject: for_type is application/vnd.goo.cwd, so no exec, no verbs.
+        let v = provider_verbs_for(&reg, &json!({ "type": "text/plain", "text": "hi" }));
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn provider_failure_is_graceful() {
+        let subject = json!({ "type": "application/vnd.goo.cwd", "id": "/x" });
+        // Non-zero exit, non-JSON, and non-array each yield no verbs (never panics).
+        for cmd in ["exit 1", "echo not-json", r#"printf '{"name":"x"}'"#] {
+            let reg = reg_with_provider(cmd);
+            assert!(provider_verbs_for(&reg, &subject).is_empty(), "cmd: {cmd}");
+        }
+    }
+
+    #[test]
+    fn for_subject_appends_provider_verbs_static_wins_collision() {
+        // A static verb `foo` plus a provider that also offers `foo` and a new `bar`.
+        let mut reg = reg_with_provider(
+            r#"printf '[{"name":"foo","description":"dyn"},{"name":"bar"}]'"#,
+        );
+        reg["verbs"] = json!([{
+            "name": "foo",
+            "accepts": ["application/vnd.goo.cwd"],
+            "description": "static",
+            "cmd": "true",
+        }]);
+        let subject = json!({ "type": "application/vnd.goo.cwd", "id": "/x" });
+        let got = for_subject(&reg, &subject);
+        let names: Vec<&str> = got.iter().filter_map(|v| v["name"].as_str()).collect();
+        assert!(names.contains(&"foo"));
+        assert!(names.contains(&"bar")); // the new dynamic verb is appended
+        // The kept `foo` is the STATIC one (provider can't shadow a built-in).
+        let foo = got.iter().find(|v| v["name"] == json!("foo")).unwrap();
+        assert_eq!(foo["description"], json!("static"));
+        assert!(foo.get("dynamic").is_none());
     }
 }

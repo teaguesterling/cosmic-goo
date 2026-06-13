@@ -1,0 +1,26 @@
+name = "blq-provider"
+description = "Surface blq's per-project registered commands (.bird) as dynamic goo verbs on :cwd"
+
+# A dynamic verb provider. At verb-listing time goo runs `list_cmd` and turns each
+# emitted {name, description} into a verb on any subject whose type matches
+# `for_type` — here the working directory (:cwd). So whatever you've registered
+# with `blq commands register …` in this project's .bird shows up as a goo verb:
+#
+#   goo -c doc/examples/blq.toml do :cwd          # list blq's commands as verbs
+#   goo -c doc/examples/blq.toml do :cwd test     # run it (== blq run test), captured
+#
+# list_cmd must emit a JSON array of {name, description}. It runs in your cwd, so
+# it reads this project's .bird. If blq is absent, .bird isn't initialized, or the
+# command errors, it emits nothing and :cwd simply has no provider verbs — the
+# listing never breaks. `run` is the template for a chosen verb.
+#
+# SECURITY: {verb.name|q} — ALWAYS shell-quote an interpolated verb name. The name
+# comes from a project-local registry (.bird); without |q a command named
+# `x;rm -rf ~` would inject when the synthesized cmd runs via bash. The |q filter
+# (shell-quote) neutralizes it — blq still sees the same single argument.
+
+[[providers]]
+name = "blq"
+for_type = "application/vnd.goo.cwd"
+list_cmd = "blq commands list --json | jq -c 'to_entries | map({name: .key, description: .value.description})'"
+run = "blq run {verb.name|q}"

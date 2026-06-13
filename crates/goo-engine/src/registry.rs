@@ -21,7 +21,7 @@ use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-const COLLECTIONS_BY_NAME: &[&str] = &["types", "sources", "verbs", "adverbs", "aliases", "channels", "detectors", "checkers"];
+const COLLECTIONS_BY_NAME: &[&str] = &["types", "sources", "verbs", "adverbs", "aliases", "channels", "detectors", "checkers", "providers"];
 
 /// Plugin search dirs, lowest → highest precedence (later wins on name clash).
 pub fn dirs() -> Vec<PathBuf> {
@@ -147,6 +147,7 @@ pub fn contrib(file: &Path, dir: &Path, parsed: &Value) -> Value {
         "channels": with_provenance("channels"),
         "detectors": with_provenance("detectors"),
         "checkers": with_provenance("checkers"),
+        "providers": with_provenance("providers"),
         "dispatch": with_provenance("dispatch"),
     })
 }
@@ -155,7 +156,7 @@ fn empty_registry() -> Value {
     json!({
         "plugins": [], "types": [], "sources": [], "verbs": [],
         "adverbs": [], "sigils": [], "aliases": [], "channels": [],
-        "detectors": [], "checkers": [], "dispatch": []
+        "detectors": [], "checkers": [], "providers": [], "dispatch": []
     })
 }
 

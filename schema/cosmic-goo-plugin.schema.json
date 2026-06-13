@@ -19,7 +19,8 @@
     "aliases": { "type": "array", "items": { "$ref": "#/$defs/alias" } },
     "dispatch": { "type": "array", "items": { "$ref": "#/$defs/dispatch" } },
     "detectors": { "type": "array", "items": { "type": "object" }, "description": "Content detectors (\"what is this?\"). Declared+validated, but the cmd runner is still in progress — see design/detection.md." },
-    "checkers": { "type": "array", "items": { "type": "object" }, "description": "Content checkers (\"is this usable as type X?\"). Only the built-in json checker executes today — see design/detection.md." }
+    "checkers": { "type": "array", "items": { "type": "object" }, "description": "Content checkers (\"is this usable as type X?\"). Only the built-in json checker executes today — see design/detection.md." },
+    "providers": { "type": "array", "items": { "$ref": "#/$defs/provider" } }
   },
   "$defs": {
     "mimePattern": {
@@ -122,6 +123,20 @@
         "tool": { "type": "string", "description": "A PATH binary the cmd needs; the planner routes around it if absent, or 415s with install: <tool>." },
         "requires": { "type": "array", "items": { "type": "string" }, "description": "Environment capabilities that gate it, e.g. [\"display\"]." },
         "cmd": { "type": "string", "description": "Conversion command; reads {in.path}, writes result to stdout." }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "for_type", "list_cmd", "run"],
+      "description": "A dynamic verb provider: at verb-listing time, run list_cmd to enumerate verbs for any subject whose type matches for_type, synthesizing one verb per emitted {name, description}. Used to surface an external tool's command registry (e.g. blq) as goo verbs on a subject like :cwd. See doc/design/dynamic-verb-providers.md.",
+      "properties": {
+        "name": { "type": "string", "description": "Provider id (unique; later plugins override by name)." },
+        "for_type": { "$ref": "#/$defs/mimePattern", "description": "The subject type these dynamic verbs attach to (subtype-aware). Keep it specific (e.g. application/vnd.goo.cwd), not a glob — every matching subject pays a list_cmd exec when its verbs are listed." },
+        "list_cmd": { "type": "string", "description": "Shell command emitting a JSON array of verb stubs: [{\"name\": \"...\", \"description\": \"...\"}, …]. Runs in the user's cwd. Non-zero exit or non-JSON yields no verbs (graceful) — it must never break verb listing." },
+        "run": { "type": "string", "description": "Command template for a chosen dynamic verb; the synthesized verb's cmd. {verb.name} (and {subject.*}) substitute at run time, e.g. \"blq run {verb.name}\"." },
+        "confirm": { "type": "boolean", "description": "Mark synthesized verbs as needing confirmation (default false)." },
+        "description": { "type": "string" }
       }
     },
     "sigil": {

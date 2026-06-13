@@ -44,3 +44,9 @@ SESSION-LOG.md
 
 # Claude Code scheduled-tasks lock (runtime state)
 .claude/scheduled_tasks.lock
+
+# blq
+.bird/*
+!.bird/hooks/
+!.bird/config.toml
+!.bird/commands.toml

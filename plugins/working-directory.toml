@@ -1,0 +1,14 @@
+name = "working-directory"
+tier = "core"
+description = "The current working directory as an addressable subject (:cwd) — the natural home for dynamic verb providers"
+
+# The `:cwd` / `:wd` subject itself is produced by the engine's built-in `cwd`
+# domain (address.rs, alongside :sel and ^clip — all contextual subjects). This
+# plugin just declares its type so it has a display name and can carry verbs:
+# either static verbs that accept it, or dynamic ones from a [[providers]] entry
+# whose `for_type` is this type (see doc/examples/blq.toml).
+
+[[types]]
+name = "application/vnd.goo.cwd"
+display = "working directory"
+kind = "handle"
