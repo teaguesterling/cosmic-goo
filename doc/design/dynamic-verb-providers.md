@@ -116,10 +116,54 @@ absent from the listing and invoking it is `unknown verb`; a `description` of
 `$(touch …)` reaches the cmd as nothing. Quoting an interpolated value remains
 good belt-and-suspenders hygiene, but it is no longer what makes this safe.
 
-> Out of scope (general, not provider-specific): a `description` is still
-> *displayed* untrusted — like any source's `list_cmd` titles — so terminal
-> escape sequences in it are a separate, lower-severity display concern shared by
-> every dynamic listing, not a shell-injection vector.
+### Terminal display of untrusted text
+
+A `description` (and any source/provider-derived title, id, or a rendered cmd that
+interpolates them) is still *shown* in a terminal surface: the verb listing, the
+confirm prompt, the ambiguous-subject picker, and the implicit-subject snippet
+(which previews untrusted clipboard / PRIMARY content). That text is untrusted
+too: a raw ANSI escape, an OSC title-set, or a CR/LF could recolor the terminal,
+rewrite its title, or spoof other listing lines. This is the same class of bug one
+interpreter over (the terminal, not the shell), so untrusted text is run through
+`display_safe` (`main.rs`) — which strips all Unicode control characters (C0, DEL,
+C1) and keeps printable text — at each of goo's human-readable display surfaces:
+the verb listing, the confirm prompt (`subject:`/`runs:`/`about to`), the
+ambiguous-subject picker, and the implicit-subject snippet (clipboard / PRIMARY
+preview). Machine output (`goo list`, `goo options`) stays JSON — already
+control-char-escaped — so it's unaffected.
+
+A note on the boundary, because it's a real asymmetry: the shell-injection
+guarantee above is **by construction** (name validation + template-namespace
+restriction — a malicious value can't exist or can't reach the cmd). Display
+safety is **by enumeration** — we sanitize at each call site. That's inherently
+more fragile; the only by-construction display fix is a typed untrusted-string
+wrapper that *can't* be printed without sanitizing, which is future work. Two
+surfaces are deliberately not covered today and are honest about it:
+
+- **`goo --explain --explain-with shell`** renders the would-be commands with
+  subject *paths* baked in (a filename can contain control bytes on Linux), but it
+  also interleaves goo's *own* ANSI color, so a blanket strip would break the
+  coloring. The surgical fix — sanitize the interpolated path inside the renderer
+  — is future work; until then this debug surface can echo a hostile path's
+  control bytes.
+- **`goo __complete` candidates** are insert-values (the shell inserts the chosen
+  id literally), not display strings — sanitizing would change the value. A
+  control char in a completable id is already an unusable id; a display-vs-insert
+  split is a separate concern.
+
+Excluded for cause (not gaps): MIME/route type names (libmagic/registry —
+controlled vocabulary), plugin/verb descriptions in `describe`/`plugins`
+(author-trusted, like a verb's `cmd`), and a verb name echoed in an
+`unknown verb` error (the user's own argv).
+
+Negative tests: `tests/integration/display-safety.bats` (a hostile description and
+subject) plus `display_safe`/`implicit_snippet` unit tests.
+
+One surface is deliberately left raw: `goo __complete …` candidates are
+*insert-values* (the shell inserts the chosen id literally), not display strings —
+sanitizing them would change the value, so the id must pass through unaltered. A
+control char in a completable id is already an unusable id; hardening that path
+(a display-vs-insert split) is a separate concern from goo's own terminal output.
 
 ## Generalizes
 

@@ -263,7 +263,10 @@ fn emit_medium_picker(raw: &str, reason: &inference::Reason) {
     eprintln!("goo: '{raw}' is ambiguous — pick one:");
     for (i, (src, id, label)) in reason.alternatives.iter().enumerate() {
         // 1-indexed for human readability; pad address column for alignment.
-        let addr = format!(":{src}/{id}");
+        // id/label are source-item data (a window title, a repo name) — untrusted;
+        // sanitize for the terminal. `src` is the author-defined source prefix.
+        let addr = format!(":{src}/{}", display_safe(id));
+        let label = display_safe(label);
         eprintln!("  {n}) {addr:<32}  {label}", n = i + 1, addr = addr, label = label);
     }
     let extra = reason.candidate_count.saturating_sub(reason.alternatives.len());
@@ -551,6 +554,18 @@ fn recent_applicable_verbs(reg: &Value, subject: &Value, type_: &str, n: usize) 
 /// `    <name>  <chips>    <description>` (4-space indent, chips after name,
 /// chips suffix in `goo describe` style so future zsh/fish ports can match
 /// glyphs verbatim).
+/// Strip control characters from untrusted text before showing it in a TERMINAL
+/// surface (a verb listing, the confirm prompt). Source- and provider-derived
+/// strings — verb descriptions, subject titles/ids, a rendered cmd that
+/// interpolates them — are not author-controlled: an ANSI escape (`\x1b[…`), an
+/// OSC title-set, or a raw CR/LF could recolor the terminal, rewrite its title,
+/// or spoof other lines of the listing. We drop every Unicode control char (C0,
+/// DEL, C1) and keep all printable text. Machine output (`goo list`, `goo
+/// options`) stays JSON, which already escapes these, so it is unaffected.
+fn display_safe(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
 fn applicable_verbs_listing(reg: &Value, subject: &Value, max: Option<usize>) -> (String, usize) {
     let view = options::options_for(reg, subject);
     let names: Vec<&str> = view
@@ -595,7 +610,10 @@ fn applicable_verbs_listing(reg: &Value, subject: &Value, max: Option<usize>) ->
         } else {
             ""
         };
-        let desc = description_for(name).unwrap_or_default();
+        // Description is untrusted free text for a dynamic (provider) verb —
+        // sanitize before it reaches the terminal (the name is already a
+        // validated identifier).
+        let desc = display_safe(&description_for(name).unwrap_or_default());
         let sep = if desc.is_empty() { "" } else { "    " };
         lines.push(format!("    {name}{chip}{sep}{desc}"));
     }
@@ -1467,13 +1485,16 @@ fn exec_verb_impl(
             } else {
                 " [!]"
             };
-            let what = verb.get("description").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(verb_name);
+            // All three lines interpolate untrusted, source/provider-derived text
+            // (a verb description, the subject's title/id/text, and a cmd that
+            // bakes them in) — sanitize each for the terminal.
+            let what = display_safe(verb.get("description").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(verb_name));
             eprintln!("goo: about to {what}{chip}");
-            let label = confirm_subject_label(subject);
+            let label = display_safe(&confirm_subject_label(subject));
             if !label.is_empty() {
                 eprintln!("       subject: {label}");
             }
-            eprintln!("       runs: {}", rendered.cmd);
+            eprintln!("       runs: {}", display_safe(&rendered.cmd));
             eprint!("     proceed? [y/N] ");
             let mut ans = String::new();
             std::io::stdin().read_line(&mut ans).ok();
@@ -2541,7 +2562,12 @@ fn maybe_emit_implicit_nudge(src: ImplicitSource, text: &str) {
 /// collapsed to single spaces, trimmed, ellipsis appended when truncated.
 fn implicit_snippet(text: &str) -> String {
     const MAX: usize = 40;
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    // The implicit subject is the clipboard / PRIMARY selection — untrusted
+    // external content (copy from a hostile page → ESC in the buffer). Strip
+    // control chars first; ESC isn't whitespace, so the collapse below won't.
+    // Done here so every caller (the run-time nudge, the completion preview) is
+    // covered at one point. See display_safe.
+    let collapsed = display_safe(text).split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() > MAX {
         let head: String = collapsed.chars().take(MAX).collect();
         format!("{head}…")
@@ -2769,4 +2795,47 @@ fn implicit_source_item(reg: &Value, verb: &Value) -> Option<Value> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_safe, implicit_snippet};
+
+    // The implicit-subject snippet shows untrusted clipboard/PRIMARY content (the
+    // run-time nudge, the completion preview). Its output must be control-char-free
+    // — ESC isn't whitespace, so the snippet's collapse wouldn't drop it on its own.
+    #[test]
+    fn implicit_snippet_strips_control_chars_from_untrusted_selection() {
+        let esc = char::from(27);
+        let out = implicit_snippet(&format!("{esc}]0;PWN hello world"));
+        assert!(!out.contains(esc));
+        assert!(out.contains("hello world"));
+        assert!(!out.chars().any(|c| c.is_control()));
+    }
+
+    // Control bytes are built from codepoints (chr 27/7/13/10) so no raw control
+    // char lives in this source file.
+    #[test]
+    fn display_safe_strips_ansi_and_osc_escapes_keeps_printable() {
+        let esc = char::from(27);
+        let bel = char::from(7);
+        let s = format!("{esc}[31mRED{esc}]0;PWN{bel}tail");
+        let out = display_safe(&s);
+        assert_eq!(out, "[31mRED]0;PWNtail");
+        assert!(!out.contains(esc) && !out.contains(bel));
+    }
+
+    #[test]
+    fn display_safe_strips_cr_lf_so_a_value_cannot_spoof_extra_lines() {
+        let cr = char::from(13);
+        let lf = char::from(10);
+        let out = display_safe(&format!("ok{cr}{lf}    fake-verb   spoofed"));
+        assert!(!out.contains(cr) && !out.contains(lf));
+        assert_eq!(out, "ok    fake-verb   spoofed");
+    }
+
+    #[test]
+    fn display_safe_keeps_printable_unicode() {
+        assert_eq!(display_safe("héllo · wörld ✓ 日本語"), "héllo · wörld ✓ 日本語");
+    }
 }
