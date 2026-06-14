@@ -80,26 +80,46 @@ $ goo test :cwd                               # verb-first works too
   dynamic verb is only reachable noun-first (`goo do :cwd list`). Names are
   runtime, so this can't be validated at load — it's a documented hazard.
 
-## Security: quote interpolated names
+## Security: names are validated, so injection is impossible by construction
 
-A synthesized verb's `cmd` is the provider's `run` template, run via `bash -c`.
-The verb **name** is attacker-influenced data — it comes from a project-local
+A synthesized verb's `cmd` is the provider's `run` template, run via `bash -c`,
+and the verb **name** is attacker-influenced data — it comes from a project-local
 registry (e.g. `.bird/commands.toml`), and goo's whole pitch is pointing at *any*
-directory. So a `run` template **must shell-quote** any interpolated name:
+directory. So the name could carry shell syntax.
 
-```toml
-run = "blq run {verb.name|q}"   # |q is mandatory — NOT {verb.name}
-```
+The fix is structural, not a quoting convention. Two complementary rules close
+**every** path by which a provider's runtime output could reach the bash-run cmd:
 
-Without `|q`, a command named `x;rm -rf ~` injects when the cmd runs. With `|q`
-the name is passed as a single shell-quoted argument (the underlying tool sees the
-same value). The conformance suite proves both directions (`tests/integration/
-providers.bats`): a name like `a;touch pwned` creates no file under `|q`.
+**1. A verb name must be a shell-neutral identifier** (`verbs::is_valid_verb_name`
+— starts alphanumeric, then alphanumerics or `-_.:/+`; no whitespace, no bash
+metacharacter). The same rule applies everywhere a verb name appears:
 
-**Follow-up (not yet built):** the engine relies on the *author* remembering `|q`.
-Harden it engine-side — either reject names containing shell metacharacters at
-synthesis time, or pass dynamic arguments via argv instead of shell-interpolating
-them — so a forgotten `|q` can't be exploited. Tracked as a hardening task.
+- **Dynamic (provider) names** are filtered at synthesis — a stub named
+  `a;rm -rf ~` is dropped and never becomes a verb, so it can't reach the cmd.
+- **Static names** are rejected by `goo validate` with the same rule (a plugin
+  can't ship a sloppy name either).
+
+**2. A dynamic verb exposes only its `name` to the template.** `description` (and
+any other stub field) is untrusted free text from the same registry as the name,
+and *cannot* be charset-restricted — it's prose. So `build_context` gives a
+dynamic verb's cmd template a `verb` object containing **only the validated
+`name`**: `{verb.description}` and friends resolve to empty, never the stub value.
+(Static verbs still expose all their author-trusted custom fields, e.g.
+`{verb.fabric_pattern}`.) The description is still shown in the *listing* — it's
+display-only, never templated.
+
+Because no invalid name exists and no other field reaches the template,
+`{verb.name}` can't carry an injection and `{verb.description}` resolves empty —
+**with or without `|q`**. The conformance suite proves both with *unquoted* run
+templates (`tests/integration/providers.bats`): a hostile `a;touch pwned` name is
+absent from the listing and invoking it is `unknown verb`; a `description` of
+`$(touch …)` reaches the cmd as nothing. Quoting an interpolated value remains
+good belt-and-suspenders hygiene, but it is no longer what makes this safe.
+
+> Out of scope (general, not provider-specific): a `description` is still
+> *displayed* untrusted — like any source's `list_cmd` titles — so terminal
+> escape sequences in it are a separate, lower-severity display concern shared by
+> every dynamic listing, not a shell-injection vector.
 
 ## Generalizes
 

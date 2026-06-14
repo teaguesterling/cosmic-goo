@@ -14,10 +14,11 @@ description = "Surface blq's per-project registered commands (.bird) as dynamic 
 # command errors, it emits nothing and :cwd simply has no provider verbs — the
 # listing never breaks. `run` is the template for a chosen verb.
 #
-# SECURITY: {verb.name|q} — ALWAYS shell-quote an interpolated verb name. The name
-# comes from a project-local registry (.bird); without |q a command named
-# `x;rm -rf ~` would inject when the synthesized cmd runs via bash. The |q filter
-# (shell-quote) neutralizes it — blq still sees the same single argument.
+# SECURITY: a verb name is a shell-neutral identifier by rule — the engine drops
+# any provider-supplied name that isn't (so a command named `x;rm -rf ~` in a
+# project's .bird never becomes a verb and can't reach this bash-run cmd).
+# Injection is impossible by construction, not by remembering to quote. The |q on
+# {verb.name} below is belt-and-suspenders, not the guarantee.
 
 [[providers]]
 name = "blq"

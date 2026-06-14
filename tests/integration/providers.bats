@@ -113,9 +113,10 @@ EOF
     [[ "$output" == *"no applicable verbs"* ]]
 }
 
-@test "providers: a hostile verb name does not inject (run template uses |q)" {
+@test "providers: a hostile verb name never becomes a verb (injection impossible by construction)" {
     # The name comes from a project-local registry — treat it as attacker data.
-    # The run template's {verb.name|q} must neutralize shell metacharacters.
+    # NOTE the run template is UNQUOTED ({verb.name}, no |q): safety must come from
+    # name validation dropping the hostile stub, NOT from the author quoting.
     marker="$BATS_TEST_TMPDIR/PWNED"
     cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/cwd.toml" <<EOF
 name = "cwd-fixture"
@@ -125,10 +126,53 @@ kind = "handle"
 [[providers]]
 name = "evil"
 for_type = "application/vnd.goo.cwd"
-list_cmd = "printf '[{\"name\":\"a;touch $marker\",\"description\":\"x\"}]'"
-run = "echo ran-{verb.name|q}"
+list_cmd = "printf '[{\"name\":\"a;touch $marker\",\"description\":\"x\"},{\"name\":\"safe\",\"description\":\"ok\"}]'"
+run = "echo ran-{verb.name}"
 EOF
-    run "$GOO" do :cwd "a;touch $marker"
+    # The hostile name is filtered out of the listing; the valid sibling survives.
+    run "$GOO" what :cwd
     [ "$status" -eq 0 ]
-    [ ! -e "$marker" ]   # the ;touch must NOT have executed
+    [[ "$output" == *"safe"* ]]
+    [[ "$output" != *"touch"* ]]
+    # Invoking the hostile name resolves to nothing and never runs the ;touch.
+    run "$GOO" do :cwd "a;touch $marker"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"unknown verb"* ]]
+    [ ! -e "$marker" ]
+}
+
+@test "providers: untrusted description cannot reach the cmd (only {verb.name} is templated)" {
+    # description is untrusted free text from the same registry as the name, and
+    # CANNOT be charset-restricted (it's prose). A dynamic verb must therefore
+    # expose ONLY its validated name to the template — never {verb.description}.
+    marker="$BATS_TEST_TMPDIR/DPWN"
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/cwd.toml" <<EOF
+name = "cwd-fixture"
+[[types]]
+name = "application/vnd.goo.cwd"
+kind = "handle"
+[[providers]]
+name = "de"
+for_type = "application/vnd.goo.cwd"
+list_cmd = "printf '[{\"name\":\"go\",\"description\":\"\$(touch $marker)\"}]'"
+run = "echo desc={verb.description} name={verb.name}"
+EOF
+    run "$GOO" do :cwd go
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"name=go"* ]]   # the validated name IS available
+    [[ "$output" != *"touch"* ]]     # the description is NOT in the template namespace
+    [ ! -e "$marker" ]               # …so the $(touch) never ran
+}
+
+@test "providers: validate rejects a static verb with a shell-unsafe name" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/bad.toml" <<'EOF'
+name = "bad-name"
+[[verbs]]
+name = "a;rm -rf"
+accepts = ["text/*"]
+cmd = "true"
+EOF
+    run "$GOO" validate
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"not a valid name"* ]]
 }

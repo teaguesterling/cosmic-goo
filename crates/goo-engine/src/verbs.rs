@@ -285,6 +285,24 @@ pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
 /// or that emits non-JSON yields no verbs; it must never break the listing. The
 /// hot path costs nothing unless `reg["providers"]` is non-empty AND the subject
 /// type matches a provider's `for_type` (gated by `is_subtype` before any exec).
+/// A verb name must be a shell-neutral identifier. A verb name becomes a CLI
+/// subcommand token AND can be interpolated into a verb's `cmd` (which runs via
+/// `bash -c`). Constraining the charset means a name can never carry shell syntax
+/// — so `{verb.name}` is injection-proof *by construction*, not by the author
+/// remembering `|q`. Enforced for static names at `goo validate` and for dynamic
+/// (provider-supplied, attacker-influenced) names at synthesis.
+///
+/// Rule: non-empty, starts alphanumeric, then alphanumerics or `-_.:/+` (covers
+/// real command names — make targets, `npm`-style `build:prod`, etc. — while
+/// excluding whitespace and every bash metacharacter).
+pub fn is_valid_verb_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    if !matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/' | '+'))
+}
+
 pub fn provider_verbs_for(reg: &Value, subject: &Value) -> Vec<Value> {
     let providers = match reg.get("providers").and_then(Value::as_array) {
         Some(p) if !p.is_empty() => p,
@@ -314,7 +332,11 @@ pub fn provider_verbs_for(reg: &Value, subject: &Value) -> Vec<Value> {
         let pname = prov.get("name").and_then(Value::as_str).unwrap_or("");
         for stub in stubs {
             let name = match stub.get("name").and_then(Value::as_str) {
-                Some(n) if !n.is_empty() => n,
+                // Reject any name that isn't a shell-neutral identifier — an
+                // attacker-supplied name like `a;rm -rf ~` never becomes a verb,
+                // so it can't reach the bash-rendered cmd. Injection is impossible
+                // here regardless of whether the `run` template uses |q.
+                Some(n) if is_valid_verb_name(n) => n,
                 _ => continue,
             };
             let desc = stub.get("description").and_then(Value::as_str).unwrap_or("");
@@ -404,10 +426,22 @@ pub fn render(
 fn build_context(reg: &Value, verb: &Value, subject: &Value, object: &Value, user_adverbs: &Value) -> (Value, Value) {
     let resolved = adverbs::resolve(reg, verb, user_adverbs);
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    // A dynamic (provider) verb's non-`name` fields — `description` above all — are
+    // untrusted free text from the same project-local registry as the name. The
+    // name is validated to a shell-neutral identifier; description is prose and
+    // CANNOT be. So a dynamic verb exposes ONLY its validated `name` to the
+    // template — never a field that could smuggle shell syntax into the cmd
+    // (closing `{verb.description}` as an injection vector). Static verbs expose
+    // all their author-trusted custom fields (e.g. {verb.fabric_pattern}) as before.
+    let verb_ctx = if verb.get("dynamic").and_then(Value::as_bool).unwrap_or(false) {
+        json!({ "name": verb.get("name").cloned().unwrap_or(Value::Null) })
+    } else {
+        verb.clone()
+    };
     let mut context = json!({
         "subject": subject,
         "object": object,
-        "verb": verb,
+        "verb": verb_ctx,
         "adverbs": resolved["selected"],
         "cwd": cwd,
     });
@@ -1239,6 +1273,30 @@ template_var = { depth_prefix = "Ultrathink about" }
         assert_eq!(v[0]["accepts"], json!(["application/vnd.goo.cwd"]));
         assert_eq!(v[0]["dynamic"], json!(true));
         assert_eq!(v[0]["description"], json!("d-foo"));
+    }
+
+    #[test]
+    fn verb_name_validity_rule() {
+        for ok in ["test", "build-bash", "json-pretty", "build:prod", "a.b", "v2", "x/y", "c++"] {
+            assert!(is_valid_verb_name(ok), "{ok} should be valid");
+        }
+        for bad in [
+            "", "-leading", "/leading", "a;b", "a b", "a|b", "a$b", "a`b", "rm -rf ~",
+            "a&b", "a>b", "a*b", "a(b", "a\nb", "a'b",
+        ] {
+            assert!(!is_valid_verb_name(bad), "{bad:?} should be invalid");
+        }
+    }
+
+    #[test]
+    fn provider_drops_unsafe_names() {
+        // A hostile name never becomes a verb — so it can't reach the bash cmd,
+        // with or without |q in the run template.
+        let reg = reg_with_provider(r#"printf '[{"name":"a;touch pwned"},{"name":"ok"}]'"#);
+        let subject = json!({ "type": "application/vnd.goo.cwd", "id": "/x" });
+        let v = provider_verbs_for(&reg, &subject);
+        let names: Vec<&str> = v.iter().filter_map(|x| x["name"].as_str()).collect();
+        assert_eq!(names, ["ok"]);
     }
 
     #[test]

@@ -1761,15 +1761,23 @@ fn cmd_validate() -> i32 {
         "options", "what", "-h", "--help",
     ];
 
-    // 1. Verbs: a declared accept pattern list can't contain empty strings.
+    // 1. Verbs: a declared accept pattern list can't contain empty strings, and
+    // the name must be a shell-neutral identifier (same rule provider-supplied
+    // dynamic names are filtered by — a verb name can be interpolated into a
+    // bash-run cmd, so it must never carry shell syntax).
     for v in arr("verbs") {
+        let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("");
         let has_empty = v
             .get("accepts")
             .and_then(|a| a.as_array())
             .map(|a| a.iter().any(|p| p.as_str() == Some("")))
             .unwrap_or(false);
         if has_empty {
-            err(format!("verb \"{}\" has an empty accept pattern", v.get("name").and_then(|n| n.as_str()).unwrap_or("")));
+            err(format!("verb \"{name}\" has an empty accept pattern"));
+            errors += 1;
+        }
+        if !verbs::is_valid_verb_name(name) {
+            err(format!("verb \"{name}\" is not a valid name (must start alphanumeric, then alphanumerics or -_.:/+ — no shell metacharacters)"));
             errors += 1;
         }
     }
