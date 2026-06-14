@@ -1210,6 +1210,14 @@ fn render_shell(plan: &negotiation::Plan, verb: &Value, reg: &Value, subj_path: 
 /// `{subject.text}` for a virtual subject) is left literal rather than blanked.
 fn substitute_subject(cmd: &str, subj_path: Option<&str>) -> String {
     let Some(p) = subj_path else { return cmd.to_string() };
+    // Display only — this feeds `--explain --explain-with shell`, never execution
+    // (the real run renders through the engine). A filename can carry control
+    // bytes on Linux, so strip them before baking the path into the shown command;
+    // otherwise a hostile path smuggles a terminal escape into `--explain` output.
+    // (render_route/render_paths_text add goo's own ANSI color but interpolate no
+    // untrusted data, so the strip stays here, on the one untrusted value.)
+    let p = display_safe(p);
+    let p = p.as_str();
     let q = format!("'{}'", p.replace('\'', "'\\''"));
     cmd.replace("{in.path|q}", &q)
         .replace("{in.path}", p)

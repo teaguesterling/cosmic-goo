@@ -45,6 +45,24 @@ EOF
     ! has_esc "$output"                  # …but no raw ESC reaches the terminal
 }
 
+@test "display: --explain --explain-with shell sanitizes a hostile filename in the shown command" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/catf.toml" <<'EOF'
+name = "catf"
+[[verbs]]
+name = "catf"
+accepts = ["text/*"]
+cmd = "cat {subject.metadata.path|q}"
+EOF
+    # A real file whose NAME carries a raw ESC byte (Linux allows it); its path is
+    # baked into the command shown by --explain.
+    f="$BATS_TEST_TMPDIR/$(awk 'BEGIN{printf "f%cesc.txt", 27}')"
+    printf 'hi\n' > "$f"
+    run "$GOO" --explain catf "$f" --explain-with shell
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"fesc.txt"* ]]   # printable part of the path is shown…
+    ! has_esc "$output"               # …with no raw ESC baked into the command
+}
+
 @test "display: an untrusted subject (title/text + rendered cmd) is sanitized in the confirm prompt" {
     cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/cf.toml" <<'EOF'
 name = "cf-esc"
