@@ -128,42 +128,54 @@ interpreter over (the terminal, not the shell), so untrusted text is run through
 `display_safe` (`main.rs`) — which strips all Unicode control characters (C0, DEL,
 C1) and keeps printable text — at each of goo's human-readable display surfaces:
 the verb listing, the confirm prompt (`subject:`/`runs:`/`about to`), the
-ambiguous-subject picker, and the implicit-subject snippet (clipboard / PRIMARY
-preview). Machine output (`goo list`, `goo options`) stays JSON — already
+ambiguous-subject picker, the implicit-subject snippet (clipboard / PRIMARY
+preview), and the `--explain --explain-with shell` command view (the subject path
+baked into the shown command, sanitized in `substitute_subject` — display-only;
+the real run renders through the engine, and the colored route renderers carry
+only controlled type/verb names, so the strip stays on the one untrusted value).
+Machine output (`goo list`, `goo options`) stays JSON — already
 control-char-escaped — so it's unaffected.
 
-A note on the boundary, because it's a real asymmetry: the shell-injection
-guarantee above is **by construction** (name validation + template-namespace
-restriction — a malicious value can't exist or can't reach the cmd). Display
-safety is **by enumeration** — we sanitize at each call site. That's inherently
-more fragile; the only by-construction display fix is a typed untrusted-string
-wrapper that *can't* be printed without sanitizing, which is future work. Two
-surfaces are deliberately not covered today and are honest about it:
+Excluded for cause (not gaps): `goo __complete` candidates are insert-values (the
+shell inserts the chosen id literally), not display strings — sanitizing would
+change the value, and a control char in a completable id is an unusable id anyway.
+MIME/route type names are libmagic/registry-derived (controlled vocabulary);
+plugin/verb descriptions in `describe`/`plugins` are author-trusted (like a verb's
+`cmd`); and a verb name echoed in an `unknown verb` error is the user's own argv.
 
-- **`goo --explain --explain-with shell`** renders the would-be commands with
-  subject *paths* baked in (a filename can contain control bytes on Linux), but it
-  also interleaves goo's *own* ANSI color, so a blanket strip would break the
-  coloring. The surgical fix — sanitize the interpolated path inside the renderer
-  — is future work; until then this debug surface can echo a hostile path's
-  control bytes.
-- **`goo __complete` candidates** are insert-values (the shell inserts the chosen
-  id literally), not display strings — sanitizing would change the value. A
-  control char in a completable id is already an unusable id; a display-vs-insert
-  split is a separate concern.
+Negative tests: `tests/integration/display-safety.bats` (a hostile description, an
+escape-laden subject, and a hostile filename in `--explain`) plus
+`display_safe`/`implicit_snippet` unit tests.
 
-Excluded for cause (not gaps): MIME/route type names (libmagic/registry —
-controlled vocabulary), plugin/verb descriptions in `describe`/`plugins`
-(author-trusted, like a verb's `cmd`), and a verb name echoed in an
-`unknown verb` error (the user's own argv).
+### Why display safety is by enumeration, not by construction (deferred: typed wrapper)
 
-Negative tests: `tests/integration/display-safety.bats` (a hostile description and
-subject) plus `display_safe`/`implicit_snippet` unit tests.
+The shell-injection guarantee above is **by construction** — a malicious value
+can't exist (name validation) or can't reach the cmd (template-namespace
+restriction). Display safety is **by enumeration**: we sanitize at each call site,
+which is inherently more fragile (a *future* print site could forget
+`display_safe`). The by-construction analogue would be a `Tainted<String>` newtype
+that can't be `Display`'d without sanitizing. It is **deliberately deferred**, for
+two reasons:
 
-One surface is deliberately left raw: `goo __complete …` candidates are
-*insert-values* (the shell inserts the chosen id literally), not display strings —
-sanitizing them would change the value, so the id must pass through unaltered. A
-control char in a completable id is already an unusable id; hardening that path
-(a display-vs-insert split) is a separate concern from goo's own terminal output.
+1. **Severity.** Display-escape injection is spoofing/cosmetic (recolor, retitle,
+   a misleading listing line) — not code execution. The one surface where it could
+   actually escalate (overwriting the confirm prompt's `subject:`/`runs:` to trick
+   approval of a destructive verb on a different subject) is already sanitized.
+   After the enumeration above, what remains is *future* regressions, not a present
+   hole.
+2. **It only works if it's total.** Provenance is erased at the
+   `bash_stdout`→`serde_json` boundary: an untrusted `list_cmd` title and a trusted
+   static verb description both land as `Value::String` in the same structures,
+   read by the same `as_str()` used for addressing and `|q` templating. A taint
+   newtype delivers "can't print unsanitized" only if the Value type is split *by
+   provenance* (dynamic-source subjects vs static registry data) all the way
+   through `resolve`/`load_all` — a large, architecture-defining refactor. Any
+   cheaper partial (tainting a few accessors) degenerates back to enumeration with
+   extra ceremony.
+
+So the honest done-state for this class is **complete enumeration + this documented
+residual**, not a wrapper. Revisit only if a threat model weights terminal-spoofing
+high enough to justify the total refactor.
 
 ## Generalizes
 
