@@ -199,4 +199,38 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stdout), payload);
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    // A subject-aware provider `list_cmd` flows through substitute() (like
+    // `object_list_cmd`), so a `list_cmd` that pipes to jq must survive intact.
+    // jq's *explicit* object construction (`{name: .key, …}`) is safe: the path
+    // matcher stops at the `:` (not in the path charset), fails the trailing
+    // `}` check, and emits a literal brace — the program passes through verbatim.
+    #[test]
+    fn jq_object_construction_survives_so_provider_list_cmds_are_not_mangled() {
+        let subj = json!({ "subject": { "id": "/tmp/x" } });
+        // The exact shapes shipped today: blq.toml and the display-safety fixture.
+        let blq = "jq -c 'to_entries | map({name: .key, description: .value.description})'";
+        assert_eq!(substitute(blq, &subj), blq);
+        let fixture = r#"jq -Rsc '[{name:"go",description:.}]'"#;
+        assert_eq!(substitute(fixture, &subj), fixture);
+        // …while a real `{subject.id|q}` token in the same command still renders.
+        let mixed = "ls {subject.id|q} | jq -Rsc '[{name:.,description:.}]'";
+        assert_eq!(
+            substitute(mixed, &subj),
+            "ls '/tmp/x' | jq -Rsc '[{name:.,description:.}]'"
+        );
+    }
+
+    // KNOWN COLLISION (documented hazard, not a bug to fix here): jq's *shorthand*
+    // object construction `{name}` (== `{name: .name}`) IS a valid placeholder
+    // token, so it renders to empty. A subject-aware `list_cmd` (or any cmd piped
+    // to jq) must use the explicit `{name: .name}` form. Pinning it so the
+    // behavior is intentional and visible, matching the same hazard `object_list_cmd`
+    // already carries.
+    #[test]
+    fn jq_shorthand_object_construction_collides_with_placeholder_grammar() {
+        let subj = json!({ "subject": { "id": "/tmp/x" } });
+        // `{name}` has no top-level binding → empty; this is the trap to avoid.
+        assert_eq!(substitute("jq '{name}'", &subj), "jq ''");
+    }
 }

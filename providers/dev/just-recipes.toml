@@ -1,0 +1,21 @@
+name = "just-recipes-provider"
+description = "just recipes in the current directory's justfile as dynamic verbs on :cwd"
+
+# AMBIENT (:cwd) provider, like make-targets — the other classic command-runner.
+# `just --dump --dump-format json` emits the parsed justfile; we project each
+# recipe to {name, description} (the recipe's doc-comment, if any). Runs in cwd,
+# so it reads ./justfile. No just / no justfile → no verbs (graceful).
+#
+#   goo -c providers/dev/just-recipes.toml do :cwd          # list recipes
+#   goo -c providers/dev/just-recipes.toml do :cwd build    # == just build
+#
+# A recipe taking parameters still lists; `just <name>` runs its default form.
+
+[[providers]]
+name = "just"
+for_type = "application/vnd.goo.cwd"
+list_cmd = '''
+just --dump --dump-format json 2>/dev/null \
+  | jq -c '.recipes | to_entries | map({name: .key, description: (.value.doc // "")})'
+'''
+run = "just {verb.name|q}"

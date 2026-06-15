@@ -1,0 +1,24 @@
+name = "make-targets-provider"
+description = "Self-documenting Makefile targets as dynamic verbs on :cwd"
+
+# AMBIENT (:cwd) provider — the simplest shape. `list_cmd` runs in your working
+# directory and parses ./Makefile; no {subject.*} because the directory IS the
+# context. Targets using the common self-documenting convention
+# `target: ## description` are listed with their description; the description is
+# display-only (never templated). No Makefile, or no `##` targets → no verbs.
+#
+#   goo -c providers/core-linux/make-targets.toml do :cwd        # list targets
+#   goo -c providers/core-linux/make-targets.toml do :cwd test   # == make test
+#
+# A target whose name isn't a shell-neutral identifier is dropped at synthesis
+# (it could never be a safe verb token). `{verb.name|q}` is belt-and-suspenders:
+# the name is already validated, so it can't carry shell syntax.
+
+[[providers]]
+name = "make"
+for_type = "application/vnd.goo.cwd"
+list_cmd = '''
+awk -F':.*##' '/^[a-zA-Z0-9][^:= ]*:.*##/ { name=$1; desc=$2; sub(/^[ \t]+/,"",desc); printf "%s\t%s\n", name, desc }' Makefile 2>/dev/null \
+  | jq -Rsc 'split("\n") | map(select(length>0) | split("\t") | {name: .[0], description: .[1]})'
+'''
+run = "make {verb.name|q}"

@@ -1,0 +1,25 @@
+name = "git-branch-log-provider"
+description = "Each local branch of a git repo becomes a 'log this branch' verb"
+
+# PER-SUBJECT provider, bounded `for_type`. The verb list comes from THIS repo:
+# list_cmd is subject-substituted, so it enumerates the branches of the specific
+# repository the subject points at. Different repo → different branches → different
+# verbs. `for_type = application/vnd.git.repo` keeps it bounded (only repo subjects
+# pay the exec).
+#
+#   goo -c providers/git/branch-log.toml do :repo:cosmic-goo        # branches as verbs
+#   goo -c providers/git/branch-log.toml do :repo:cosmic-goo main   # git log of `main`
+#
+# Read-only by design (`git log`), so no confirm gate. A branch name is a valid
+# verb identifier (slashes like `feature/x` are allowed); `{verb.name|q}` quotes
+# it into the command, and `{subject.metadata.path|q}` quotes the repo path —
+# both reach `bash -c`, so both are shell-quoted.
+
+[[providers]]
+name = "branch-log"
+for_type = "application/vnd.git.repo"
+list_cmd = '''
+git -C {subject.metadata.path|q} for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null \
+  | jq -Rsc 'split("\n") | map(select(length>0) | {name: ., description: ("log " + .)})'
+'''
+run = "git -C {subject.metadata.path|q} log --oneline --decorate -20 {verb.name|q}"

@@ -40,7 +40,7 @@ $ goo test :cwd                               # verb-first works too
 |---|---|
 | `name` | Provider id (unique; later plugins override by name). |
 | `for_type` | The subject type the dynamic verbs attach to (subtype-aware via `is_subtype`). Keep it **specific** — every matching subject pays a `list_cmd` exec when its verbs are listed. Don't use a broad glob. |
-| `list_cmd` | Shell command emitting a JSON array of `{name, description}`. Runs in the user's cwd. |
+| `list_cmd` | Shell command emitting a JSON array of `{name, description}`. Runs in the user's cwd, and is **subject-substituted** (`{subject.metadata.path\|q}` etc., like `object_list_cmd`) — so the verb list can depend on the *specific* subject (a file's columns, a repo's branches), not just its type. Ambient providers (`:cwd`) simply use no `{subject.*}` token. |
 | `run` | Command template for a chosen verb — becomes the synthesized verb's `cmd`. `{verb.name}` (and `{subject.*}`) substitute at run time. |
 | `confirm` | Optional; marks synthesized verbs as needing confirmation. |
 
@@ -53,6 +53,18 @@ $ goo test :cwd                               # verb-first works too
   cmd:<run>, dynamic:true, provider:<name>}`. Because `build_context` puts the
   verb into the substitution context, `{verb.name}` in `run` resolves with no
   template-engine change.
+- **Subject-aware `list_cmd`.** `provider_verbs_for` renders `list_cmd` through
+  `template::substitute` against `{subject}` before running it (the same path as
+  `object_list_cmd`), so a provider can enumerate verbs from the *specific*
+  subject — `read_csv_auto({subject.metadata.path|q})` for a CSV's columns, `git
+  -C {subject.metadata.path|q} for-each-ref` for a repo's branches — not just key
+  off the subject's type. An ambient `:cwd` provider has no `{subject.*}` token,
+  so it renders unchanged. Subject fields reach `bash -c`, so untrusted ones are
+  `|q`-quoted by the template author, exactly as at every other subject-into-shell
+  site (a missing `|q` is the same class of bug there as in a verb's `cmd`). One
+  template caveat: a `list_cmd` piped to `jq` must use explicit object
+  construction (`{name: .name}`); jq's shorthand `{name}` collides with the
+  `{placeholder}` grammar and renders empty (a `template.rs` test pins both).
 - **The `:cwd` subject** is an engine built-in (`address.rs`), a contextual
   subject like `:sel` / `^clip` — `goo://cwd/`. Its type
   `application/vnd.goo.cwd` is declared by the `working-directory` core plugin.
@@ -186,5 +198,17 @@ code-review concern, not a type-system one.
 blq is one provider. The same primitive turns any command registry into a goo
 verb namespace on the right subject — `make` targets, `npm`/`pnpm` scripts, `just`
 recipes, `cargo` aliases — each a `[[providers]]` entry with a `for_type` and a
-`list_cmd`. Only blq ships as a worked example (`doc/examples/blq.toml`); core
-stays free of third-party deps.
+`list_cmd`. core stays free of third-party deps, so none ship installed.
+
+A starter collection lives in [`providers/`](https://github.com/teaguesterling/cosmic-goo/tree/main/providers),
+organized by the tool each needs (the same dep-tier logic as the plugin tiers):
+`make-targets` and `just-recipes` (ambient, on `:cwd`), `column-profile` (DuckDB —
+a CSV's columns become profiling verbs) and `branch-log` (a repo's branches become
+log verbs) — the last two exercising the subject-aware `list_cmd`. Load one with
+`-c providers/<tier>/<name>.toml`. Its `README.md` records the design rules these
+examples teach (the `|q` quoting convention, keeping `for_type` specific) and the
+honest gaps a larger collection will hit first: no listing cache yet, the
+listing-vs-run path-resolution asymmetry for bare relative paths, and the absence
+of a universal "file" supertype (which is what an `xdg`-tier "open with" provider
+is waiting on). Intended to graduate to a versioned sidecar repo once the contract
+proves out across more tiers.

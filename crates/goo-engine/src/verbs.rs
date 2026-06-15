@@ -280,6 +280,12 @@ pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
 /// `run` template as its `cmd` (so `{verb.name}` resolves at render time, since
 /// `build_context` puts the synthesized verb into the substitution context).
 ///
+/// The `list_cmd` is subject-substituted before it runs (like `object_list_cmd`),
+/// so a provider can enumerate verbs from the *specific* subject (e.g. a file's
+/// MIME handlers) — not just ambient context (`:cwd`). Subject fields reach
+/// `bash -c`, so untrusted ones must be `|q`-quoted in the template, the same
+/// convention as every other subject-into-shell site.
+///
 /// Graceful by contract — this runs during verb *listing* (`what`/`do`/OPTIONS/
 /// completion/compose). A provider whose `list_cmd` fails, whose tool is absent,
 /// or that emits non-JSON yields no verbs; it must never break the listing. The
@@ -323,8 +329,16 @@ pub fn provider_verbs_for(reg: &Value, subject: &Value) -> Vec<Value> {
         if list_cmd.is_empty() || run.is_empty() {
             continue;
         }
+        // Subject-substitute the list_cmd before running it (mirrors
+        // `object_list_cmd`), so a per-subject provider can enumerate verbs from
+        // the specific subject — e.g. `xdg-mime query filetype {subject.id|q}`.
+        // Untrusted subject fields (a filename can carry shell metacharacters)
+        // are the author's to neutralize with `|q`, exactly as everywhere else a
+        // subject reaches `bash -c`; an ambient list_cmd with no `{subject.*}`
+        // token renders unchanged, so existing `:cwd` providers are unaffected.
+        let rendered_list = template::substitute(list_cmd, &json!({ "subject": subject }));
         // Enumerate verb stubs. Non-zero exit / non-JSON / non-array → no verbs.
-        let stubs = match serde_json::from_str::<Value>(bash_stdout(list_cmd).trim()) {
+        let stubs = match serde_json::from_str::<Value>(bash_stdout(&rendered_list).trim()) {
             Ok(Value::Array(a)) => a,
             _ => continue,
         };
@@ -1338,5 +1352,39 @@ template_var = { depth_prefix = "Ultrathink about" }
         let foo = got.iter().find(|v| v["name"] == json!("foo")).unwrap();
         assert_eq!(foo["description"], json!("static"));
         assert!(foo.get("dynamic").is_none());
+    }
+
+    #[test]
+    fn provider_list_cmd_sees_the_subject() {
+        // The new capability: list_cmd is subject-substituted, so a per-subject
+        // provider enumerates verbs from THIS subject — here the description
+        // reflects the specific subject's id, not just ambient context.
+        let reg = reg_with_provider(
+            r#"printf '[{"name":"go","description":"opens {subject.id}"}]'"#,
+        );
+        let subject = json!({ "type": "application/vnd.goo.cwd", "id": "report.pdf" });
+        let v = provider_verbs_for(&reg, &subject);
+        assert_eq!(v[0]["description"], json!("opens report.pdf"));
+    }
+
+    #[test]
+    fn provider_list_cmd_subject_field_is_shell_safe_with_q() {
+        // Subject fields now reach bash via list_cmd — a filename can carry shell
+        // metacharacters, so `{subject.id|q}` must neutralize them. This is the
+        // list_cmd analogue of the run-template injection tests: with |q a hostile
+        // id can't execute, and the provider still yields its verbs.
+        let dir = std::env::temp_dir().join(format!("goo-prov-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("pwned");
+        let payload = format!("a; touch {}", marker.display());
+        let subject = json!({ "type": "application/vnd.goo.cwd", "id": payload });
+        let reg = reg_with_provider(
+            r#"echo {subject.id|q} >/dev/null; printf '[{"name":"go","description":"d"}]'"#,
+        );
+        let v = provider_verbs_for(&reg, &subject);
+        assert!(!marker.exists(), "subject-field injection executed via list_cmd!");
+        let names: Vec<&str> = v.iter().filter_map(|x| x["name"].as_str()).collect();
+        assert_eq!(names, ["go"]);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

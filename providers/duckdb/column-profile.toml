@@ -1,0 +1,33 @@
+name = "duckdb-column-profile-provider"
+description = "Each column of a CSV becomes a 'profile this column' verb (DuckDB)"
+
+# PER-SUBJECT provider, bounded `for_type`. The verb list comes from THIS file:
+# list_cmd is subject-substituted, so DuckDB describes the specific CSV and emits
+# one verb per column. Different CSV → different verbs. `for_type = text/csv`
+# keeps the cost bounded — only CSV subjects pay the exec (contrast open-with).
+#
+#   goo -c providers/duckdb/column-profile.toml do data.csv        # columns as verbs
+#   goo -c providers/duckdb/column-profile.toml do data.csv age    # value counts for `age`
+#
+# QUOTING: the path is passed through the environment (`GOO_CSV`) and read with
+# DuckDB's getenv(), NOT interpolated into the SQL string. `{...|q}` produces a
+# POSIX *single-quoted* word — safe standalone, but it would break if embedded
+# inside a double-quoted `-c "…"` when a filename contains a double quote. The
+# env hop sidesteps that nested-quoting trap entirely.
+#
+# `{verb.name}` is a validated identifier (no quotes/space/`;`), so dropping it
+# into the SQL as a double-quoted identifier (`"…"`) can't carry SQL injection —
+# the same by-construction property that protects the shell `run` cmd. A column
+# whose name isn't a valid identifier (e.g. `first name`) is skipped at synthesis.
+
+[[providers]]
+name = "column-profile"
+for_type = "text/csv"
+list_cmd = '''
+export GOO_CSV={subject.metadata.path|q}
+duckdb -json -c "SELECT column_name AS name, 'profile '||column_name||' ('||column_type||')' AS description FROM (DESCRIBE SELECT * FROM read_csv_auto(getenv('GOO_CSV')))" 2>/dev/null
+'''
+run = '''
+export GOO_CSV={subject.metadata.path|q}
+duckdb -box -c "SELECT \"{verb.name}\" AS value, count(*) AS n FROM read_csv_auto(getenv('GOO_CSV')) GROUP BY 1 ORDER BY n DESC LIMIT 20"
+'''
