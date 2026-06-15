@@ -19,7 +19,7 @@ Plugins are TOML files declaring any combination of **types**, **sources**, **ve
 
 ## Status
 
-**The `goo` CLI is fully usable.** ~30 built-in plugins (~92 verbs, 21 sources, 19 types),
+**The `goo` CLI is fully usable.** ~30 built-in plugins (~92 verbs, 21 sources, 20 types),
 subject addressing with sigils + native file/URL detection, polymorphic verbs and on-demand
 type coercion (`--explain` shows the route), `{var|q|uri}` template filters, bash tab
 completion, an entity cache, noun-first dispatch (`goo do`), action history (`goo again`),

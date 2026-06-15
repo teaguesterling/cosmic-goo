@@ -11,17 +11,17 @@ no separate forks.
   a **frozen reference**, installable via `make install-bash`. The Rust bin still
   shells to `bash` + `jq` at runtime, so the runtime deps are the same. The engine
   has zero COSMIC dependency — COSMIC is just the `cosmic` plugin tier.
-- **plugins** — the data layer, each tagged with a `tier`. **30 plugins ship**
-  (29 TOML files + the embedded `core` declarations). The complete tiering:
+- **plugins** — the data layer, each tagged with a `tier`. **31 plugins ship**
+  (30 TOML files + the embedded `core` declarations). The complete tiering:
 
 | tier | needs | plugins |
 |---|---|---|
-| **core** | bash + jq + coreutils (headless / SSH-friendly) | `calculator` `containers` `content` `git` `processes` `sigils` `ssh-hosts` `text-utilities` `tmux` `core`¹ |
+| **core** | bash + jq + coreutils (headless / SSH-friendly) | `calculator` `containers` `content` `git` `processes` `sigils` `ssh-hosts` `text-utilities` `tmux` `working-directory` `core`¹ |
 | **desktop** | freedesktop / Wayland / PipeWire (any compositor) | `audio` `bluetooth` `claude-routing` `clipboard-history` `emoji` `files` `media` `mounts` `network` `notifications` `power` `presentation` `recent` `screenshots` `selection` `services` `text-verbs` `urls` |
 | **cosmic** | `cos-cli` / COSMIC | `apps` `workspaces` |
 
 ¹ `core` is embedded in the binary (`include_str!`'d, seeded before discovered
-plugins) — it's always present and not install-selectable; the other 29 are TOML
+plugins) — it's always present and not install-selectable; the other 30 are TOML
 files filtered by tier at install time.
 
 `goo validate` checks any declared `tier` is one of `core`/`desktop`/`cosmic`.

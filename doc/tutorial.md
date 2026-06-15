@@ -252,7 +252,7 @@ editing:
 
 ```
 $ goo validate
-goo validate: OK (30 plugins, 19 types, 21 sources, 92 verbs, 5 adverbs, …)
+goo validate: OK (31 plugins, 20 types, 21 sources, 92 verbs, 5 adverbs, …)
 ```
 
 ---
