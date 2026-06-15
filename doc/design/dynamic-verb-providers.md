@@ -124,9 +124,10 @@ confirm prompt, the ambiguous-subject picker, and the implicit-subject snippet
 (which previews untrusted clipboard / PRIMARY content). That text is untrusted
 too: a raw ANSI escape, an OSC title-set, or a CR/LF could recolor the terminal,
 rewrite its title, or spoof other listing lines. This is the same class of bug one
-interpreter over (the terminal, not the shell), so untrusted text is run through
-`display_safe` (`main.rs`) — which strips all Unicode control characters (C0, DEL,
-C1) and keeps printable text — at each of goo's human-readable display surfaces:
+interpreter over (the terminal, not the shell), so untrusted text is carried as
+`Tainted` and emitted via `.sanitized()` (`crates/goo/src/untrusted.rs`) — which
+strips all Unicode control characters (C0, DEL, C1) and keeps printable text — at
+each of goo's human-readable display surfaces:
 the verb listing, the confirm prompt (`subject:`/`runs:`/`about to`), the
 ambiguous-subject picker, the implicit-subject snippet (clipboard / PRIMARY
 preview), and the `--explain --explain-with shell` command view (the subject path
@@ -144,38 +145,41 @@ plugin/verb descriptions in `describe`/`plugins` are author-trusted (like a verb
 `cmd`); and a verb name echoed in an `unknown verb` error is the user's own argv.
 
 Negative tests: `tests/integration/display-safety.bats` (a hostile description, an
-escape-laden subject, and a hostile filename in `--explain`) plus
-`display_safe`/`implicit_snippet` unit tests.
+escape-laden subject, and a hostile filename in `--explain`) plus the
+`Tainted`/`DisplayView`/`implicit_snippet` unit tests.
 
-### Why display safety is by enumeration, not by construction (deferred: typed wrapper)
+### Display safety via the type system (`Tainted` / `DisplayView`)
 
-The shell-injection guarantee above is **by construction** — a malicious value
-can't exist (name validation) or can't reach the cmd (template-namespace
-restriction). Display safety is **by enumeration**: we sanitize at each call site,
-which is inherently more fragile (a *future* print site could forget
-`display_safe`). The by-construction analogue would be a `Tainted<String>` newtype
-that can't be `Display`'d without sanitizing. It is **deliberately deferred**, for
-two reasons:
+The shell-injection guarantee above is **by construction**; terminal display now
+has the same shape, so we no longer audit every `println!` for "did I sanitize?".
 
-1. **Severity.** Display-escape injection is spoofing/cosmetic (recolor, retitle,
-   a misleading listing line) — not code execution. The one surface where it could
-   actually escalate (overwriting the confirm prompt's `subject:`/`runs:` to trick
-   approval of a destructive verb on a different subject) is already sanitized.
-   After the enumeration above, what remains is *future* regressions, not a present
-   hole.
-2. **It only works if it's total.** Provenance is erased at the
-   `bash_stdout`→`serde_json` boundary: an untrusted `list_cmd` title and a trusted
-   static verb description both land as `Value::String` in the same structures,
-   read by the same `as_str()` used for addressing and `|q` templating. A taint
-   newtype delivers "can't print unsanitized" only if the Value type is split *by
-   provenance* (dynamic-source subjects vs static registry data) all the way
-   through `resolve`/`load_all` — a large, architecture-defining refactor. Any
-   cheaper partial (tainting a few accessors) degenerates back to enumeration with
-   extra ceremony.
+`Tainted` (`crates/goo/src/untrusted.rs`) wraps an untrusted string and has **no
+`Display` impl** — it cannot be `format!("{}", …)`'d. The only ways out are
+`.sanitized()` (control chars stripped, terminal-safe) and `.expose()` (the raw
+bytes, explicit, for a *functional* use like addressing — never the terminal).
+`DisplayView` is a lens over a subject/verb `Value` whose accessors
+(`.id()` / `.title()` / `.text()` / `.description()`) return `Tainted`. A function
+written against `DisplayView`/`Tainted` physically has no raw field to print, so a
+forgotten sanitize is a **compile error**, not a runtime escape. Every untrusted
+display site (the verb listing, the confirm prompt, `confirm_subject_label`, the
+ambiguous picker, the implicit snippet, the `--explain` path) flows its untrusted
+strings as `Tainted`; `Debug` is redacted too, so `{:?}` can't leak either.
 
-So the honest done-state for this class is **complete enumeration + this documented
-residual**, not a wrapper. Revisit only if a threat model weights terminal-spoofing
-high enough to justify the total refactor.
+This collapses the class from "N print sites to remember, forever" — which is
+exactly what kept springing leaks — to "one bridge plus a handful of accessors."
+
+**The honest ceiling** — this is a *strong default*, not *absolute*. The bin still
+holds the underlying `Value` for dispatch (the engine needs it), so a future call
+site *can* reach past the lens — `subject.get("title")?.as_str()` — and print that;
+that still compiles. What the types buy: the least-resistance path is the safe one,
+any bypass is a visible `Value::as_str()` sitting in display code (greppable, loud
+in review), and every function built on `DisplayView`/`Tainted` is fully closed.
+Absolute would require the engine to abandon `Value` — but the engine never
+*prints* (it consumes untrusted strings through `|q`), so that refactor would spend
+its whole regression budget on code that doesn't display. `Tainted`/`DisplayView`
+live in the bin; the engine is untouched. The point is mitigating untrusted
+*input*, intentional or accidental — a future dev with the raw `Value` in hand is a
+code-review concern, not a type-system one.
 
 ## Generalizes
 

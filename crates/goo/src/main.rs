@@ -14,6 +14,9 @@ use goo_engine::{
 use serde_json::{json, Map, Value};
 use std::io::IsTerminal;
 
+mod untrusted;
+use untrusted::{DisplayView, Tainted};
+
 fn main() {
     reset_sigpipe();
     let raw: Vec<String> = std::env::args().skip(1).collect();
@@ -264,10 +267,12 @@ fn emit_medium_picker(raw: &str, reason: &inference::Reason) {
     for (i, (src, id, label)) in reason.alternatives.iter().enumerate() {
         // 1-indexed for human readability; pad address column for alignment.
         // id/label are source-item data (a window title, a repo name) — untrusted;
-        // sanitize for the terminal. `src` is the author-defined source prefix.
-        let addr = format!(":{src}/{}", display_safe(id));
-        let label = display_safe(label);
-        eprintln!("  {n}) {addr:<32}  {label}", n = i + 1, addr = addr, label = label);
+        // shadow the raw &str with Tainted so only the sanitized form can be
+        // printed. `src` is the author-defined source prefix.
+        let id = Tainted::new(id.as_str());
+        let label = Tainted::new(label.as_str());
+        let addr = format!(":{src}/{}", id.sanitized());
+        eprintln!("  {n}) {addr:<32}  {}", label.sanitized(), n = i + 1);
     }
     let extra = reason.candidate_count.saturating_sub(reason.alternatives.len());
     if extra > 0 {
@@ -554,18 +559,6 @@ fn recent_applicable_verbs(reg: &Value, subject: &Value, type_: &str, n: usize) 
 /// `    <name>  <chips>    <description>` (4-space indent, chips after name,
 /// chips suffix in `goo describe` style so future zsh/fish ports can match
 /// glyphs verbatim).
-/// Strip control characters from untrusted text before showing it in a TERMINAL
-/// surface (a verb listing, the confirm prompt). Source- and provider-derived
-/// strings — verb descriptions, subject titles/ids, a rendered cmd that
-/// interpolates them — are not author-controlled: an ANSI escape (`\x1b[…`), an
-/// OSC title-set, or a raw CR/LF could recolor the terminal, rewrite its title,
-/// or spoof other lines of the listing. We drop every Unicode control char (C0,
-/// DEL, C1) and keep all printable text. Machine output (`goo list`, `goo
-/// options`) stays JSON, which already escapes these, so it is unaffected.
-fn display_safe(s: &str) -> String {
-    s.chars().filter(|c| !c.is_control()).collect()
-}
-
 fn applicable_verbs_listing(reg: &Value, subject: &Value, max: Option<usize>) -> (String, usize) {
     let view = options::options_for(reg, subject);
     let names: Vec<&str> = view
@@ -585,12 +578,15 @@ fn applicable_verbs_listing(reg: &Value, subject: &Value, max: Option<usize>) ->
     // (with descriptions). One extra provider list_cmd on a `what` of a
     // provider-backed subject — acceptable; memoize only if it shows up hot.
     let dynamic_verbs = verbs::for_subject(reg, subject);
-    let description_for = |name: &str| -> Option<String> {
-        registry_verbs
+    // Untrusted for a dynamic (provider) verb — return it as Tainted so the only
+    // way it reaches the listing is `.sanitized()`.
+    let description_for = |name: &str| -> Tainted {
+        let raw = registry_verbs
             .and_then(|vs| vs.iter().find(|v| v.get("name").and_then(Value::as_str) == Some(name)))
             .or_else(|| dynamic_verbs.iter().find(|v| v.get("name").and_then(Value::as_str) == Some(name)))
             .and_then(|v| v.get("description").and_then(Value::as_str))
-            .map(String::from)
+            .unwrap_or_default();
+        Tainted::new(raw)
     };
 
     let mut lines: Vec<String> = Vec::new();
@@ -610,10 +606,7 @@ fn applicable_verbs_listing(reg: &Value, subject: &Value, max: Option<usize>) ->
         } else {
             ""
         };
-        // Description is untrusted free text for a dynamic (provider) verb —
-        // sanitize before it reaches the terminal (the name is already a
-        // validated identifier).
-        let desc = display_safe(&description_for(name).unwrap_or_default());
+        let desc = description_for(name).sanitized();
         let sep = if desc.is_empty() { "" } else { "    " };
         lines.push(format!("    {name}{chip}{sep}{desc}"));
     }
@@ -1216,7 +1209,7 @@ fn substitute_subject(cmd: &str, subj_path: Option<&str>) -> String {
     // otherwise a hostile path smuggles a terminal escape into `--explain` output.
     // (render_route/render_paths_text add goo's own ANSI color but interpolate no
     // untrusted data, so the strip stays here, on the one untrusted value.)
-    let p = display_safe(p);
+    let p = Tainted::new(p).sanitized();
     let p = p.as_str();
     let q = format!("'{}'", p.replace('\'', "'\\''"));
     cmd.replace("{in.path|q}", &q)
@@ -1495,14 +1488,16 @@ fn exec_verb_impl(
             };
             // All three lines interpolate untrusted, source/provider-derived text
             // (a verb description, the subject's title/id/text, and a cmd that
-            // bakes them in) — sanitize each for the terminal.
-            let what = display_safe(verb.get("description").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(verb_name));
+            // bakes them in) — each arrives as Tainted, so only `.sanitized()`
+            // reaches the terminal. (verb_name is a validated identifier.)
+            let vdesc = DisplayView::new(verb).description();
+            let what = if vdesc.is_empty() { verb_name.to_string() } else { vdesc.sanitized() };
             eprintln!("goo: about to {what}{chip}");
-            let label = display_safe(&confirm_subject_label(subject));
+            let label = confirm_subject_label(subject).sanitized();
             if !label.is_empty() {
                 eprintln!("       subject: {label}");
             }
-            eprintln!("       runs: {}", display_safe(&rendered.cmd));
+            eprintln!("       runs: {}", Tainted::new(rendered.cmd.as_str()).sanitized());
             eprint!("     proceed? [y/N] ");
             let mut ans = String::new();
             std::io::stdin().read_line(&mut ans).ok();
@@ -1538,22 +1533,26 @@ fn confirm_preapproved(adverbs: &Value, verb_name: &str) -> bool {
 }
 
 /// A short, human label for the subject in the confirm prompt: id, else title,
-/// else a one-line/40-char-capped slice of the text content.
-fn confirm_subject_label(subject: &Value) -> String {
-    for key in ["id", "title"] {
-        if let Some(s) = subject.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()) {
-            return s.to_string();
+/// else a one-line/40-char-capped slice of the text content. Returns `Tainted` —
+/// every branch is untrusted subject data; the caller must `.sanitized()`.
+fn confirm_subject_label(subject: &Value) -> Tainted {
+    let view = DisplayView::new(subject);
+    for field in [view.id(), view.title()] {
+        if !field.is_empty() {
+            return field;
         }
     }
-    if let Some(t) = subject.get("text").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-        let one = t.lines().next().unwrap_or("");
-        return if one.chars().count() > 40 {
+    let text = view.text();
+    if !text.is_empty() {
+        let one = text.expose().lines().next().unwrap_or("");
+        let capped = if one.chars().count() > 40 {
             format!("{}…", one.chars().take(40).collect::<String>())
         } else {
             one.to_string()
         };
+        return Tainted::new(capped);
     }
-    String::new()
+    Tainted::new("")
 }
 
 /// Warn (don't fail) if a name passed to `--confirm-dangerous` isn't actually a
@@ -2571,11 +2570,12 @@ fn maybe_emit_implicit_nudge(src: ImplicitSource, text: &str) {
 fn implicit_snippet(text: &str) -> String {
     const MAX: usize = 40;
     // The implicit subject is the clipboard / PRIMARY selection — untrusted
-    // external content (copy from a hostile page → ESC in the buffer). Strip
-    // control chars first; ESC isn't whitespace, so the collapse below won't.
-    // Done here so every caller (the run-time nudge, the completion preview) is
-    // covered at one point. See display_safe.
-    let collapsed = display_safe(text).split_whitespace().collect::<Vec<_>>().join(" ");
+    // external content (copy from a hostile page → ESC in the buffer). Shadow the
+    // raw param with Tainted so only the sanitized form flows on; ESC isn't
+    // whitespace, so the collapse below wouldn't drop it on its own. Covers every
+    // caller (the run-time nudge, the completion preview) at one point.
+    let text = Tainted::new(text);
+    let collapsed = text.sanitized().split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() > MAX {
         let head: String = collapsed.chars().take(MAX).collect();
         format!("{head}…")
@@ -2807,11 +2807,12 @@ fn implicit_source_item(reg: &Value, verb: &Value) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_safe, implicit_snippet};
+    use super::implicit_snippet;
 
     // The implicit-subject snippet shows untrusted clipboard/PRIMARY content (the
     // run-time nudge, the completion preview). Its output must be control-char-free
     // — ESC isn't whitespace, so the snippet's collapse wouldn't drop it on its own.
+    // (Tainted/DisplayView have their own unit tests in the `untrusted` module.)
     #[test]
     fn implicit_snippet_strips_control_chars_from_untrusted_selection() {
         let esc = char::from(27);
@@ -2819,31 +2820,5 @@ mod tests {
         assert!(!out.contains(esc));
         assert!(out.contains("hello world"));
         assert!(!out.chars().any(|c| c.is_control()));
-    }
-
-    // Control bytes are built from codepoints (chr 27/7/13/10) so no raw control
-    // char lives in this source file.
-    #[test]
-    fn display_safe_strips_ansi_and_osc_escapes_keeps_printable() {
-        let esc = char::from(27);
-        let bel = char::from(7);
-        let s = format!("{esc}[31mRED{esc}]0;PWN{bel}tail");
-        let out = display_safe(&s);
-        assert_eq!(out, "[31mRED]0;PWNtail");
-        assert!(!out.contains(esc) && !out.contains(bel));
-    }
-
-    #[test]
-    fn display_safe_strips_cr_lf_so_a_value_cannot_spoof_extra_lines() {
-        let cr = char::from(13);
-        let lf = char::from(10);
-        let out = display_safe(&format!("ok{cr}{lf}    fake-verb   spoofed"));
-        assert!(!out.contains(cr) && !out.contains(lf));
-        assert_eq!(out, "ok    fake-verb   spoofed");
-    }
-
-    #[test]
-    fn display_safe_keeps_printable_unicode() {
-        assert_eq!(display_safe("héllo · wörld ✓ 日本語"), "héllo · wörld ✓ 日本語");
     }
 }
