@@ -29,13 +29,13 @@ name = "switch"
 description = "Switch to (or attach) a tmux session"
 accepts = ["application/vnd.tmux-use.session"]
 default_for = "application/vnd.tmux-use.session"
-cmd = "tmux switch-client -t '{subject.id}' 2>/dev/null || tmux attach-session -t '{subject.id}'"
+cmd = "tmux switch-client -t {subject.id|q} 2>/dev/null || tmux attach-session -t {subject.id|q}"
 
 [[verbs]]
 name = "kill"
 description = "Kill a tmux session"
 accepts = ["application/vnd.tmux-use.session"]
-cmd = "tmux kill-session -t '{subject.id}'"
+cmd = "tmux kill-session -t {subject.id|q}"
 confirm = true
 
 [[verbs]]
@@ -43,4 +43,4 @@ name = "rename"
 description = "Rename a tmux session"
 accepts = ["application/vnd.tmux-use.session"]
 object_type = "text/plain"
-cmd = "tmux rename-session -t '{subject.id}' '{object.text}'"
+cmd = "tmux rename-session -t {subject.id|q} {object.text|q}"

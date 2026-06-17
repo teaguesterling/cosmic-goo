@@ -41,22 +41,22 @@ cmd = "xdg-open {subject.id|q}"
 name = "reveal"
 description = "Open the containing folder in the file manager"
 accepts = ["inode/*"]
-cmd = "xdg-open \"$(dirname '{subject.metadata.path}')\""
+cmd = "xdg-open \"$(dirname {subject.metadata.path|q})\""
 
 [[verbs]]
 name = "copy-path"
 description = "Copy the absolute path to the clipboard"
 accepts = ["inode/*"]
-cmd = "wl-copy <<< '{subject.metadata.path}'"
+cmd = "wl-copy <<< {subject.metadata.path|q}"
 
 [[verbs]]
 name = "read"
 description = "Print the file's contents to stdout"
 accepts = ["inode/file"]
-cmd = "cat '{subject.metadata.path}'"
+cmd = "cat {subject.metadata.path|q}"
 
 [[verbs]]
 name = "preview"
 description = "Print the first 40 lines of the file"
 accepts = ["inode/file"]
-cmd = "head -40 '{subject.metadata.path}'"
+cmd = "head -40 {subject.metadata.path|q}"
