@@ -329,10 +329,23 @@ fn resolve_file(path: &str, reg: Option<&Value>) -> Result<Value, String> {
     } else {
         String::new()
     };
-    Ok(json!({
+    // Provenance handle membership (`_facets`): a regular file on disk is *also* an
+    // `inode/file`, so file-handle verbs (`open`/`reveal`/`copy-path`, which accept
+    // `inode/*`) match even though `type` has been refined to the content type. The
+    // membership is carried per-subject — and only when the resolver knows this came
+    // from disk — so a `text/csv` from the clipboard (no path) never gains file verbs.
+    // Consulted only in accept-matching (`verbs::subject_types`); `type` stays the
+    // content type, leaving every JSON/templating/coercion surface unchanged. A
+    // directory already resolves to `inode/directory`, so it needs no facet.
+    let is_regular_file = Path::new(&abs).is_file() && mt != "inode/file";
+    let mut subject = json!({
         "type": mt, "text": text, "id": abs, "title": title,
         "metadata": { "path": abs }
-    }))
+    });
+    if is_regular_file {
+        subject["_facets"] = json!(["inode/file"]);
+    }
+    Ok(subject)
 }
 
 /// A source domain (`[[sources]]`, matched by `name` or `prefix`). Value = exact
@@ -544,6 +557,26 @@ mod tests {
         assert!(resolve(&format!("{p}.nope"), &json!({}), None).unwrap_err().contains("no such file"));
         // :file/<path> value form too
         assert_eq!(resolve(&format!(":file/{p}"), &json!({}), None).unwrap()["text"], "file body here\n");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_file_tags_regular_files_with_inode_file_facet_but_not_dirs() {
+        let dir = std::env::temp_dir().join(format!("goo-facet-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("data.csv");
+        std::fs::write(&f, "a,b\n1,2\n").unwrap();
+        // A regular file is also an inode/file (provenance membership) — so handle
+        // verbs (open/reveal/copy-path, accepts inode/*) match it — while `type`
+        // stays the refined content type.
+        let file = resolve(f.to_str().unwrap(), &json!({}), None).unwrap();
+        assert_ne!(file["type"], json!("inode/file")); // type is the content type…
+        assert_eq!(file["_facets"], json!(["inode/file"])); // …membership carries the handle
+        // A directory resolves to inode/directory and needs no facet (its `type`
+        // already admits inode/* verbs).
+        let d = resolve(dir.to_str().unwrap(), &json!({}), None).unwrap();
+        assert_eq!(d["type"], json!("inode/directory"));
+        assert!(d.get("_facets").is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 

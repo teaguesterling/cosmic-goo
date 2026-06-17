@@ -28,6 +28,7 @@ core. Install only the tiers whose tools you have.
 | `dev` | `just` | `just-recipes` | `:cwd` | ambient |
 | `duckdb` | `duckdb` | `column-profile` | a CSV file | per-subject |
 | `git` | `git` | `branch-log` | a git repo (`:repo`) | per-subject |
+| `xdg` | `xdg-mime`, `gtk-launch` | `open-with` | any file (`inode/file`) | per-subject |
 
 A provider whose tool is absent, or whose `list_cmd` errors / emits non-JSON,
 yields **no verbs** — it never breaks the listing. An uninstalled tool is a
@@ -40,11 +41,18 @@ no-op, not an error.
   `./justfile`. No `{subject.*}` needed; the directory *is* the context.
 - **Per-subject.** `list_cmd` is subject-substituted (`{subject.metadata.path|q}`),
   so the verb list depends on the *specific* subject — `column-profile` reads
-  *this* CSV's columns, `branch-log` lists *this* repo's branches. Different
-  subject → different verbs. (This is the `list_cmd`-takes-the-subject capability;
-  before it, providers could only key off the subject's *type*.)
+  *this* CSV's columns, `branch-log` lists *this* repo's branches, `open-with`
+  enumerates *this* file's MIME handlers. Different subject → different verbs. (This
+  is the `list_cmd`-takes-the-subject capability; before it, providers could only key
+  off the subject's *type*.)
 
-## Three rules these examples exist to teach
+> **`for_type = inode/file` matches any file.** A file subject carries an
+> `inode/file` membership alongside its content type (a file is *both* a handle and
+> a datum — see `address::resolve_file` / `verbs::subject_types`), so a provider
+> keyed on `inode/file` attaches to every file regardless of its MIME. That's what
+> lets `xdg/open-with` work across `.pdf`/`.png`/`.csv` alike.
+
+## Two rules these examples exist to teach
 
 1. **Quote untrusted subject fields with `|q`.** A subject field (a filename, a
    repo path) reaches `bash -c`, and can carry shell metacharacters.
@@ -66,32 +74,19 @@ no-op, not an error.
 
 2. **Keep `for_type` as specific as the provider allows — cost is real.** Every
    subject whose type matches pays one `list_cmd` exec when its verbs are listed,
-   every time (goo is one-shot; there is **no cross-invocation cache yet**). Both
-   per-subject examples are bounded: `text/csv`, `application/vnd.git.repo`. Don't
-   reach for a broad `for_type` (e.g. `inode/file`) unless the provider genuinely
-   applies to everything — and know the cost if you do.
-
-3. **Address files as `./path` or absolute when discovering provider verbs.**
-   A bare relative path (`data.csv`) lists with a minimal subject that lacks
-   `metadata.path`, so a path-dependent `list_cmd` produces no verbs at *listing*
-   time. `./data.csv` and `/abs/data.csv` resolve fully. (At *run* time every form
-   resolves, so this only affects discovery — see Known gaps.)
+   every time (goo is one-shot; there is **no cross-invocation cache yet**). The
+   bounded examples (`text/csv`, `application/vnd.git.repo`) pay only on their own
+   subjects; `xdg/open-with` is deliberately broad (`for_type = inode/file` matches
+   *every* file) because "open with the right app" inherently applies to all files —
+   so it forks `xdg-mime` on every file listing. Don't reach for `inode/file` unless
+   your provider genuinely applies to everything.
 
 ## Known gaps (honest, not hidden)
 
-- **No memoization.** A broad `for_type`, or several providers on one type, fan
-  out serially on every listing. The design doc defers the cache "until a hot
-  double-call shows up" — this collection is that forcing function.
-- **Bareword vs `./` at listing.** The listing-time subject for a bareword file
-  path doesn't carry `metadata.path` (the run-time path does). Until that's
-  reconciled, file-targeted providers want `./`/absolute for discovery. A
-  listing/run subject-resolution consistency pass is the clean fix.
-- **No universal "file" supertype** ⇒ **no `xdg` open-with provider yet.** An
-  "open this file with the right app" provider is the obvious `xdg` tier entry,
-  but it needs to attach to *any* file. goo types files specifically
-  (`application/pdf`, `text/csv`, …) with no shared `inode/file` supertype, so a
-  broad `for_type` can't match them. Unblocked by a universal-file supertype (or
-  per-type providers); a good next increment.
+- **No memoization.** A broad `for_type` (like `xdg/open-with`), or several
+  providers on one type, fan out serially on every listing. The design doc defers
+  the cache "until a hot double-call shows up" — this collection (and especially the
+  broad xdg provider) is that forcing function.
 - **DuckDB *database* files** (`.duckdb`/`.sqlite`) are `application/octet-stream`
   to libmagic, so "tables of a database file as verbs" needs an extension-based
   type declaration first. `column-profile` targets `text/csv` (cleanly typed)

@@ -203,12 +203,15 @@ recipes, `cargo` aliases — each a `[[providers]]` entry with a `for_type` and 
 A starter collection lives in [`providers/`](https://github.com/teaguesterling/cosmic-goo/tree/main/providers),
 organized by the tool each needs (the same dep-tier logic as the plugin tiers):
 `make-targets` and `just-recipes` (ambient, on `:cwd`), `column-profile` (DuckDB —
-a CSV's columns become profiling verbs) and `branch-log` (a repo's branches become
-log verbs) — the last two exercising the subject-aware `list_cmd`. Load one with
-`-c providers/<tier>/<name>.toml`. Its `README.md` records the design rules these
-examples teach (the `|q` quoting convention, keeping `for_type` specific) and the
-honest gaps a larger collection will hit first: no listing cache yet, the
-listing-vs-run path-resolution asymmetry for bare relative paths, and the absence
-of a universal "file" supertype (which is what an `xdg`-tier "open with" provider
-is waiting on). Intended to graduate to a versioned sidecar repo once the contract
-proves out across more tiers.
+a CSV's columns become profiling verbs), `branch-log` (a repo's branches become log
+verbs), and `open-with` (xdg — a file's MIME handlers become "open with X" verbs) —
+the last three exercising the subject-aware `list_cmd`. `open-with` keys on
+`for_type = inode/file`, which matches *any* file because a file subject carries an
+`inode/file` membership alongside its content type (see
+[addressing-and-protocol](addressing-and-protocol.md) — a file is both a handle and a
+datum; `verbs::subject_types`). Load one with `-c providers/<tier>/<name>.toml`. Its
+`README.md` records the design rules these examples teach (the `|q` quoting
+convention, keeping `for_type` specific) and the remaining honest gap: no listing
+cache yet, so a broad `for_type` (like `open-with`) forks its `list_cmd` on every
+matching subject's listing. Intended to graduate to a versioned sidecar repo once the
+contract proves out across more tiers.

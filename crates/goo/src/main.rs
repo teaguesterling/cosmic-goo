@@ -467,9 +467,24 @@ fn cmd_forget() -> i32 {
     0
 }
 
+/// If `addr` isn't an explicit address (sigil / canonical / source) but names an
+/// existing path, rewrite it to `./addr` so it resolves as a file/dir — the same
+/// rule the run path applies in `resolve_subject` (the bare-token ambiguity is broken
+/// by filesystem reality; `+` forces text, an explicit sigil forces a source). This
+/// keeps the *listing* path (`goo what data.csv`) in agreement with dispatch, so a
+/// bare file gets its full file subject (`metadata.path` + the `inode/file` facet),
+/// not a minimal text subject.
+fn listing_addr<'a>(addr: &'a str, reg: &Value) -> std::borrow::Cow<'a, str> {
+    if !addr.is_empty() && !address::is_explicit(addr, reg) && std::path::Path::new(addr).exists() {
+        std::borrow::Cow::Owned(format!("./{addr}"))
+    } else {
+        std::borrow::Cow::Borrowed(addr)
+    }
+}
+
 /// ordering. See completion-polish.md §6 slice 3.
 fn cmd_what(reg: &Value, addr: &str) -> i32 {
-    let subject = match address::resolve(addr, reg, None) {
+    let subject = match address::resolve(&listing_addr(addr, reg), reg, None) {
         Ok(s) => s,
         Err(e) => return die(e.replace("address: ", "")),
     };
@@ -830,6 +845,15 @@ fn cmd_explain(args: &[String]) -> i32 {
         return die("explain: needs a subject — e.g. `=image/png` or a file path");
     };
 
+    // Membership types for planning, mirroring the run (`verbs::subject_types`): a
+    // real regular-file subject is also an `inode/file` (the provenance facet minted
+    // by `address::resolve_file`), so `--explain open ./pdf` previews the direct
+    // handle-verb route instead of a 415. A `=TYPE` virtual subject has no facet.
+    let mut memberships: Vec<&str> = vec![&subject_type];
+    if subject_type != "inode/file" && subj.is_some_and(|s| std::path::Path::new(s).is_file()) {
+        memberships.push("inode/file");
+    }
+
     let (tty, display) = match env_ovr {
         Some("tty") => (true, false),
         Some("cosmic") | Some("cosmic-term") => (true, true),
@@ -892,7 +916,7 @@ fn cmd_explain(args: &[String]) -> i32 {
             None => negotiation::Hops::default(),
         }
     };
-    match negotiation::plan_request_using_bounded(&subject_type, &verb, &target, &reg, &all_tools, using, hops) {
+    match negotiation::plan_request_over(&memberships, &verb, &target, &reg, &all_tools, using, hops) {
         None => {
             println!("415 · no route — {subject_type} can't be presented here (verb: {verb_name})");
             1
@@ -1045,7 +1069,11 @@ fn exec_negotiated(reg: &Value, verb: &Value, subject: &Value, adverbs: &Value) 
     let hops = hops_from_adverbs(adverbs);
 
     let (available, missing) = channel_tools(reg);
-    match negotiation::plan_request_using_bounded(subject_type, verb, &target, reg, &available, using, hops) {
+    // Plan over the subject's full membership (content type + provenance facets, e.g.
+    // a file is also inode/file), so a handle verb like `open` matches a file directly
+    // instead of 415-ing on a coercion search from the content type.
+    let memberships = verbs::subject_types(subject);
+    match negotiation::plan_request_over(&memberships, verb, &target, reg, &available, using, hops) {
         None => {
             // Teaching 415 first: would a deeper budget have found a route (with the
             // tools you have)? If so, show it and the flag that unlocks it.

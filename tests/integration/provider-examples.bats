@@ -98,3 +98,25 @@ EOF
     run "$GOO" -c "$(prov duckdb/column-profile.toml)" do './a; touch pwned/d.csv' </dev/null
     [ ! -e pwned ]                         # injection did not execute
 }
+
+@test "xdg open-with (per-subject, for_type=inode/file): a file's MIME handlers list as verbs" {
+    command -v xdg-mime >/dev/null && command -v gtk-launch >/dev/null || skip "xdg tools not installed"
+    printf 'hello\n' > note.txt
+    mime="$(xdg-mime query filetype note.txt 2>/dev/null)"
+    [ -n "$mime" ] || skip "xdg-mime could not type the file"
+    # Plant a .desktop declaring this MIME so the test owns its handler (no reliance
+    # on what's installed). The provider scans ~/.local/share/applications.
+    apps="$HOME/.local/share/applications"; mkdir -p "$apps"
+    cat > "$apps/goo-test-editor.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Goo Test Editor
+Exec=true
+MimeType=$mime;
+EOF
+    # for_type = inode/file now matches a content-typed file via its membership.
+    run "$GOO" -c "$(prov xdg/open-with.toml)" do ./note.txt </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"goo-test-editor"* ]]
+    [[ "$output" == *"open with Goo Test Editor"* ]]
+}

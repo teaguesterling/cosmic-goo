@@ -1,0 +1,42 @@
+name = "xdg-open-with-provider"
+description = "Each application that can open a file becomes an 'open with X' verb (freedesktop)"
+
+# PER-SUBJECT provider on `for_type = inode/file` — which now matches *any* file:
+# a file subject carries an `inode/file` provenance membership alongside its content
+# type (see address::resolve_file / verbs::subject_types), so this attaches to a
+# .pdf, a .png, a .csv, … alike. list_cmd is subject-substituted: it asks `xdg-mime`
+# for THIS file's MIME type, then enumerates the .desktop apps that declare it — so a
+# .pdf lists PDF viewers, a .png lists image editors. The verb name is the app's
+# desktop id (sans `.desktop`); the verb runs `gtk-launch <app> <file>`.
+#
+#   goo -c providers/xdg/open-with.toml do ./report.pdf                 # apps as verbs
+#   goo -c providers/xdg/open-with.toml do ./report.pdf org.gnome.Evince
+#
+# COST — read before copying the pattern. `for_type = inode/file` is broad *by
+# nature* ("open with the right app" only means anything across all files), so EVERY
+# file pays an `xdg-mime` exec + a scan of the applications dirs when its verbs are
+# listed (there is no cross-invocation cache yet — goo is one-shot). It ships as the
+# canonical *broad* provider and the clearest motivator for the planned listing cache.
+# Don't copy `inode/file` into a provider that could name a narrower type.
+#
+# QUOTING: the path reaches the shell only as `{subject.metadata.path|q}` (a
+# standalone, shell-quoted word); `$mime` is captured from `xdg-mime` output and
+# matched with `grep -F`, never interpolated as a pattern.
+
+[[providers]]
+name = "open-with"
+for_type = "inode/file"
+list_cmd = '''
+p={subject.metadata.path|q}
+mime=$(xdg-mime query filetype "$p" 2>/dev/null) || exit 0
+[ -n "$mime" ] || exit 0
+for d in /usr/share/applications/*.desktop "$HOME/.local/share/applications/"*.desktop; do
+  [ -f "$d" ] || continue
+  grep '^MimeType=' "$d" 2>/dev/null | grep -qF "$mime" || continue
+  grep -q '^NoDisplay=true' "$d" && continue
+  id=$(basename "$d" .desktop)
+  name=$(sed -n 's/^Name=//p' "$d" | head -1)
+  printf '%s\t%s\n' "$id" "${name:-$id}"
+done | sort -u | jq -Rsc 'split("\n") | map(select(length>0) | split("\t") | {name: .[0], description: ("open with " + .[1])})'
+'''
+run = "gtk-launch {verb.name|q} {subject.metadata.path|q}"

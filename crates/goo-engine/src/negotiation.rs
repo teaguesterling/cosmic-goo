@@ -404,6 +404,29 @@ pub fn plan_request_using_bounded(
     plan_bounded(subject_type, &edges, &convs, &target.accept, &target.env_caps, reg, hops.a, hops.b)
 }
 
+/// Plan the cheapest route over ALL of a subject's membership types — its content
+/// `type` plus any provenance facets (a file is also `inode/file`; see
+/// `verbs::subject_types`). Each membership is a valid "the subject is this type"
+/// starting point; a verb that directly accepts a facet (`open` on a file) yields a
+/// cost-0 route, while a content verb routes from the content type as before. No
+/// single route mixes memberships — converters operate on content types, the facet
+/// only adds a direct verb match — so planning per start type and taking the minimum
+/// is complete. With one membership this is exactly [`plan_request_using_bounded`].
+pub fn plan_request_over(
+    subject_types: &[&str],
+    verb: &Value,
+    target: &Target,
+    reg: &Value,
+    available_tools: &[String],
+    using: Option<&str>,
+    hops: Hops,
+) -> Option<Plan> {
+    subject_types
+        .iter()
+        .filter_map(|t| plan_request_using_bounded(t, verb, target, reg, available_tools, using, hops))
+        .min_by_key(|p| p.cost)
+}
+
 fn tool_present(tool: &Option<String>, available: &[String]) -> bool {
     tool.as_ref().is_none_or(|t| available.iter().any(|a| a == t))
 }
@@ -791,6 +814,24 @@ mod tests {
         assert_eq!(p.steps[0].kind, StepKind::Convert("csv2json".into()));
         assert_eq!(p.steps[1].kind, StepKind::Verb("jq".into()));
         assert_eq!(p.delivered, "application/json");
+    }
+
+    // Membership multi-start (file-vs-data): a provenance facet (a file is also an
+    // inode/file) is a valid alternative start type, so a verb accepting inode/file
+    // matches a text/csv *file* directly — without the facet there's no route (415).
+    #[test]
+    fn plan_request_over_uses_a_membership_facet_for_a_direct_match() {
+        let reg = j!({});
+        let verb = j!({ "name": "open", "accepts": ["inode/file"], "emits": "application/x-opened" });
+        let target = Target { accept: strs(&["application/x-opened"]), env_caps: vec![] };
+        assert!(
+            plan_request_over(&["text/csv"], &verb, &target, &reg, &[], None, Hops::default()).is_none(),
+            "content type alone should not reach an inode/file verb"
+        );
+        assert!(
+            plan_request_over(&["text/csv", "inode/file"], &verb, &target, &reg, &[], None, Hops::default()).is_some(),
+            "the inode/file membership should give a direct match"
+        );
     }
 
     // Multi-hop coercion: the algorithm actually *chains* converters

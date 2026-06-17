@@ -44,6 +44,31 @@ fn accepts_type(verb: &Value, mime: &str, reg: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// The types a subject claims membership in: its `type` first, then any provenance
+/// `_facets` (e.g. a file subject is also `inode/file` — see `address::resolve_file`).
+/// Accept-matching scores a verb against the best over all of these, so a file gains
+/// `inode/*` handle verbs (`open`/`reveal`/`copy-path`) while keeping its refined
+/// content type. `type` stays the content type; facets are consulted *only* here, not
+/// in templating or serialization, and are minted only by a resolver that knows the
+/// subject came from disk (so clipboard `text/csv` never gains file verbs).
+pub fn subject_types(subject: &Value) -> Vec<&str> {
+    let mut out = Vec::new();
+    if let Some(t) = subject.get("type").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        out.push(t);
+    }
+    if let Some(facets) = subject.get("_facets").and_then(Value::as_array) {
+        out.extend(facets.iter().filter_map(Value::as_str).filter(|s| !s.is_empty()));
+    }
+    out
+}
+
+/// True if `verb` accepts any of `subject`'s membership types ([`subject_types`]).
+fn accepts_subject(verb: &Value, subject: &Value, reg: &Value) -> bool {
+    subject_types(subject)
+        .iter()
+        .any(|t| accepts_type(verb, t, reg))
+}
+
 /// JSON for the verb named `name`, optionally filtered to those whose `accepts`
 /// matches `type_filter`. With multiple verbs of the same name (cross-plugin
 /// polymorphism, supported by [`crate::registry::merge`]), the lookup picks the
@@ -227,6 +252,11 @@ pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
         None => return Vec::new(),
     };
     let is_handle = type_kind(reg, stype).as_deref() == Some("handle");
+    // Match against every type the subject claims (content `type` + any provenance
+    // `_facets`, e.g. a file is also `inode/file`) — best specificity across them, so
+    // a file lists both its content verbs and its `inode/*` handle verbs. `stype` (the
+    // content type) still drives the handle-noise gate below.
+    let match_types = subject_types(subject);
     // Walk in registry order; for each name, keep the best-specificity impl seen
     // (>= so later-registered wins ties, matching `lookup`'s tie-break).
     use std::collections::HashMap;
@@ -236,7 +266,7 @@ pub fn for_subject(reg: &Value, subject: &Value) -> Vec<Value> {
             continue;
         }
         let Some(name) = v.get("name").and_then(Value::as_str) else { continue };
-        if let Some(s) = verb_specificity(v, stype, reg) {
+        if let Some(s) = match_types.iter().filter_map(|t| verb_specificity(v, t, reg)).max() {
             // Handle subjects: a coincidental same-namespace glob match is noise
             // (sha256 over a window), but an is_a-derived glob is real (open over
             // a mount). Skip only the former.
@@ -314,14 +344,20 @@ pub fn provider_verbs_for(reg: &Value, subject: &Value) -> Vec<Value> {
         Some(p) if !p.is_empty() => p,
         _ => return Vec::new(), // fast path: no providers declared
     };
-    let stype = match subject.get("type").and_then(Value::as_str) {
-        Some(s) if !s.is_empty() => s,
-        _ => return Vec::new(),
-    };
+    // The subject must claim at least one type (content `type` and/or a membership
+    // facet) for any provider to attach.
+    if subject_types(subject).is_empty() {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     for prov in providers {
         let for_type = prov.get("for_type").and_then(Value::as_str).unwrap_or("");
-        if for_type.is_empty() || !mime::is_subtype(stype, for_type, reg) {
+        // Match the subject's content type OR any provenance membership (`_facets`),
+        // so a `for_type = inode/file` provider attaches to every file (which is also
+        // an inode/file) even though its `type` is the refined content type.
+        let matches = !for_type.is_empty()
+            && subject_types(subject).iter().any(|t| mime::is_subtype(t, for_type, reg));
+        if !matches {
             continue;
         }
         let list_cmd = prov.get("list_cmd").and_then(Value::as_str).unwrap_or("");
@@ -390,9 +426,11 @@ pub fn render(
     object: &Value,
     user_adverbs: &Value,
 ) -> Result<Rendered, String> {
-    // 1. Subject type must match accepts (when the subject is typed).
+    // 1. A subject membership type must match accepts (when the subject is typed).
+    // `subject_types` includes provenance `_facets`, so e.g. `open` (accepts inode/*)
+    // runs on a `text/csv` file via its `inode/file` membership without coercion.
     let stype = subject.get("type").and_then(|t| t.as_str()).unwrap_or("");
-    if !stype.is_empty() && !accepts_type(verb, stype, reg) {
+    if !stype.is_empty() && !accepts_subject(verb, subject, reg) {
         return Err(format!(
             "subject type '{stype}' does not match verb accepts"
         ));
@@ -882,6 +920,57 @@ template_var = { depth_prefix = "Ultrathink about" }
         for unwanted in ["echo-text", "critique"] {
             assert!(!n.contains(&unwanted.to_string()), "unexpected {unwanted}");
         }
+    }
+
+    // ---- provenance membership facets (file-vs-data) ----
+
+    #[test]
+    fn subject_types_is_type_then_facets() {
+        assert_eq!(
+            subject_types(&json!({ "type": "text/csv", "_facets": ["inode/file"] })),
+            vec!["text/csv", "inode/file"]
+        );
+        assert_eq!(subject_types(&json!({ "type": "text/plain" })), vec!["text/plain"]);
+        assert!(subject_types(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn for_subject_matches_handle_verbs_via_inode_file_facet_only_with_provenance() {
+        let reg = fixture();
+        // A file: content type text/plain PLUS the provenance inode/file membership.
+        let file = json!({ "type": "text/plain", "text": "hi", "_facets": ["inode/file"] });
+        let n = names(&for_subject(&reg, &file));
+        assert!(n.contains(&"open-poly".to_string()), "handle verb via facet missing: {n:?}");
+        assert!(n.contains(&"echo-text".to_string()), "content verb missing: {n:?}");
+        // The SAME content type WITHOUT the facet (e.g. clipboard text) gets no handle
+        // verb — the provenance guard that keeps clipboard data from looking like a file.
+        let clip = json!({ "type": "text/plain", "text": "hi" });
+        assert!(!names(&for_subject(&reg, &clip)).contains(&"open-poly".to_string()));
+    }
+
+    #[test]
+    fn render_accepts_a_file_via_facet_for_a_handle_verb() {
+        let reg = fixture();
+        let open_poly = lookup(&reg, "open-poly", None).unwrap(); // accepts inode/*, text/x-uri
+        // text/plain matches neither accept; only the inode/file facet does.
+        let file = json!({ "type": "text/plain", "id": "/x", "_facets": ["inode/file"] });
+        assert!(render(&reg, &open_poly, &file, &json!({}), &json!({})).is_ok());
+        let clip = json!({ "type": "text/plain", "id": "/x" });
+        assert!(render(&reg, &open_poly, &clip, &json!({}), &json!({})).is_err());
+    }
+
+    #[test]
+    fn provider_for_type_inode_file_fires_on_a_file_via_facet_not_clipboard() {
+        let mut reg = fixture();
+        reg["providers"] = json!([{
+            "name": "any", "for_type": "inode/file",
+            "list_cmd": r#"printf '[{"name":"openwith","description":"d"}]'"#,
+            "run": "echo {verb.name}",
+        }]);
+        let file = json!({ "type": "text/plain", "text": "hi", "_facets": ["inode/file"] });
+        assert!(names(&provider_verbs_for(&reg, &file)).contains(&"openwith".to_string()));
+        let clip = json!({ "type": "text/plain", "text": "hi" });
+        assert!(provider_verbs_for(&reg, &clip).is_empty());
     }
 
     #[test]
