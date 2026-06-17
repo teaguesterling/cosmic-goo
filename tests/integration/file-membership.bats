@@ -40,6 +40,17 @@ setup() {
     [[ "$output" != *"415"* ]]
 }
 
+@test "file membership: --explain via the :file/ sigil is consistent with native paths (direct, not 415)" {
+    # The resolved-subject path: :file/<abs> and ./data.csv must preview the same
+    # direct inode/file route — membership comes from the resolved subject, uniformly.
+    abs="$BATS_TEST_TMPDIR/data.csv"
+    run "$GOO" --explain open ":file/$abs" --explain-with route </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"text/csv"* ]]      # typed via the resolved subject, not mis-typed text
+    [[ "$output" == *"inode/file"* ]]    # direct handle-verb route
+    [[ "$output" != *"415"* ]]
+}
+
 @test "file membership: content coercion is undisturbed (json-keys still routes csv2json)" {
     run "$GOO" --explain json-keys ./data.csv --explain-with route </dev/null
     [ "$status" -eq 0 ]

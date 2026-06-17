@@ -827,35 +827,56 @@ fn cmd_explain(args: &[String]) -> i32 {
     // through `address::resolve` and label `explicit`. Every other shape (file
     // paths, URLs, sigil-+/^, bare text) keeps its provenance: extension, libmagic,
     // checker, content.
-    let (subject_type, type_source): (String, &str) = if let Some(s) = subj {
-        if address::canonicalize(s, &reg).starts_with("goo://type/") {
-            match address::resolve(s, &reg, None) {
-                Ok(subject) => (
-                    subject.get("type").and_then(Value::as_str).unwrap_or("application/octet-stream").to_string(),
+    //
+    // A file-backed address — a native path OR the `:file/…` sigil, both of which
+    // canonicalize to `goo://file/…` — is resolved to a real subject, so its type
+    // AND its `inode/file` membership (`_facets`) come from one place, consistently
+    // for every form (`subject` below carries them). Other shapes have no facet.
+    let (subject_type, type_source, subject): (String, &str, Option<Value>) = if let Some(s) = subj {
+        let listing = listing_addr(s, &reg);
+        let canon = address::canonicalize(&listing, &reg);
+        if canon.starts_with("goo://type/") {
+            match address::resolve(&listing, &reg, None) {
+                Ok(subj) => (
+                    subj.get("type").and_then(Value::as_str).unwrap_or("application/octet-stream").to_string(),
                     "explicit",
+                    Some(subj),
                 ),
                 Err(e) => return die(e.replace("address: ", "")),
             }
-        } else if std::path::Path::new(s).exists() {
-            address::type_for_path(s, &reg)
-                .unwrap_or_else(|_| ("application/octet-stream".into(), "libmagic"))
+        } else if canon.starts_with("goo://file/") {
+            match address::resolve(&listing, &reg, None) {
+                Ok(subj) => {
+                    // Source label (extension vs libmagic) from the resolved path;
+                    // the resolved subject carries the membership facet.
+                    let path = subj.get("metadata").and_then(|m| m.get("path")).and_then(Value::as_str);
+                    let (t, src) = path
+                        .and_then(|p| address::type_for_path(p, &reg).ok())
+                        .unwrap_or_else(|| (
+                            subj.get("type").and_then(Value::as_str).unwrap_or("application/octet-stream").to_string(),
+                            "libmagic",
+                        ));
+                    (t, src, Some(subj))
+                }
+                Err(e) => return die(e.replace("address: ", "")),
+            }
         } else if let Some((t, src)) = mime::infer_for_with_source(s, &verb, &reg) {
-            (t, src)
+            (t, src, None)
         } else {
-            (mime::detect_content(s), "content")
+            (mime::detect_content(s), "content", None)
         }
     } else {
         return die("explain: needs a subject — e.g. `=image/png` or a file path");
     };
 
-    // Membership types for planning, mirroring the run (`verbs::subject_types`): a
-    // real regular-file subject is also an `inode/file` (the provenance facet minted
-    // by `address::resolve_file`), so `--explain open ./pdf` previews the direct
-    // handle-verb route instead of a 415. A `=TYPE` virtual subject has no facet.
-    let mut memberships: Vec<&str> = vec![&subject_type];
-    if subject_type != "inode/file" && subj.is_some_and(|s| std::path::Path::new(s).is_file()) {
-        memberships.push("inode/file");
-    }
+    // Membership types for planning, from the resolved subject (`verbs::subject_types`)
+    // — the SAME source the run uses. A file-backed subject carries an `inode/file`
+    // facet, so `--explain open <file>` (native path or `:file/…`) previews the direct
+    // handle-verb route instead of a 415; other shapes have just their type.
+    let memberships: Vec<&str> = match &subject {
+        Some(s) => verbs::subject_types(s),
+        None => vec![&subject_type],
+    };
 
     let (tty, display) = match env_ovr {
         Some("tty") => (true, false),
