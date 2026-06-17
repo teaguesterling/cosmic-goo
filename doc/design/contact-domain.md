@@ -138,14 +138,17 @@ same disciplines the codebase already has apply:
 - **Shell** — any field reaching `bash -c` (`xdg-email {metadata.email}`) is `|q`-quoted;
   a field reaching a URI is `|uri`-encoded (a contact "email" of `a@b?cc=evil` must not
   inject mailto headers). Both filters exist.
-- **Source-emitted facets — a trust note.** A source already controls a subject's `type`
-  (it could emit a false one today), so source-minted `_facets` add no *new* trust
-  boundary — but a source that claimed a **bus** facet (`inode/file`, `text/*`) would grant
-  inappropriate verbs. Capability facets (`emailable` …) are safe because only the
-  contact's own verbs accept them. **Open design question:** should the engine restrict
-  source-emitted facets to a declared/namespaced set (so a source can't claim `inode/file`),
-  or is that the plugin author's responsibility like `type` already is? Recommended:
-  document the convention now; add a `goo validate` lint later if a real misuse appears.
+- **Source-emitted facets — the trust boundary.** A source's `_facets` are the *first*
+  channel by which `list_cmd` output (often untrusted external data) can change which verbs
+  match — `type` itself is locked to the static `emits` and can't be injected. A source that
+  let external data claim a **bus** facet (`inode/file`, `text/*`) would grant inappropriate
+  verbs, and a forged membership reaches whatever verbs accept that type — not all of which
+  are guaranteed injection-clean (a real `read`/`preview` command-injection was found and
+  fixed while analyzing this — `f3450fd`). **Resolved → a per-source declared facet
+  allowlist** ([facet-trust-boundary.md](facet-trust-boundary.md)): a source declares
+  `facets = […]` and the engine drops any emitted facet outside it. This contact source
+  declares its three capability facets; `emailable`/`callable`/`messageable` are safe and
+  enumerated, `inode/file` can never be claimed.
 
 ## Decisions / open questions
 
