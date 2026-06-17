@@ -156,6 +156,16 @@ pub fn accepts_specificity(patterns: &[&str], t: &str, reg: &Value) -> Option<i3
     best
 }
 
+/// Like [`default_for`] but over a subject's full membership ([`subject_types`]):
+/// the first membership type with a default verb wins. Content type is tried first,
+/// then provenance facets — so a file with a content-type default keeps it, while a
+/// `.pdf` (no content default) falls through to `open` via its `inode/file`
+/// membership. This keeps the bare-address GOO path (`goo report.pdf`) in agreement
+/// with listing and dispatch: a file's handle verb lists, runs, *and* is its default.
+pub fn default_for_subject(reg: &Value, subject: &Value) -> Option<Value> {
+    subject_types(subject).into_iter().find_map(|t| default_for(reg, t))
+}
+
 /// The verb whose `default_for` matches `type` — a single type string or an
 /// array of types (a polymorphic default like `open`). First match wins.
 /// Mirrors `verb_default_for`.
@@ -957,6 +967,20 @@ template_var = { depth_prefix = "Ultrathink about" }
         assert!(render(&reg, &open_poly, &file, &json!({}), &json!({})).is_ok());
         let clip = json!({ "type": "text/plain", "id": "/x" });
         assert!(render(&reg, &open_poly, &clip, &json!({}), &json!({})).is_err());
+    }
+
+    #[test]
+    fn default_for_subject_prefers_content_default_then_falls_through_to_a_facet() {
+        let reg = fixture(); // echo-text default_for text/plain; open-poly default_for inode/file
+        // Content type with its own default wins over the facet.
+        let txt = json!({ "type": "text/plain", "_facets": ["inode/file"] });
+        assert_eq!(default_for_subject(&reg, &txt).unwrap()["name"], json!("echo-text"));
+        // Content type with NO default falls through to the inode/file facet default —
+        // so a bare `goo report.pdf` (no content default) still resolves `open`.
+        let pdf_like = json!({ "type": "application/vnd.fixture.thing", "_facets": ["inode/file"] });
+        assert_eq!(default_for_subject(&reg, &pdf_like).unwrap()["name"], json!("open-poly"));
+        // No facet and no content default → none (unchanged from default_for).
+        assert!(default_for_subject(&reg, &json!({ "type": "application/vnd.fixture.thing" })).is_none());
     }
 
     #[test]

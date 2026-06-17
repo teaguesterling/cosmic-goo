@@ -350,7 +350,10 @@ fn cmd_goo(reg: &Value, addr: &str, rest: &[String]) -> i32 {
         Err(e) => return die(e.replace("address: ", "")),
     };
     let type_ = subject.get("type").and_then(|t| t.as_str()).unwrap_or("text/plain");
-    let verb = match verbs::default_for(reg, type_) {
+    // Over the subject's full membership (a file is also inode/file), so a bare
+    // `goo report.pdf` runs `open` (default_for inode/file) just as `goo open
+    // report.pdf` does and `goo what report.pdf` lists it.
+    let verb = match verbs::default_for_subject(reg, &subject) {
         Some(v) => v,
         None => {
             let mut msg = format!("no default verb for type '{type_}'");
@@ -1997,7 +2000,7 @@ fn cmd_dispatch(input_arg: Option<&str>) -> i32 {
             Err(_) => return die(format!("dispatch: cannot resolve '{input}'")),
         };
         let type_ = subject.get("type").and_then(|t| t.as_str()).unwrap_or("text/plain");
-        match verbs::default_for(&reg, type_) {
+        match verbs::default_for_subject(&reg, &subject) {
             Some(verb) => exec_verb(&reg, &verb, &subject, &Value::Null, &json!({})),
             None => die(format!("dispatch: no rule matched and no default verb for type '{type_}'")),
         }
