@@ -86,8 +86,9 @@ This is exactly the clipboard-vs-file guard, applied to a new entity.
 Here the entity's actions don't exist yet, so the cost is a type **plus** N verbs. The
 multi-facet candidates are the interesting ones — each facet routes a *different* verb.
 
-- **`:contact`** (khard / vdirsyncer) — the canonical multi-facet entity. A contact
-  is-a *emailable* + *callable* + *messageable* + *addressable*. New verbs: `email`
+- **`:contact`** (khard / vdirsyncer) — the canonical multi-facet entity, **drilled to a
+  full spec in [contact-domain.md](contact-domain.md)**. A contact is-a *emailable* +
+  *callable* + *messageable* + *addressable*. New verbs: `email`
   (two-step: object = the message/file to send), `call`, `message`, `vcard`. Integration
   choice to make explicit: model each capability as a **facet membership** (`is_a
   application/vnd.goo.emailable`, etc.) so a new `email` verb that `accepts` the emailable
