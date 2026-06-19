@@ -997,6 +997,85 @@ template_var = { depth_prefix = "Ultrathink about" }
         assert!(provider_verbs_for(&reg, &clip).is_empty());
     }
 
+    // ---- membership robustness & edge cases (negative + correctness) ----
+
+    #[test]
+    fn subject_types_is_robust_to_malformed_facets() {
+        // Non-array `_facets` → ignored, just the type.
+        assert_eq!(subject_types(&json!({"type":"text/plain","_facets":"oops"})), vec!["text/plain"]);
+        // Empty array → just the type.
+        assert_eq!(subject_types(&json!({"type":"text/plain","_facets":[]})), vec!["text/plain"]);
+        // Non-string / empty-string / null elements are dropped; valid ones survive, in order.
+        assert_eq!(
+            subject_types(&json!({"type":"text/plain","_facets":[123,"","inode/file",null,"a/b"]})),
+            vec!["text/plain", "inode/file", "a/b"]
+        );
+        // Missing `type`, facets present → just the facets.
+        assert_eq!(subject_types(&json!({"_facets":["inode/file"]})), vec!["inode/file"]);
+        // Empty `type` is skipped.
+        assert_eq!(subject_types(&json!({"type":"","_facets":["x/y"]})), vec!["x/y"]);
+        // Nothing → empty (no panic).
+        assert!(subject_types(&json!({})).is_empty());
+        assert!(subject_types(&json!({"type":""})).is_empty());
+    }
+
+    #[test]
+    fn for_subject_inherits_from_each_of_multiple_facets() {
+        // A subject claiming TWO capability facets gets the verbs of BOTH (and its content
+        // verbs), but not a verb whose accept it never claims. Capability facets — the
+        // contact-style case — not bus types.
+        let reg = json!({ "verbs": [
+            { "name": "text-op", "accepts": ["text/plain"], "cmd": "true" },
+            { "name": "ping",    "accepts": ["application/vnd.test.pingable"], "cmd": "true" },
+            { "name": "ring",    "accepts": ["application/vnd.test.ringable"], "cmd": "true" },
+            { "name": "nope",    "accepts": ["application/vnd.other"], "cmd": "true" },
+        ]});
+        let subj = json!({ "type": "text/plain", "_facets": [
+            "application/vnd.test.pingable", "application/vnd.test.ringable" ]});
+        let n = names(&for_subject(&reg, &subj));
+        for want in ["text-op", "ping", "ring"] {
+            assert!(n.contains(&want.to_string()), "missing {want}: {n:?}");
+        }
+        assert!(!n.contains(&"nope".to_string()), "claimed an unrelated verb: {n:?}");
+    }
+
+    #[test]
+    fn for_subject_facet_equal_to_type_does_not_double_count() {
+        // A facet duplicating the content type must yield the verb exactly once.
+        let reg = json!({ "verbs": [{ "name": "op", "accepts": ["text/plain"], "cmd": "true" }] });
+        let subj = json!({ "type": "text/plain", "_facets": ["text/plain"] });
+        let n = names(&for_subject(&reg, &subj));
+        assert_eq!(n.iter().filter(|x| x.as_str() == "op").count(), 1, "double-counted: {n:?}");
+    }
+
+    #[test]
+    fn for_subject_polymorphic_impl_resolves_across_type_and_facet() {
+        // Two impls of `act`: one accepts the content type, one a facet — both match
+        // exactly. `for_subject` keeps ONE impl per name; pin which (specificity tie →
+        // later-registered wins, matching `lookup`'s `>=` tie-break).
+        let reg = json!({ "verbs": [
+            { "name": "act", "accepts": ["text/plain"], "cmd": "content-impl" },
+            { "name": "act", "accepts": ["application/vnd.test.pingable"], "cmd": "facet-impl" },
+        ]});
+        let subj = json!({ "type": "text/plain", "_facets": ["application/vnd.test.pingable"] });
+        let got = for_subject(&reg, &subj);
+        let acts: Vec<&Value> = got.iter().filter(|v| v["name"] == json!("act")).collect();
+        assert_eq!(acts.len(), 1, "polymorphic verb kept more than once");
+        assert_eq!(acts[0]["cmd"], json!("facet-impl"), "later-registered tie should win");
+    }
+
+    #[test]
+    fn default_for_subject_first_facet_with_a_default_wins() {
+        // Content type has no default; the FIRST facet that declares one wins (order:
+        // type, then facets left-to-right).
+        let reg = json!({ "verbs": [
+            { "name": "a", "accepts": ["application/vnd.x.a"], "default_for": "application/vnd.x.a", "cmd": "true" },
+            { "name": "b", "accepts": ["application/vnd.x.b"], "default_for": "application/vnd.x.b", "cmd": "true" },
+        ]});
+        let subj = json!({ "type": "text/plain", "_facets": ["application/vnd.x.a", "application/vnd.x.b"] });
+        assert_eq!(default_for_subject(&reg, &subj).unwrap()["name"], json!("a"));
+    }
+
     #[test]
     fn handle_subject_drops_coincidental_glob_but_keeps_is_a_derived_glob() {
         let reg = json!({

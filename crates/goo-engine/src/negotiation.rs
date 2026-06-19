@@ -834,6 +834,45 @@ mod tests {
         );
     }
 
+    // When BOTH memberships yield a route, the cheapest wins — the key positive that
+    // the existing test (facet-where-content-has-none) doesn't cover. Here the verb
+    // accepts json (reachable from text/csv only via a converter hop) AND inode/file
+    // (direct), so the facet route is cheaper and must be the one chosen.
+    #[test]
+    fn plan_request_over_takes_the_cheaper_of_two_membership_routes() {
+        let reg = j!({ "channels": [
+            { "name": "csv2json", "accepts": ["text/csv"], "emits": "application/json", "cost": "cheap", "cmd": "x" }
+        ]});
+        let verb = j!({ "name": "v", "accepts": ["application/json", "inode/file"], "emits": "application/x-out" });
+        let target = Target { accept: strs(&["application/x-out"]), env_caps: vec![] };
+        let p = plan_request_over(&["text/csv", "inode/file"], &verb, &target, &reg, &[], None, Hops::default())
+            .expect("both memberships route; should plan");
+        assert!(
+            !p.steps.iter().any(|s| matches!(&s.kind, StepKind::Convert(_))),
+            "should take the cheaper DIRECT facet route, not the csv→json converter route: {:?}",
+            p.steps.iter().map(|s| &s.kind).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn plan_request_over_with_one_membership_equals_the_base_planner() {
+        let reg = j!({});
+        let verb = j!({ "name": "v", "accepts": ["text/plain"], "emits": "text/plain" });
+        let target = Target { accept: strs(&["text/plain"]), env_caps: vec![] };
+        let over = plan_request_over(&["text/plain"], &verb, &target, &reg, &[], None, Hops::default());
+        let base = plan_request_using_bounded("text/plain", &verb, &target, &reg, &[], None, Hops::default());
+        assert!(over.is_some());
+        assert_eq!(over.as_ref().map(|p| p.cost), base.as_ref().map(|p| p.cost));
+    }
+
+    #[test]
+    fn plan_request_over_empty_memberships_is_none() {
+        let reg = j!({});
+        let verb = j!({ "name": "v", "accepts": ["text/plain"], "emits": "text/plain" });
+        let target = Target { accept: strs(&["text/plain"]), env_caps: vec![] };
+        assert!(plan_request_over(&[], &verb, &target, &reg, &[], None, Hops::default()).is_none());
+    }
+
     // Multi-hop coercion: the algorithm actually *chains* converters
     // (csv→tsv→json), not just direct edges.
     #[test]

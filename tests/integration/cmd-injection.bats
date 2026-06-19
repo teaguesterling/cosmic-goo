@@ -33,3 +33,34 @@ setup() {
     [ ! -e PWNED2 ]
     [[ "$output" == *"first line"* ]]
 }
+
+# Structural guard for the WHOLE class (the runtime tests above cover read/preview;
+# this covers every cmd/run/list_cmd in every shipped plugin, incl. side-effecting
+# verbs like copy-path/reveal/tmux that are unsafe to run). An untrusted
+# {subject|object|in}.field reaching bash must go through |q/|uri/|sh — never bare
+# (word-split/inject) and never hand-quoted ('{x}', the read RCE). Block-aware so
+# multi-line ('''…''') cmds are covered. Whitelist = cos-cli integer indices
+# (compositor state, not attacker-controllable). The by-construction home for this is
+# a future `goo validate` lint (see doc/design/facet-trust-boundary.md).
+@test "lint: untrusted subject/object/in fields in shipped cmds are |q-quoted (no bare, no hand-quote)" {
+    cat > "$BATS_TEST_TMPDIR/qlint.awk" <<'AWK'
+function scan(line,   s) {
+  while (match(line, /\{(subject|object|in)\.[a-z0-9._]+\}/)) {
+    s = substr(line, RSTART, RLENGTH); line = substr(line, RSTART + RLENGTH)
+    if (s=="{subject.metadata.index}"||s=="{subject.metadata.group_index}"||s=="{object.metadata.index}"||s=="{object.metadata.group_index}") continue
+    print FILENAME ":" FNR ": " s
+  }
+}
+BEGIN { inblk=0 }
+{
+  if (inblk) { scan($0); if ($0 ~ /\047\047\047/) inblk=0; next }
+  if ($0 ~ /^[[:space:]]*(cmd|run|list_cmd|values_cmd|object_list_cmd)[[:space:]]*=/) {
+    scan($0); cp=$0; if (gsub(/\047\047\047/, "X", cp)==1) inblk=1
+  }
+}
+AWK
+    run awk -f "$BATS_TEST_TMPDIR/qlint.awk" "$REPO_ROOT"/plugins/*.toml "$REPO_ROOT"/crates/goo-engine/core.toml
+    [ "$status" -eq 0 ]
+    # awk prints `file:line: {field}` per violation; output must be empty.
+    [ -z "$output" ] || { echo "Unquoted untrusted substitutions (use |q / |uri / |sh):"; echo "$output"; false; }
+}
