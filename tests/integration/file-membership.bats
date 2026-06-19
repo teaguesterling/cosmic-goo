@@ -63,12 +63,12 @@ setup() {
     [[ "$output" != *"reveal"* ]]
 }
 
-# A SOURCE can mint per-instance facets from its data (the contact mechanism: a
-# subject is `pingable` iff its data says so). Uses a CAPABILITY facet, not a bus
-# type, so it stays correct under the source-facet allowlist decision. Positive: the
-# item that claims the facet gets the matching verb. Negative: the sibling that
-# doesn't, doesn't.
-@test "membership: a source mints per-instance capability facets and the verb list adapts" {
+# A SOURCE mints per-instance facets from its data (the contact mechanism: a subject
+# is `pingable` iff its data says so), bounded by the source's declared `facets`
+# allowlist. Item `a` emits the declared capability facet AND an undeclared bus type
+# (`inode/file`); the allowlist keeps the former and DROPS the latter — so untrusted
+# list_cmd data can't forge file verbs. `b` emits nothing.
+@test "membership: a source mints declared capability facets per-instance; undeclared ones are dropped" {
     cat > "$BATS_TEST_TMPDIR/things.toml" <<'EOF'
 name = "things-fixture"
 [[types]]
@@ -80,17 +80,21 @@ name = "application/vnd.test.pingable"
 name = "things"
 prefix = "thing"
 emits = "application/vnd.test.thing"
-list_cmd = '''printf '[{"id":"a","title":"A","_facets":["application/vnd.test.pingable"]},{"id":"b","title":"B"}]' '''
+facets = ["application/vnd.test.pingable"]
+list_cmd = '''printf '[{"id":"a","title":"A","_facets":["application/vnd.test.pingable","inode/file"]},{"id":"b","title":"B"}]' '''
 [[verbs]]
 name = "ping"
 accepts = ["application/vnd.test.pingable"]
 cmd = "echo pong"
 EOF
-    # `a` claims the pingable facet → `ping` applies…
+    # `a` claims the DECLARED facet → `ping` applies…
     run "$GOO" -c "$BATS_TEST_TMPDIR/things.toml" what :thing/a </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" == *"ping"* ]]
-    # …`b` does not claim it → `ping` is absent (the per-instance guard).
+    # …but the UNDECLARED `inode/file` it also emitted is dropped → no file verbs.
+    [[ "$output" != *"copy-path"* ]]
+    [[ "$output" != *"reveal"* ]]
+    # `b` emits no facet → no ping (the per-instance guard).
     run "$GOO" -c "$BATS_TEST_TMPDIR/things.toml" what :thing/b </dev/null
     [ "$status" -eq 0 ]
     [[ "$output" != *"ping"* ]]

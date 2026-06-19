@@ -1,9 +1,9 @@
 # Decision: source-emitted facets are a declared allowlist
 
-> **Status: decided, unimplemented.** A design-record for the trust boundary the
-> per-instance-facet pattern ([contact-domain.md](contact-domain.md)) introduces. No
-> source emits facets yet — only the engine does (`resolve_file`'s `inode/file`) — so
-> this is settled *before* the first facet-emitting source ships, when it's free.
+> **Status: implemented.** A design-record for the trust boundary the
+> per-instance-facet pattern ([contact-domain.md](contact-domain.md)) introduces. Built
+> ahead of the first facet-emitting source, when it was free: a `[[sources]] facets`
+> allowlist, intersected at `address::resolve_source`, with a `goo validate` check.
 
 ## The surface this opens
 
@@ -69,16 +69,20 @@ its three capability facets.
   Simpler for authors, but a *denylist* is fragile — a newly-added bus that's forgotten is
   a hole. An allowlist fails closed; a denylist fails open.
 
-## Implementation shape (for when the first facet-source lands — not now)
+## Implementation (built)
 
-- `[[sources]]` gains an optional `facets: [String]`.
-- In `address::resolve_source::tagged`, after cloning the item, **retain only** the
-  `_facets` entries present in the source's declared `facets` (drop the rest); engine-minted
-  facets (`resolve_file`) are unaffected — they don't come through a source.
-- `goo validate`: declared `facets` must be declared `[[types]]` (catches typos and
-  stray bus-type claims at load).
-- Tests mirror the file-membership unit tests: a source emitting an *undeclared* facet
-  (e.g. `inode/file`) does **not** grant the corresponding verbs; a declared one does.
+- `[[sources]]` gained an optional `facets: [String]`.
+- `address::resolve_source` (in `tagged`) **retains only** the `_facets` entries present in
+  the source's declared `facets`, dropping the rest (a source that declares none emits
+  none); engine-minted facets (`resolve_file`'s `inode/file`) are unaffected — they don't
+  come through a source.
+- `goo validate` (check #10): each declared `facets` entry must be a declared `[[types]]`.
+  This catches typos and — because the dangerous bus types (`inode/file`, `text/plain`)
+  aren't declared types — automatically blocks a source from allowlisting one. File-backed
+  sources use `emits`, not facets, so they're unaffected.
+- Tests: `resolve_source` intersect (declared kept, undeclared incl. a bus type dropped;
+  no-allowlist drops all) as engine units; the rejection + clean cases in `validate.bats`;
+  the end-to-end adapt-and-drop in `file-membership.bats`.
 
 ## Related hardening (separable)
 

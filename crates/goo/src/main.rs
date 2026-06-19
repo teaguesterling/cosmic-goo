@@ -1964,6 +1964,35 @@ fn cmd_validate() -> i32 {
         errors += 1;
     }
 
+    // 10. Source facet allowlists: each declared facet must be a known `[[types]]`.
+    // This catches typos AND — because the dangerous "bus" types (`inode/file`,
+    // `text/plain`) aren't declared types — naturally blocks a source from
+    // allowlisting one (file-backed sources use `emits`, not facets). The runtime
+    // intersect in `address::resolve_source` then drops any *emitted* facet outside a
+    // source's declared set. See doc/design/facet-trust-boundary.md.
+    let type_names: std::collections::HashSet<String> = arr("types")
+        .iter()
+        .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(str::to_string))
+        .collect();
+    for s in arr("sources") {
+        let sname = s.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if let Some(facets) = s.get("facets").and_then(|f| f.as_array()) {
+            for f in facets {
+                match f.as_str() {
+                    Some(fname) if type_names.contains(fname) => {}
+                    Some("") | None => {
+                        err(format!("source \"{sname}\" has an empty/invalid facet"));
+                        errors += 1;
+                    }
+                    Some(fname) => {
+                        err(format!("source \"{sname}\" declares facet \"{fname}\" which is not a declared type"));
+                        errors += 1;
+                    }
+                }
+            }
+        }
+    }
+
     if errors == 0 {
         let n = |k: &str| arr(k).len();
         println!(

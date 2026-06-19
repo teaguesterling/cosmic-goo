@@ -252,3 +252,44 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" =~ "1 dispatch" ]]
 }
+
+@test "validate: a source facet that isn't a declared type is rejected" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/bad.toml" <<'EOF'
+name = "bad"
+[[types]]
+name = "application/vnd.test.thing"
+kind = "handle"
+[[sources]]
+name = "things"
+prefix = "thing"
+emits = "application/vnd.test.thing"
+facets = ["inode/file"]
+list_cmd = "printf '[]'"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "facet" ]]
+    [[ "$output" =~ "not a declared type" ]]
+}
+
+@test "validate: a source facet that IS a declared type passes" {
+    cat > "$COSMIC_GOO_BUILTIN_PLUGINS_DIR/ok.toml" <<'EOF'
+name = "ok"
+[[types]]
+name = "application/vnd.test.thing"
+kind = "handle"
+[[types]]
+name = "application/vnd.test.pingable"
+[[sources]]
+name = "things"
+prefix = "thing"
+emits = "application/vnd.test.thing"
+facets = ["application/vnd.test.pingable"]
+list_cmd = "printf '[]'"
+EOF
+    fresh
+    run "$GOO" validate </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "OK" ]]
+}

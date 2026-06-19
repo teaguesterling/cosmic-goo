@@ -364,6 +364,16 @@ fn resolve_source(domain: &str, q: &str, is_search: bool, refine: &[(String, Str
         .ok_or_else(|| format!("no domain or source named '{domain}'"))?;
 
     let emits = source.get("emits").and_then(Value::as_str).unwrap_or("text/plain");
+    // The source's facet allowlist: the only memberships its items may claim (see
+    // doc/design/facet-trust-boundary.md). A source that declares none can emit no
+    // facets. Item-emitted `_facets` are intersected with this below — so untrusted
+    // `list_cmd` output (a shared CardDAV store, a hostile repo) can never forge a
+    // membership the source author didn't enumerate (e.g. a bus type like inode/file).
+    let allowed_facets: Vec<String> = source
+        .get("facets")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
     let list_cmd = source
         .get("list_cmd")
         .and_then(Value::as_str)
@@ -396,6 +406,24 @@ fn resolve_source(domain: &str, q: &str, is_search: bool, refine: &[(String, Str
         let mut o = it.clone();
         if let Some(m) = o.as_object_mut() {
             m.insert("type".into(), json!(emits));
+            // Restrict source-emitted facets to the declared allowlist; drop the rest.
+            if m.contains_key("_facets") {
+                let kept: Vec<Value> = m
+                    .get("_facets")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter(|f| f.as_str().is_some_and(|s| allowed_facets.iter().any(|d| d == s)))
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if kept.is_empty() {
+                    m.remove("_facets");
+                } else {
+                    m.insert("_facets".into(), Value::Array(kept));
+                }
+            }
         }
         o
     };
@@ -660,6 +688,30 @@ mod tests {
         assert_eq!(resolve("%alpha", &r, None).unwrap()["id"], "alpha"); // custom sigil → search
         assert!(resolve(":things:zeta", &r, None).is_err());
         assert!(resolve(":nosuch:x", &r, None).unwrap_err().contains("no domain or source"));
+    }
+
+    // ---- source facet allowlist (doc/design/facet-trust-boundary.md) ----
+    #[test]
+    fn resolve_source_intersects_emitted_facets_with_declared_allowlist() {
+        // The source allowlists ONE facet; its item emits that plus a bus type and an
+        // undeclared capability. Only the allowlisted facet survives onto the subject —
+        // so untrusted list_cmd output can't forge a membership the author didn't enumerate.
+        let reg = json!({ "sources": [{
+            "name": "s", "prefix": "s", "emits": "application/vnd.t.thing",
+            "facets": ["application/vnd.t.ok"],
+            "list_cmd": r#"printf '[{"id":"a","_facets":["application/vnd.t.ok","inode/file","application/vnd.t.nope"]}]'"#,
+        }]});
+        assert_eq!(resolve(":s/a", &reg, None).unwrap()["_facets"], json!(["application/vnd.t.ok"]));
+    }
+
+    #[test]
+    fn resolve_source_with_no_allowlist_drops_every_emitted_facet() {
+        // A source that declares no `facets` can mint none — even a bus type is stripped.
+        let reg = json!({ "sources": [{
+            "name": "s", "prefix": "s", "emits": "application/vnd.t.thing",
+            "list_cmd": r#"printf '[{"id":"a","_facets":["inode/file"]}]'"#,
+        }]});
+        assert!(resolve(":s/a", &reg, None).unwrap().get("_facets").is_none());
     }
     #[test]
     fn resolve_refine_filters() {
