@@ -1019,11 +1019,17 @@ fn needs_coercion(reg: &Value, verb: &Value, subject: &Value) -> bool {
         Some(a) if !a.is_empty() => a,
         _ => return false,
     };
-    let stype = match subject.get("type").and_then(|t| t.as_str()) {
-        Some(t) => t,
-        None => return false,
-    };
-    !accepts.iter().filter_map(|p| p.as_str()).any(|p| mime::is_subtype(stype, p, reg))
+    // Membership-aware: coercion is needed only if NONE of the subject's claimed types
+    // — its content `type` AND any provenance `_facets` — is directly accepted. A
+    // facet-accepted verb (`open` on a file via `inode/file`, `email` on a contact via
+    // `emailable`) runs DIRECTLY on the structured subject; routing it through the
+    // coercion/presentation pipeline (which threads the subject as bytes on disk) would
+    // discard its fields. Mirrors the membership matching in `verbs::render`/negotiation.
+    let types = verbs::subject_types(subject);
+    if types.is_empty() {
+        return false;
+    }
+    !types.iter().any(|t| accepts.iter().filter_map(|p| p.as_str()).any(|p| mime::is_subtype(t, p, reg)))
 }
 
 /// Run a verb through the negotiation engine — for a `present` verb (the subject

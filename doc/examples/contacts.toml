@@ -1,0 +1,100 @@
+# Contacts as goo subjects — the multi-facet / per-instance-facet worked example.
+#
+#   goo -c doc/examples/contacts.toml do :contact:alice     # the verbs that fit Alice
+#   goo -c doc/examples/contacts.toml email :contact:alice  # compose to her
+#   goo -c doc/examples/contacts.toml call  :contact:bob    # (only if Bob has a phone)
+#
+# A contact is a HANDLE whose *capabilities* are data-driven: emailable iff it has an
+# email, callable iff it has a phone. Those are carried as per-instance `_facets` the
+# source mints from each contact's fields (see doc/design/contact-domain.md), so the
+# verb list ADAPTS per contact — `call`/`message` appear only on contacts with a phone.
+#
+# Backend: a directory of vCard (.vcf) files — `$GOO_CONTACTS_DIR`, default ~/.contacts.
+# Populate it however you like; `vdirsyncer` syncs a CardDAV server into exactly this
+# shape. (khard users can swap the producer below for `khard ls -p`, adjusting the
+# tab-column order to their version — left as vCard-parse here so it's dep-light and
+# verifiable.) No dir / no .vcf ⇒ no contacts, never an error — `:contact:x` just
+# can't resolve.
+
+[[types]]
+name = "application/vnd.goo.contact"
+display = "contact"
+kind = "handle"                       # a person/org reference — NOT text, NOT a file
+
+# Capability facets — each is exactly one verb's accept-pattern. Declared as types so
+# the source may allowlist them (the facet-trust-boundary check); a contact claims the
+# ones its data supports. Because these are the ONLY facets the source declares, an
+# untrusted vCard can never forge a bus type (inode/file, text/*) onto a contact.
+[[types]]
+name = "application/vnd.goo.emailable"
+display = "emailable"
+[[types]]
+name = "application/vnd.goo.callable"
+display = "callable"
+[[types]]
+name = "application/vnd.goo.messageable"
+display = "messageable"
+
+[[sources]]
+name = "contacts"
+prefix = "contact"                    # :contact:alice (fuzzy) · :contact/<uid> (exact)
+emits = "application/vnd.goo.contact"
+facets = [                            # the allowlist: the only memberships an item may claim
+  "application/vnd.goo.emailable",
+  "application/vnd.goo.callable",
+  "application/vnd.goo.messageable",
+]
+# Parse each vCard to `uid<TAB>name<TAB>email<TAB>phone`, then project to a subject and
+# mint the facets its fields support. First EMAIL/TEL wins (preferred handling is a
+# follow-up). The name is shown (untrusted → display-only) and the values live in
+# metadata for the verbs.
+list_cmd = '''
+dir="${GOO_CONTACTS_DIR:-$HOME/.contacts}"
+[ -d "$dir" ] || exit 0
+awk -F: '
+  { sub(/\r$/,"") }
+  /^BEGIN:VCARD/ { fn=""; em=""; tel=""; uid="" }
+  /^FN[:;]/    && fn==""  { v=$0; sub(/^[^:]*:/,"",v); fn=v }
+  /^EMAIL[:;]/ && em==""  { v=$0; sub(/^[^:]*:/,"",v); em=v }
+  /^TEL[:;]/   && tel=="" { v=$0; sub(/^[^:]*:/,"",v); tel=v }
+  /^UID[:;]/   && uid=="" { v=$0; sub(/^[^:]*:/,"",v); uid=v }
+  /^END:VCARD/ { if (fn!="") { if (uid=="") uid=fn; printf "%s\t%s\t%s\t%s\n", uid, fn, em, tel } }
+' "$dir"/*.vcf 2>/dev/null \
+| jq -Rsc 'split("\n") | map(select(length>0) | split("\t") | {
+    id: .[0], title: .[1],
+    metadata: { email: .[2], phone: .[3] },
+    _facets: ( []
+      + (if (.[2] // "") != "" then ["application/vnd.goo.emailable"]                              else [] end)
+      + (if (.[3] // "") != "" then ["application/vnd.goo.callable", "application/vnd.goo.messageable"] else [] end) )
+  })'
+'''
+
+# Verbs. email/call/message are gated by the matching facet, so they only appear on a
+# contact whose data supports them. They hand a scheme URI to the desktop's handler —
+# `|uri` percent-encodes (no shell-special bytes survive), `|q` shell-quotes; an email
+# of `a@b?cc=evil` can't inject mailto headers.
+
+[[verbs]]
+name = "card"
+description = "Show the contact's card (name, email, phone)"
+accepts = ["application/vnd.goo.contact"]
+default_for = "application/vnd.goo.contact"   # bare `goo :contact:alice` → card
+cmd = "printf 'Name:  %s\\nEmail: %s\\nPhone: %s\\n' {subject.title|q} {subject.metadata.email|q} {subject.metadata.phone|q}"
+
+[[verbs]]
+name = "email"
+description = "Compose an email to the contact"
+accepts = ["application/vnd.goo.emailable"]
+cmd = "xdg-email {subject.metadata.email|q}"
+
+[[verbs]]
+name = "call"
+description = "Call the contact via the tel: handler"
+accepts = ["application/vnd.goo.callable"]
+cmd = "xdg-open tel:{subject.metadata.phone|uri}"
+
+[[verbs]]
+name = "message"
+description = "Text the contact via the sms: handler"
+accepts = ["application/vnd.goo.messageable"]
+cmd = "xdg-open sms:{subject.metadata.phone|uri}"

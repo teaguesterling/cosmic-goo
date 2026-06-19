@@ -1,10 +1,22 @@
 # The `:contact` domain — a worked spec for per-instance facets
 
-> **Status: design spec only** (drilled from [expansion-candidates](expansion-candidates.md)
-> Bucket B). The contact is goo's **multi-facet exemplar** — the candidate that most
-> stress-tests the membership model the file-vs-data work shipped. Specced here in full
-> because the *mechanism* it exercises (per-instance, data-driven facets) generalizes far
-> beyond contacts. No implementation.
+> **Status: built** as [`doc/examples/contacts.toml`](https://github.com/teaguesterling/cosmic-goo/blob/main/doc/examples/contacts.toml)
+> (`-c`-loadable, vCard-dir backend via `$GOO_CONTACTS_DIR`). The contact is goo's
+> **multi-facet exemplar** — the candidate that most stress-tests the membership model
+> the file-vs-data work shipped, and building it surfaced the last gap in that model
+> (see *What building it taught us* below). The per-instance, data-driven facet mechanism
+> it exercises generalizes far beyond contacts.
+>
+> **What building it taught us.** (1) The capability-facet *action* verbs (`email`/`call`)
+> initially didn't dispatch — `needs_coercion` (the exec router) checked only the primary
+> `type`, not membership, so a facet-accepted verb was wrongly sent through the
+> coercion/presentation pipeline (which threads the subject as bytes and discarded its
+> fields). Making `needs_coercion` membership-aware — the one acceptance site the original
+> file-vs-data work missed (masked because files have a `metadata.path`) — fixed it; the
+> facet design now works end-to-end. (2) The display verb is `card`, not `show`: `show`
+> already collides across git/clipboard, and verb-first dispatch of a name with multiple
+> unrelated impls resolves to the first-registered (a separate pre-existing issue). A
+> contact card is its own thing anyway.
 
 ## Why a contact is the interesting case
 

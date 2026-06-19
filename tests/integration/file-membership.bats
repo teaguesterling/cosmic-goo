@@ -99,3 +99,34 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" != *"ping"* ]]
 }
+
+# A verb that matches its subject via a FACET (not the primary type) must run DIRECTLY
+# on the structured subject — keeping metadata — not get routed through the coercion/
+# presentation pipeline (which threads the subject as bytes on disk and would discard
+# its fields). Regression for `needs_coercion` being membership-aware. Before the fix,
+# `email :contact:x` (email accepts the emailable facet, contact has no path/text)
+# resolved to a hollow subject and lost metadata.email.
+@test "membership: a facet-matched verb runs on the structured subject (metadata preserved)" {
+    cat > "$BATS_TEST_TMPDIR/ping.toml" <<'EOF'
+name = "ping-fixture"
+[[types]]
+name = "application/vnd.test.thing"
+kind = "handle"
+[[types]]
+name = "application/vnd.test.pingable"
+[[sources]]
+name = "things"
+prefix = "thing"
+emits = "application/vnd.test.thing"
+facets = ["application/vnd.test.pingable"]
+list_cmd = '''printf '[{"id":"a","title":"A","metadata":{"addr":"PING-DATA"},"_facets":["application/vnd.test.pingable"]}]' '''
+[[verbs]]
+name = "ping"
+accepts = ["application/vnd.test.pingable"]
+cmd = "echo GOT={subject.metadata.addr|q}"
+EOF
+    # ping accepts the pingable FACET; the subject's type is vnd.test.thing (no path/text).
+    run "$GOO" -c "$BATS_TEST_TMPDIR/ping.toml" do :thing/a ping </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GOT=PING-DATA"* ]]   # metadata survived → direct render, not hollowed
+}
