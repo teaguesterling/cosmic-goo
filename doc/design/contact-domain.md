@@ -15,8 +15,10 @@
 > file-vs-data work missed (masked because files have a `metadata.path`) — fixed it; the
 > facet design now works end-to-end. (2) The display verb is `card`, not `show`: `show`
 > already collides across git/clipboard, and verb-first dispatch of a name with multiple
-> unrelated impls resolves to the first-registered (a separate pre-existing issue). A
-> contact card is its own thing anyway.
+> impls used to resolve to the first-registered, 415-ing on the others — a separate
+> pre-existing gap this surfaced, since **fixed** (`verbs::lookup_subject` re-selects the
+> impl by the resolved subject). The name stays `card` on the merits: a contact card is
+> its own thing, not something you `git show`.
 
 ## Why a contact is the interesting case
 

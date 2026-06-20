@@ -101,6 +101,34 @@ pub fn lookup(reg: &Value, name: &str, type_filter: Option<&str>) -> Option<Valu
     best.map(|(_, v)| v.clone())
 }
 
+/// The most-specific impl of verb `name` for `subject` — scoring `accepts` over the
+/// subject's full **membership** (its content `type` plus any provenance `_facets`),
+/// the dispatch counterpart of [`for_subject`]'s per-name selection. `None` if the
+/// subject is untyped or no impl of `name` accepts it (the caller then keeps its
+/// by-name pick). This is what lets verb-first dispatch pick the impl that actually
+/// accepts the *resolved* subject — `goo show :br/main` runs git's `show`, not the
+/// first-registered `show` — instead of `lookup(name, None)`'s first impl. Honours
+/// `valid_when` so the chosen impl matches what `for_subject` lists.
+pub fn lookup_subject(reg: &Value, name: &str, subject: &Value) -> Option<Value> {
+    let types = subject_types(subject);
+    if types.is_empty() {
+        return None;
+    }
+    let verbs = reg.get("verbs")?.as_array()?;
+    let mut best: Option<(i32, &Value)> = None;
+    for v in verbs {
+        if v.get("name").and_then(Value::as_str) != Some(name) || !valid_for(v, subject) {
+            continue;
+        }
+        if let Some(s) = types.iter().filter_map(|t| verb_specificity(v, t, reg)).max() {
+            if best.is_none_or(|(b, _)| s >= b) {
+                best = Some((s, v));
+            }
+        }
+    }
+    best.map(|(_, v)| v.clone())
+}
+
 /// How well `pattern` matches `t`: `None` = no match; higher = more specific.
 /// Exact (`pattern == t`) > lattice/subtype match (declared `is_a`, structured
 /// suffix) > glob (`text/*`, scored by prefix length so `text/markdown` beats
@@ -967,6 +995,36 @@ template_var = { depth_prefix = "Ultrathink about" }
         assert!(render(&reg, &open_poly, &file, &json!({}), &json!({})).is_ok());
         let clip = json!({ "type": "text/plain", "id": "/x" });
         assert!(render(&reg, &open_poly, &clip, &json!({}), &json!({})).is_err());
+    }
+
+    #[test]
+    fn lookup_subject_picks_the_impl_that_accepts_the_subject_not_the_first() {
+        // Two impls of `act`: first accepts A, second accepts B. Dispatch must pick by
+        // the SUBJECT, not registration order — the fix for `goo show :br/main` running
+        // git's `show` (which accepts branches) instead of clipboard's first-registered.
+        let reg = json!({ "verbs": [
+            { "name": "act", "accepts": ["application/vnd.a"], "cmd": "A" },
+            { "name": "act", "accepts": ["application/vnd.b"], "cmd": "B" },
+        ]});
+        assert_eq!(lookup_subject(&reg, "act", &json!({"type":"application/vnd.b"})).unwrap()["cmd"], json!("B"));
+        assert_eq!(lookup_subject(&reg, "act", &json!({"type":"application/vnd.a"})).unwrap()["cmd"], json!("A"));
+        // No impl accepts the subject → None (caller keeps its by-name pick).
+        assert!(lookup_subject(&reg, "act", &json!({"type":"application/vnd.z"})).is_none());
+        // Untyped subject → None.
+        assert!(lookup_subject(&reg, "act", &json!({})).is_none());
+    }
+
+    #[test]
+    fn lookup_subject_matches_an_impl_via_a_facet_membership() {
+        // The contact case: `email` accepts the `emailable` facet; the subject's type is
+        // `contact` but it claims `emailable` via a `_facet`, so lookup_subject finds it.
+        let reg = json!({ "verbs": [
+            { "name": "email", "accepts": ["application/vnd.emailable"], "cmd": "x" },
+        ]});
+        let contact = json!({ "type": "application/vnd.contact", "_facets": ["application/vnd.emailable"] });
+        assert_eq!(lookup_subject(&reg, "email", &contact).unwrap()["cmd"], json!("x"));
+        // Without the facet, the contact type alone doesn't match `email` → None.
+        assert!(lookup_subject(&reg, "email", &json!({"type":"application/vnd.contact"})).is_none());
     }
 
     #[test]

@@ -878,6 +878,14 @@ fn cmd_explain(args: &[String]) -> i32 {
         None => vec![&subject_type],
     };
 
+    // Preview the impl the run would actually pick (the verb was looked up by name →
+    // first impl). For a resolved subject, re-select the most-specific impl, so
+    // `--explain show :br/main` previews git's `show`, matching dispatch.
+    let verb = subject
+        .as_ref()
+        .and_then(|s| verbs::lookup_subject(&reg, verb_name, s))
+        .unwrap_or(verb);
+
     let (tty, display) = match env_ovr {
         Some("tty") => (true, false),
         Some("cosmic") | Some("cosmic-term") => (true, true),
@@ -2596,6 +2604,15 @@ fn cmd_verb(reg: &Value, args: &[String]) -> i32 {
     } else {
         Value::Null
     };
+
+    // Re-select the most-specific impl of this (possibly polymorphic) verb for the
+    // RESOLVED subject — the initial `lookup(name, None)` returned the first impl by
+    // name. Without this, `goo show :br/main` runs clipboard's `show` (first), not
+    // git's, and 415s. Falls back to the by-name impl when the subject is untyped or
+    // no impl matches (unchanged behaviour). The first impl is still what
+    // `resolve_subject` used to resolve a bare token; this only fixes the impl used
+    // to render/execute, agreeing with what `goo what` lists.
+    let verb = verbs::lookup_subject(reg, verb_name, &subject).unwrap_or(verb);
 
     let has_object_type = verb.get("object_type").and_then(|t| t.as_str()).filter(|s| !s.is_empty()).is_some();
     let object = if !object_arg.is_empty() || has_object_type {
