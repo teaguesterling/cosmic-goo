@@ -1028,6 +1028,51 @@ template_var = { depth_prefix = "Ultrathink about" }
     }
 
     #[test]
+    fn lookup_subject_reaches_the_middle_impl_of_a_three_way_family() {
+        // `connect`/`stop`/`info` ship with three impls. The two-impl test above only
+        // proves first and last are reachable; a middle impl is a distinct position
+        // (preceded AND followed by non-matching impls). Pin that it resolves too.
+        let reg = json!({ "verbs": [
+            { "name": "act", "accepts": ["application/vnd.a"], "cmd": "A" },
+            { "name": "act", "accepts": ["application/vnd.b"], "cmd": "B" },
+            { "name": "act", "accepts": ["application/vnd.c"], "cmd": "C" },
+        ]});
+        assert_eq!(lookup_subject(&reg, "act", &json!({"type":"application/vnd.b"})).unwrap()["cmd"], json!("B"));
+    }
+
+    #[test]
+    fn lookup_subject_prefers_the_more_specific_impl_over_a_glob_regardless_of_order() {
+        // `info` ships a glob impl (`image/*`) beside more specific ones. Selection must
+        // rank by specificity, not registration order: an exact impl must win over a
+        // glob even when the glob is registered FIRST (the order that would lose without
+        // the `s >= b` specificity comparison in lookup_subject).
+        let reg = json!({ "verbs": [
+            { "name": "view", "accepts": ["t/*"],   "cmd": "GLOB"  },
+            { "name": "view", "accepts": ["t/png"], "cmd": "EXACT" },
+        ]});
+        // A type both match → exact wins (i32::MAX beats glob's prefix-length score).
+        assert_eq!(lookup_subject(&reg, "view", &json!({"type":"t/png"})).unwrap()["cmd"], json!("EXACT"));
+        // A type only the glob matches → glob is the lone candidate.
+        assert_eq!(lookup_subject(&reg, "view", &json!({"type":"t/gif"})).unwrap()["cmd"], json!("GLOB"));
+    }
+
+    #[test]
+    fn lookup_subject_skips_an_empty_accepts_impl_for_a_typed_subject() {
+        // media's `stop` has empty `accepts` (a subjectless/global verb), registered
+        // alongside container/service impls. verbs.rs:`accepts_type` — "a verb with no
+        // accepts never matches a (non-empty) type" — must hold through dispatch: the
+        // empty-accepts impl can never shadow a typed subject, even registered first.
+        let reg = json!({ "verbs": [
+            { "name": "stop", "accepts": [],            "cmd": "GLOBAL" },
+            { "name": "stop", "accepts": ["t/unit"],    "cmd": "TYPED"  },
+        ]});
+        assert_eq!(lookup_subject(&reg, "stop", &json!({"type":"t/unit"})).unwrap()["cmd"], json!("TYPED"));
+        // And on a subject no typed impl accepts, the empty-accepts impl still doesn't
+        // match — lookup returns None (caller keeps its by-name pick), never GLOBAL.
+        assert!(lookup_subject(&reg, "stop", &json!({"type":"t/other"})).is_none());
+    }
+
+    #[test]
     fn default_for_subject_prefers_content_default_then_falls_through_to_a_facet() {
         let reg = fixture(); // echo-text default_for text/plain; open-poly default_for inode/file
         // Content type with its own default wins over the facet.
