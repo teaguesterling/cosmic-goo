@@ -2592,14 +2592,26 @@ fn cmd_verb(reg: &Value, args: &[String]) -> i32 {
     let object_arg = positionals.get(1).cloned().unwrap_or_default();
 
     let accepts_count = verb.get("accepts").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0);
-    let subject = if accepts_count > 0 {
+    // Resolve the positional as a subject when THIS impl accepts a type, OR when the
+    // verb NAME has any typed impl and a positional was given. The latter guards the
+    // empty-first mixed family: `verb` here is the first impl by name, so if it is
+    // subjectless (empty `accepts`) a `:src/id` positional would otherwise be taken as
+    // literal text and never resolved — leaving `lookup_subject` (below) nothing typed
+    // to re-select. `stop`'s shipped order (containers' typed impl first) hides this;
+    // an empty-first registration would trip it. A bare (non-address) token still leans
+    // on the first impl's accepts for handle/text inference — the pre-existing
+    // polymorphic-accepts limitation (see resolve_subject's §3.4 TODO), unchanged.
+    let resolve_as_subject = accepts_count > 0
+        || (!subject_arg.is_empty() && verbs::name_accepts_any_type(reg, verb_name));
+    let subject = if resolve_as_subject {
         match resolve_subject(reg, &verb, &subject_arg, &stdin_text) {
             Ok(Subject::Value(s)) => s,
             Ok(Subject::Exit(code)) => return code,
             Err(e) => return die(e),
         }
     } else if !subject_arg.is_empty() {
-        // No accepts but a positional was given — treat as text content.
+        // No typed impl anywhere for this name but a positional was given — a pure
+        // subjectless verb taking literal text content.
         json!({ "type": "text/plain", "text": subject_arg })
     } else {
         Value::Null

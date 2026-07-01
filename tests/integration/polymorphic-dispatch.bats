@@ -132,6 +132,21 @@ cmd = "echo HALT-TYPED"
 name = "halt"
 accepts = []
 cmd = "echo HALT-GLOBAL"
+# The empty-first footgun: a subjectless (empty-accepts) impl registered BEFORE the
+# typed one. cmd_verb looks a verb up by name (→ first impl) before resolving the
+# subject; if that first impl is subjectless, a `:src/id` positional was taken as
+# literal text and never resolved, so re-selection had nothing typed to pick. The
+# name-level `name_accepts_any_type` guard fixes it: the positional resolves and
+# lookup_subject re-selects ZAP-TYPED. (No shipped plugin registers empty-first — the
+# guard is belt-and-suspenders for third-party configs that do.)
+[[verbs]]
+name = "zap"
+accepts = []
+cmd = "echo ZAP-GLOBAL"
+[[verbs]]
+name = "zap"
+accepts = ["t/unit"]
+cmd = "echo ZAP-TYPED"
 EOF
 }
 
@@ -223,4 +238,24 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"HALT-TYPED"* ]]
     [[ "$output" != *"HALT-GLOBAL"* ]]
+}
+
+# --- empty-first footgun: a subjectless impl registered before the typed one ---
+
+@test "dispatch: empty-accepts FIRST impl still resolves a typed subject (verb-first)" {
+    # `zap` registers the subjectless (empty-accepts) impl FIRST, the t/unit impl second.
+    # A `:punit/x` positional must resolve as a subject and dispatch to ZAP-TYPED, not be
+    # taken as literal text and 415. (See verbs::name_accepts_any_type.)
+    run "$GOO" -c "$BATS_TEST_TMPDIR/families.toml" zap :punit/x </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ZAP-TYPED"* ]]
+    [[ "$output" != *"ZAP-GLOBAL"* ]]
+}
+
+@test "dispatch: empty-accepts FIRST impl still resolves a typed subject (noun-first)" {
+    # `do <addr> <verb>` reorders through cmd_verb, so the same guard must hold.
+    run "$GOO" -c "$BATS_TEST_TMPDIR/families.toml" do :punit/x zap </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ZAP-TYPED"* ]]
+    [[ "$output" != *"ZAP-GLOBAL"* ]]
 }

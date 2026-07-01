@@ -129,6 +129,29 @@ pub fn lookup_subject(reg: &Value, name: &str, subject: &Value) -> Option<Value>
     best.map(|(_, v)| v.clone())
 }
 
+/// True if any impl of the verb named `name` declares a non-empty `accepts` — i.e.
+/// the name is subject-taking for at least one type, even when a subjectless
+/// (empty-`accepts`) impl is registered first. Dispatch (`cmd_verb`) consults this to
+/// decide whether a positional should be resolved as a subject (source/address)
+/// rather than taken as literal text: a *mixed* family — a typed impl beside a
+/// subjectless one, like `stop` (containers' `t/container` + media's empty
+/// `playerctl stop`) — must resolve `:container/x` even if the empty impl sorts first,
+/// so [`lookup_subject`] can then re-select the typed impl. A name whose impls are
+/// *all* empty-`accepts` (a pure subjectless verb) returns `false`, preserving the
+/// literal-text handling of `goo <verb> "some text"`.
+pub fn name_accepts_any_type(reg: &Value, name: &str) -> bool {
+    reg.get("verbs")
+        .and_then(Value::as_array)
+        .is_some_and(|verbs| {
+            verbs.iter().any(|v| {
+                v.get("name").and_then(Value::as_str) == Some(name)
+                    && v.get("accepts")
+                        .and_then(Value::as_array)
+                        .is_some_and(|a| !a.is_empty())
+            })
+        })
+}
+
 /// How well `pattern` matches `t`: `None` = no match; higher = more specific.
 /// Exact (`pattern == t`) > lattice/subtype match (declared `is_a`, structured
 /// suffix) > glob (`text/*`, scored by prefix length so `text/markdown` beats
@@ -1070,6 +1093,24 @@ template_var = { depth_prefix = "Ultrathink about" }
         // And on a subject no typed impl accepts, the empty-accepts impl still doesn't
         // match — lookup returns None (caller keeps its by-name pick), never GLOBAL.
         assert!(lookup_subject(&reg, "stop", &json!({"type":"t/other"})).is_none());
+    }
+
+    #[test]
+    fn name_accepts_any_type_ignores_empty_impls_but_needs_one_typed() {
+        // Mixed family (empty impl FIRST, typed second — the empty-first `stop` shape):
+        // the NAME is subject-taking, so cmd_verb resolves a positional as a subject
+        // instead of taking it as literal text (the footgun guard).
+        let mixed = json!({ "verbs": [
+            { "name": "stop", "accepts": [],         "cmd": "GLOBAL" },
+            { "name": "stop", "accepts": ["t/unit"], "cmd": "TYPED"  },
+        ]});
+        assert!(name_accepts_any_type(&mixed, "stop"));
+        // A pure subjectless verb (all impls empty) is NOT subject-taking → keep the
+        // literal-text handling of `goo say "hello"`.
+        let pure = json!({ "verbs": [ { "name": "say", "accepts": [], "cmd": "x" } ]});
+        assert!(!name_accepts_any_type(&pure, "say"));
+        // Unknown name → false.
+        assert!(!name_accepts_any_type(&mixed, "nope"));
     }
 
     #[test]
