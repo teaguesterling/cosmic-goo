@@ -259,3 +259,36 @@ EOF
     [[ "$output" == *"ZAP-TYPED"* ]]
     [[ "$output" != *"ZAP-GLOBAL"* ]]
 }
+
+# --- --explain resolves a source-domain subject the same way the run does ---
+
+@test "explain: a source subject is typed from its source, not content-typed" {
+    # `--explain` used to resolve only type/ and file/ addresses; a source address
+    # (`:ppng/x`) fell through to content detection → text/plain → a 415 preview that
+    # disagreed with the run. It must now resolve via the source and type from `emits`.
+    run "$GOO" -c "$BATS_TEST_TMPDIR/families.toml" --explain view :ppng/x </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"t/png (via source)"* ]]
+    [[ "$output" != *"via content"* ]]
+}
+
+@test "explain: a source miss errors like the run, not a bogus text/plain route" {
+    # A non-existent id must error (parity with the run), not preview a text/plain plan.
+    run "$GOO" -c "$BATS_TEST_TMPDIR/families.toml" --explain view :ppng/nope </dev/null
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"via content"* ]]
+}
+
+@test "explain: --explain show :br/main previews git's show, matching the run" {
+    command -v git >/dev/null || skip "git not installed"
+    git init -q .
+    git config user.email t@e.x
+    git config user.name tester
+    git commit -q --allow-empty -m "seed commit"
+    git branch -M main 2>/dev/null || true
+    # Was text/plain + 415 on shipped main; must now type the branch and plan a route.
+    run "$GOO" --explain show :br/main </dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"application/vnd.git.branch"* ]]
+    [[ "$output" != *"can't be presented"* ]]
+}

@@ -754,6 +754,24 @@ use goo_engine::shell::{bash_capture, bash_capture_bytes, bash_exec};
 /// view (default: adaptive — `shell` commands for a ≤2-hop route, annotated `steps`
 /// beyond). `--paths [--max-hops C] [--format text|mermaid]` enumerates *all* routes
 /// A→B (the route-graph debugger) instead of the single chosen plan.
+/// True if `canon` (a `goo://…` URI) addresses a `[[sources]]` domain — its first
+/// path segment matches a source's `name` or `prefix`. Distinguishes a source entity
+/// (`goo://br/main`, `goo://contacts/alice`) from the built-in virtual domains
+/// (`text`/`file`/`type`/`url`/`clip`/…), so `--explain` can resolve the former to a
+/// real subject via `address::resolve` instead of content-typing the address string.
+fn is_source_address(canon: &str, reg: &Value) -> bool {
+    let domain = match canon.strip_prefix("goo://").and_then(|r| r.split('/').next()) {
+        Some(d) if !d.is_empty() => d,
+        _ => return false,
+    };
+    reg.get("sources").and_then(Value::as_array).is_some_and(|ss| {
+        ss.iter().any(|src| {
+            src.get("name").and_then(Value::as_str) == Some(domain)
+                || src.get("prefix").and_then(Value::as_str) == Some(domain)
+        })
+    })
+}
+
 fn cmd_explain(args: &[String]) -> i32 {
     let reg = registry::load_all();
     let (mut verb_name, mut subj, mut as_type, mut env_ovr, mut using): (Option<&str>, Option<&str>, Option<&str>, Option<&str>, Option<&str>) =
@@ -858,6 +876,21 @@ fn cmd_explain(args: &[String]) -> i32 {
                         ));
                     (t, src, Some(subj))
                 }
+                Err(e) => return die(e.replace("address: ", "")),
+            }
+        } else if is_source_address(&canon, &reg) {
+            // A source-domain entity (`:br/main`, `:contacts/alice`, …): resolve it the
+            // SAME WAY the run does — `address::resolve` → `resolve_source` runs the
+            // source's `list_cmd`, so the type is the source's emitted type and any
+            // per-item `_facets` come along for membership. Without this, a source
+            // address was content-typed to `text/plain` and previewed a 415 that
+            // disagreed with the run (`--explain show :br/main` vs. the working run).
+            match address::resolve(&listing, &reg, None) {
+                Ok(subj) => (
+                    subj.get("type").and_then(Value::as_str).unwrap_or("application/octet-stream").to_string(),
+                    "source",
+                    Some(subj),
+                ),
                 Err(e) => return die(e.replace("address: ", "")),
             }
         } else if let Some((t, src)) = mime::infer_for_with_source(s, &verb, &reg) {
@@ -2923,7 +2956,25 @@ fn implicit_source_item(reg: &Value, verb: &Value) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::implicit_snippet;
+    use super::{implicit_snippet, is_source_address};
+    use serde_json::json;
+
+    #[test]
+    fn is_source_address_matches_source_name_or_prefix_only() {
+        let reg = json!({ "sources": [ { "name": "branches", "prefix": "br" } ] });
+        // A canonicalized source address — by prefix and by name.
+        assert!(is_source_address("goo://br/main", &reg));
+        assert!(is_source_address("goo://branches/main", &reg));
+        // Built-in virtual domains are NOT sources — `--explain` keeps typing these
+        // by content / explicit assertion, not by resolving a source.
+        assert!(!is_source_address("goo://type/image/png", &reg));
+        assert!(!is_source_address("goo://file/tmp/x", &reg));
+        assert!(!is_source_address("goo://text/hello", &reg));
+        assert!(!is_source_address("goo://url/https://x", &reg));
+        // Malformed / empty domain.
+        assert!(!is_source_address("goo://", &reg));
+        assert!(!is_source_address("not-a-uri", &reg));
+    }
 
     // The implicit-subject snippet shows untrusted clipboard/PRIMARY content (the
     // run-time nudge, the completion preview). Its output must be control-char-free
